@@ -1,49 +1,42 @@
-# 기억 조각 이어주기
+# Wepic Live
 
-구글 포토에서 인물(예: 아버지, 어머니)로 검색해 선택한 사진을 보여주는 디지털 액자 프로토타입입니다. (PC용 Electron 앱, Google Photos Picker API 사용)
+구글 포토의 사진·동영상을 골라 감성 슬라이드쇼로 보여주고, 링크 하나로 가족과 함께
+감상하는 **웹 사진 액자**입니다. (태그라인: *capture moments, real-time joy*)
 
-> 참고: 처음에는 Ambient API(사진을 지속 자동 동기화하는 방식)로 설계했지만, 이 API는 구글 파트너 프로그램 승인이 있어야만 접근 가능한 것으로 확인되어 **Picker API**로 전환했습니다. Picker API는 승인 없이 바로 사용 가능한 대신, 새 사진을 반영하려면 "사진 다시 선택하기"를 수동으로 눌러줘야 합니다.
+> 향후 기능 방향과 상용 전자액자 대비 격차 분석은 [docs/ROADMAP.md](docs/ROADMAP.md) 참고.
 
-> 📌 향후 기능 개발 방향과 상용 전자액자 대비 격차 분석은 [docs/ROADMAP.md](docs/ROADMAP.md) 참고.
+## 구성
 
-## 1. 사전 준비: Google Cloud Console 설정
+| 폴더 | 내용 |
+|---|---|
+| `web/` | 웹앱 — 프론트엔드(`web/public`) + Node/Express 백엔드(`web/server.js`). Render 등 Node 호스트에서 실행 |
+| `cloudflare/` | 같은 앱의 Cloudflare Workers 백엔드 포팅(세션=KV, 공유=R2). `web/public`을 정적 자산으로 재사용 |
+| `docs/` | 로드맵·기획 노트 |
 
-1. [Google Cloud Console](https://console.cloud.google.com/)에서 새 프로젝트 생성
-2. **API 및 서비스 > 라이브러리**에서 `Google Photos Picker API` 검색 후 **사용 설정**
-3. **Google 인증 플랫폼 > 브랜딩**: 앱 이름, 지원 이메일 등 필수 항목 입력 후 저장
-4. **Google 인증 플랫폼 > 대상**: 게시 상태가 **테스트(Testing)** 인지 확인, **테스트 사용자**에 본인 구글 계정 이메일 추가
-5. **Google 인증 플랫폼 > 데이터 액세스 > 스코프 추가 또는 삭제**: 아래 스코프를 추가 후 저장
-   ```
-   https://www.googleapis.com/auth/photospicker.mediaitems.readonly
-   ```
-6. **Google 인증 플랫폼 > 클라이언트 > + 클라이언트 만들기**
-   - 애플리케이션 유형: **데스크톱 앱(Desktop app)** ← Picker API는 이 유형이어야 합니다
-   - 생성된 **클라이언트 ID**와 **클라이언트 보안 비밀번호**를 복사해둡니다
+프론트엔드(`web/public`)는 두 배포 방식이 **공유**합니다. 백엔드만 Express(Node) / Worker 두 갈래입니다.
 
-## 2. 앱 실행
+## 주요 기능
 
-```bash
-npm install
-npm start
-```
+- 구글 포토 Picker로 사진·동영상 선택 → 자동 슬라이드쇼(페이드/슬라이드/Ken Burns 전환)
+- 배경음악(YouTube), 시계·날씨, 제목 오버레이, 동영상 재생(소리 옵션)
+- **실시간 공유 링크**(로그인 없이 열람), 24시간 자동 만료
+- **PWA**: 안드로이드에서 구글 포토 "공유" → Wepic Live로 사진 전송(홈 화면 설치 시)
 
-최초 실행 시 화면 안내에 따라:
-1. 위에서 복사한 Client ID / Client Secret 입력
-2. **"Google 계정으로 로그인"** 클릭 → 기본 브라우저가 열리면 로그인 및 권한 동의
-3. 다음 화면의 QR을 **휴대폰으로 스캔**하면 구글 포토 선택 화면이 열립니다. 검색창에 인물 이름(예: "아버지")을 입력해 사진을 찾고, 원하는 사진들을 선택 후 완료
-4. 자동으로 사진을 내려받아 슬라이드쇼 시작
+## 배포
 
-## 3. 기능
+- **Cloudflare Workers**: [cloudflare/README.md](cloudflare/README.md)의 설정 절차 참고 (R2·KV·시크릿·OAuth 리디렉션)
+- **Node(Render 등)**: [web/README.md](web/README.md) 참고
 
-- 좌측 사진 / 우측 촬영 날짜 표시, 10초마다 페이드 전환
-- "이 날 촬영한 다른 사진" 썸네일로 같은 날짜 사진 바로 보기
-- 기간(시작일~종료일) 지정 후 해당 기간 사진만 표시
-- 사진은 로컬에 캐싱되어 재실행 시 즉시 표시
-- **"사진 다시 선택하기"**: 새로운 인물/사진을 추가로 선택하면 기존 사진에 더해집니다 (대체 아님)
+## Google Cloud 설정(공통)
 
-## 4. 알려진 제약사항
+1. Google Cloud Console에서 프로젝트 생성 → **Google Photos Picker API** 사용 설정
+2. OAuth 동의 화면(브랜딩·대상): 게시 상태 **테스트**면 **테스트 사용자**에 사용할 계정 이메일 추가
+3. 스코프 추가: `https://www.googleapis.com/auth/photospicker.mediaitems.readonly`
+4. **클라이언트 만들기**: 배포 도메인에 맞춰 **승인된 리디렉션 URI**로 `https://<배포도메인>/auth/callback` 등록,
+   생성된 **클라이언트 ID / 시크릿**을 배포 환경변수(시크릿)로 설정
 
-- **위치(GPS) 지도 표시는 지원하지 않습니다.** Google Photos API는 개인정보 보호 정책상 GPS 좌표를 제공하지 않습니다. 대신 촬영 날짜만 표시합니다.
-- **새 사진 자동 반영은 지원하지 않습니다.** Picker API는 한 번 선택한 사진들의 스냅샷만 가져옵니다. 최신 사진을 반영하려면 "사진 다시 선택하기"를 눌러 다시 검색/선택해야 합니다. (자동 동기화가 꼭 필요하면 Ambient API 파트너 프로그램 승인을 받아야 합니다: https://developers.google.com/photos/partner-program/overview)
-- 사진 다운로드 URL은 60분 후 만료되므로 앱이 로컬에 캐싱한 파일을 사용합니다.
-- 공개 배포 시(다른 사람도 쓰게 하려면) 구글의 앱 심사가 필요합니다. 본인 전용 프로토타입 단계에서는 테스트 사용자 등록만으로 충분합니다.
+## 알려진 제약
+
+- 위치(GPS) 표시 미지원(Photos API가 GPS 미제공) — 촬영 날짜만 표시
+- 새 사진 자동 반영 미지원(Picker는 선택 시점 스냅샷) — "사진 다시 선택하기" 필요
+- 공개 배포 시 구글 앱 심사 필요(테스트 단계는 테스트 사용자 등록으로 충분)

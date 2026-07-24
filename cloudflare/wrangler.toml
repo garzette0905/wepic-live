@@ -1,0 +1,33 @@
+name = "wepic-live"
+main = "index.js"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# 정적 프론트엔드(web/public)는 빌드 시 ./public 으로 복사해 서빙한다.
+# (빌드 명령: cp -r ../web/public ./public — 아래 README 참고)
+[assets]
+directory = "./public"
+binding = "ASSETS"
+# 정적 파일이 없는 경로(/api/*, /auth/*, /img, /video, /shares/*, /f/*, POST 등)는 Worker로 넘어간다.
+not_found_handling = "none"
+
+# 공유 사진 저장용 R2 버킷 (Cloudflare 대시보드/CLI에서 먼저 생성)
+[[r2_buckets]]
+binding = "SHARES"
+bucket_name = "wepic-shares"
+
+# 로그인 세션 저장용 KV (id 는 생성 후 채워 넣기)
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+[vars]
+BASE_URL = "https://wepic-live.garzette.workers.dev"
+SHARE_TTL_HOURS = "24"
+
+# 만료 공유 정리: 매시간
+[triggers]
+crons = ["0 * * * *"]
+
+# 시크릿(대시보드 또는 `wrangler secret put`)으로 등록:
+#   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET
