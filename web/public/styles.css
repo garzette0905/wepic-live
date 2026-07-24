@@ -351,20 +351,25 @@ body.has-title .demo-badge { top: 50px; }
 .home-shell {
   position: fixed; inset: 0; z-index: 5;
   display: flex; flex-direction: column;
-  background: var(--bg-deep); overflow: hidden;
+  overflow: hidden;
+  background-color: var(--bg-deep);
+  /* 사진(hero.jpg)을 화면 전체 배경으로 깔고, 위에 반투명 스크림으로 글씨 가독성 확보 */
+  background-image:
+    linear-gradient(180deg, rgba(11,18,32,0.55), rgba(11,18,32,0.68)),
+    url("hero.jpg");
+  background-size: cover, cover;
+  background-position: center, center 42%;  /* ← 인물 위치는 두 번째 center 42%의 % 만 바꾸면 됩니다 */
+  background-repeat: no-repeat;
 }
 
-/* 상단 배너 (hero.jpg 위에 로고/문구를 얹음) */
+/* 상단 로고/문구 영역 (배경은 home-shell이 담당, 여기는 투명) */
 .hero {
   position: relative; flex: none;
-  height: clamp(150px, 24vh, 240px);
-  background-image: url("hero.jpg");
-  background-size: cover;
-  background-position: center 42%;   /* ← 인물이 잘 보이도록 위치 조정 (필요시 %만 바꾸세요) */
+  height: clamp(140px, 22vh, 220px);
   display: flex; align-items: center; justify-content: center;
 }
-/* 배경의 원본(깨진) 글자를 눌러 우리 로고가 돋보이게 하는 어둡게 처리 */
-.hero-scrim { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(11,18,32,0.5), rgba(11,18,32,0.68)); }
+/* 로고 영역 상단만 살짝 더 어둡게 해 로고 대비를 높임 */
+.hero-scrim { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(11,18,32,0.35), rgba(11,18,32,0)); }
 .hero-inner { position: relative; z-index: 1; text-align: center; padding: 10px 16px; }
 .hero-brand { display: flex; align-items: center; justify-content: center; gap: 12px; }
 .hero-logo { width: 52px; height: 52px; border-radius: 14px; box-shadow: 0 4px 16px rgba(0,0,0,0.55); }
@@ -375,27 +380,35 @@ body.has-title .demo-badge { top: 50px; }
 
 /* 본문: 좌측 메뉴 + 우측 프레임 */
 .home-body { flex: 1 1 auto; min-height: 0; display: flex; }
+/* 좌측 메뉴: 배경 사진이 비치는 반투명 유리 패널 */
 .home-menu {
-  flex: 0 0 232px; width: 232px; background: var(--bg-panel);
-  border-right: 1px solid var(--border); padding: 18px 12px;
+  flex: 0 0 232px; width: 232px;
+  background: rgba(13, 20, 36, 0.5); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-right: 1px solid rgba(255, 255, 255, 0.12); padding: 18px 12px;
   display: flex; flex-direction: column; gap: 6px; overflow-y: auto;
 }
 .menu-item {
-  text-align: left; background: transparent; color: var(--text-main);
+  text-align: left; background: rgba(255, 255, 255, 0.05); color: var(--text-main);
   border: 1px solid transparent; border-radius: 10px;
   padding: 12px 14px; font-size: 14px; font-weight: 500; cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
-.menu-item:hover { background: rgba(255,255,255,0.06); filter: none; }
-.menu-item.active { background: rgba(91,141,239,0.16); border-color: rgba(91,141,239,0.5); color: #fff; font-weight: 700; }
+.menu-item:hover { background: rgba(255,255,255,0.12); filter: none; }
+.menu-item.active { background: rgba(91,141,239,0.32); border-color: rgba(138,180,255,0.7); color: #fff; font-weight: 700; }
 
 .home-frame { flex: 1 1 auto; min-width: 0; overflow-y: auto; padding: 30px 36px; }
-.panel { max-width: 640px; }
+/* 우측 패널: 배경 위에 뜨는 반투명 유리 카드 (글씨 가독성 확보) */
+.panel {
+  max-width: 660px;
+  background: rgba(13, 20, 36, 0.62); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 16px;
+  padding: 24px 28px; box-shadow: 0 14px 44px rgba(0, 0, 0, 0.4);
+}
 .panel h2 { margin: 0 0 12px; font-size: 22px; font-weight: 700; }
 .panel p { color: var(--text-main); line-height: 1.7; font-size: 14.5px; margin: 0 0 12px; }
 .panel-list { margin: 0 0 14px; padding-left: 20px; line-height: 1.95; color: var(--text-main); font-size: 14px; }
 .panel-muted { color: var(--text-muted); font-size: 13.5px; }
-.panel .account-notice { display: block; }
+.panel .account-notice { display: block; color: #6b5300; }
 .panel .btn-primary { display: inline-block; margin-top: 6px; }
 #login-actions { margin-top: 14px; }
 #login-actions .btn-primary { display: inline-block; }
