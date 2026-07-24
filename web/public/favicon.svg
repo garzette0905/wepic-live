@@ -4,26 +4,23 @@
       <stop offset="0" stop-color="#16213a"/>
       <stop offset="1" stop-color="#0b1220"/>
     </linearGradient>
-    <linearGradient id="accent" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#8ab4ff"/>
-      <stop offset="1" stop-color="#5b8def"/>
-    </linearGradient>
+    <radialGradient id="lens" cx="0.4" cy="0.35" r="0.75">
+      <stop offset="0" stop-color="#2c3e63"/>
+      <stop offset="1" stop-color="#0b1220"/>
+    </radialGradient>
   </defs>
-
-  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#bg)"/>
-
-  <!-- 서로 이어진 세 장의 사진: "기억 조각 이어주기" 모티프 -->
-  <g stroke="url(#accent)" stroke-width="2" stroke-linecap="round" opacity="0.85">
-    <line x1="19" y1="22" x2="45" y2="22"/>
-    <line x1="19" y1="22" x2="32" y2="42"/>
-    <line x1="45" y1="22" x2="32" y2="42"/>
+  <rect x="1" y="1" width="62" height="62" rx="15" fill="url(#bg)"/>
+  <g opacity="0.95">
+    <path d="M32,6 A26,26 0 0 1 50.385,13.615 L40.839,23.161 A12.5,12.5 0 0 0 32,19.5 Z" fill="#ff3b30"/>
+    <path d="M50.385,13.615 A26,26 0 0 1 58,32 L44.5,32 A12.5,12.5 0 0 0 40.839,23.161 Z" fill="#ff9500"/>
+    <path d="M58,32 A26,26 0 0 1 50.385,50.385 L40.839,40.839 A12.5,12.5 0 0 0 44.5,32 Z" fill="#ffcc00"/>
+    <path d="M50.385,50.385 A26,26 0 0 1 32,58 L32,44.5 A12.5,12.5 0 0 0 40.839,40.839 Z" fill="#34c759"/>
+    <path d="M32,58 A26,26 0 0 1 13.615,50.385 L23.161,40.839 A12.5,12.5 0 0 0 32,44.5 Z" fill="#00c7be"/>
+    <path d="M13.615,50.385 A26,26 0 0 1 6,32 L19.5,32 A12.5,12.5 0 0 0 23.161,40.839 Z" fill="#3b82f6"/>
+    <path d="M6,32 A26,26 0 0 1 13.615,13.615 L23.161,23.161 A12.5,12.5 0 0 0 19.5,32 Z" fill="#5856d6"/>
+    <path d="M13.615,13.615 A26,26 0 0 1 32,6 L32,19.5 A12.5,12.5 0 0 0 23.161,23.161 Z" fill="#c026d3"/>
   </g>
-
-  <rect x="13" y="16" width="12" height="12" rx="3" fill="#2c3e63"/>
-  <rect x="39" y="16" width="12" height="12" rx="3" fill="#2c3e63"/>
-  <rect x="26" y="36" width="12" height="12" rx="3" fill="url(#accent)"/>
-
-  <circle cx="19" cy="22" r="2.6" fill="#eef4ff"/>
-  <circle cx="45" cy="22" r="2.6" fill="#eef4ff"/>
-  <circle cx="32" cy="42" r="2.6" fill="#eef4ff"/>
+  <circle cx="32" cy="32" r="12.5" fill="url(#lens)" stroke="#0b1220" stroke-width="1"/>
+  <circle cx="32" cy="32" r="6.5" fill="#0b1220"/>
+  <circle cx="28.5" cy="28.5" r="2.6" fill="#eef4ff" opacity="0.9"/>
 </svg>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>기억 조각 이어주기</title>
+<title>Wepic Live</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg" />
 <link rel="manifest" href="manifest.json" />
 <meta name="theme-color" content="#0b1220" />
@@ -14,33 +14,112 @@
 </head>
 <body>
 
-  <!-- 시작 스플래시 -->
-  <div id="splash" class="splash"><img src="brand.png" alt="" /></div>
+  <!-- ===== 홈(랜딩) ===== -->
+  <div id="home-shell" class="home-shell">
+    <header class="hero">
+      <div class="hero-scrim"></div>
+      <div class="hero-inner">
+        <div class="hero-brand">
+          <img class="hero-logo" src="favicon.svg" alt="Wepic Live" />
+          <span class="hero-word">Wepic <b>Live</b></span>
+          <span class="live-badge">LIVE</span>
+        </div>
+        <div class="hero-tagline">capture moments, real-time joy</div>
+      </div>
+    </header>
 
-  <!-- 온보딩 -->
-  <div id="onboarding-shell" class="onboarding-shell">
+    <div class="home-body">
+      <nav class="home-menu" id="home-menu">
+        <button class="menu-item active" data-panel="about">🏠 홈 · 소개</button>
+        <button class="menu-item" data-panel="login">🔑 Google 로그인</button>
+        <button class="menu-item" data-panel="photos">🖼️ 사진 선택</button>
+        <button class="menu-item" data-panel="demo">▶ 데모로 보기</button>
+        <button class="menu-item" data-panel="register">✉️ 사용자 등록 신청</button>
+        <button class="menu-item" data-panel="feedback">💬 Feedback</button>
+      </nav>
+
+      <section class="home-frame">
+        <!-- 소개 -->
+        <div class="panel" id="panel-about">
+          <h2>Wepic Live — 실시간 사진 액자</h2>
+          <p>구글 포토의 사진·동영상을 골라 감성 슬라이드쇼로 보여주고, 링크 하나로 가족과 함께 감상하는 웹 액자입니다.</p>
+          <ul class="panel-list">
+            <li>구글 포토에서 사진 선택 → 자동 슬라이드쇼</li>
+            <li>배경음악 · 전환효과(페이드/슬라이드/켄번즈) · 시계·날씨 · 제목 오버레이</li>
+            <li>실시간 공유 링크 — 로그인 없이 열람</li>
+            <li>동영상 재생 · 폰에서 "공유"로 바로 보내기(PWA 설치)</li>
+          </ul>
+          <p class="panel-muted">왼쪽 메뉴에서 <b>Google 로그인</b> 또는 <b>데모로 보기</b>로 시작하세요.</p>
+        </div>
+
+        <!-- 구글 로그인 -->
+        <div class="panel hidden" id="panel-login">
+          <h2>구글 계정 연동</h2>
+          <p>Google 계정으로 로그인하면 구글 포토에서 사진을 선택해 액자로 볼 수 있습니다.</p>
+          <p id="login-status" class="account-notice hidden"></p>
+          <a id="btn-login" class="btn-primary" href="/auth/login">Google 계정으로 로그인</a>
+          <div id="login-actions" class="hidden">
+            <button class="btn-primary" data-goto="photos">사진 선택하러 가기</button>
+            <p style="margin:8px 0 0;"><a href="#" id="btn-logout-home" class="text-link small">로그아웃</a></p>
+          </div>
+          <p id="login-error" class="error hidden"></p>
+        </div>
+
+        <!-- 사진 선택 -->
+        <div class="panel hidden" id="panel-photos">
+          <h2>표시할 사진 선택</h2>
+          <p id="photos-login-note" class="account-notice hidden">먼저 왼쪽 <b>Google 로그인</b>이 필요합니다.</p>
+          <ol class="steps">
+            <li>“사진 선택 시작” 클릭 또는 QR 스캔</li>
+            <li><b>로그인된 계정으로</b> 선택하세요 (폰에 여러 계정이 있으면 다른 계정을 고르면 선택이 완료되지 않습니다)</li>
+            <li>검색창에 <b>인물 이름</b>(예: 아버지) 또는 <b>장소명</b> 입력</li>
+            <li>원하는 사진들을 선택 후 <b>완료</b></li>
+          </ol>
+          <button id="btn-start-picker" class="btn-primary">구글 포토에서 사진 선택 시작</button>
+        </div>
+
+        <!-- 데모 -->
+        <div class="panel hidden" id="panel-demo">
+          <h2>데모로 보기</h2>
+          <p>계정 연결 없이 샘플 사진으로 앱을 먼저 둘러볼 수 있습니다.</p>
+          <button id="btn-demo" class="btn-primary">데모 슬라이드쇼 시작</button>
+        </div>
+
+        <!-- 등록 신청 -->
+        <div class="panel hidden" id="panel-register">
+          <h2>사용자 등록 신청 · Registration</h2>
+          <p class="modal-block">"Wepic Live" 앱 사용을 위해서는 최초 1회 등록이 필요합니다.<br />
+            관리자에게 지메일 계정을 보내주세요 (관리자 이메일: <b>garzette@paran.com</b>)</p>
+          <p class="modal-block modal-en">To use "Wepic Live", a one-time initial registration is required.<br />
+            Please send your Gmail address to the administrator. (Admin Email: <b>garzette@paran.com</b>)</p>
+          <a class="btn-primary" href="mailto:garzette@paran.com?subject=Wepic%20Live%20%EB%93%B1%EB%A1%9D%20%EC%8B%A0%EC%B2%AD">등록 메일 보내기 · Send email</a>
+        </div>
+
+        <!-- 피드백 -->
+        <div class="panel hidden" id="panel-feedback">
+          <h2>Feedback</h2>
+          <p class="modal-block">필요한 기능을 요청하거나, 오류·불편한 점을 남겨주세요.</p>
+          <p class="modal-block modal-en">Send feature requests, or report bugs and issues you run into.</p>
+          <textarea id="feedback-text" class="feedback-text" rows="5" placeholder="여기에 의견을 적어주세요 · Write your feedback here"></textarea>
+          <button id="btn-feedback-send" class="btn-primary">이메일로 보내기 · Send via email</button>
+          <p class="hint" style="margin:8px 0 0;">보내기를 누르면 메일 앱이 열립니다 · Opens your email app (to: garzette@paran.com)</p>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ===== 사진 선택(Picker) / 동기화 ===== -->
+  <div id="picker-shell" class="onboarding-shell hidden">
     <div class="brand-header">
-      <h1 class="brand-title">그날의 우리를 마주하다</h1>
-      <div class="brand-name">기억 조각 이어주기</div>
+      <img class="brand-logo-sm" src="favicon.svg" alt="" />
+      <div class="brand-name">Wepic Live</div>
     </div>
 
-    <!-- 1) 로그인 -->
-    <section id="screen-login" class="card hidden">
-      <h2>구글 계정 연동</h2>
-      <p class="hint">Google 계정으로 로그인하면 구글 포토에서 사진을 선택해 액자로 볼 수 있습니다.</p>
-      <a id="btn-login" class="btn-primary" href="/auth/login">Google 계정으로 로그인</a>
-      <button id="btn-demo" class="secondary">데모로 보기</button>
-      <p class="hint" style="margin-top:2px;">계정 연결 없이 샘플 사진으로 먼저 둘러볼 수 있습니다.</p>
-      <p style="margin:0;"><a href="#" id="btn-register" class="text-link small">사용자 등록 신청</a></p>
-      <p id="login-error" class="error hidden"></p>
-    </section>
-
-    <!-- 2) 사진 선택 -->
     <section id="screen-source" class="card light wide hidden">
       <h2>표시할 사진 선택</h2>
       <div class="source-body">
         <div class="source-text">
-          <p id="account-notice" class="account-notice hidden"></p>
+          <p id="account-notice-picker" class="account-notice hidden"></p>
           <ol class="steps">
             <li>“구글 포토에서 선택” 클릭 또는 QR 스캔</li>
             <li><b>위에 표시된 계정으로 로그인된 상태</b>인지 확인 (폰에 여러 계정이 있으면 다른 계정을 고르면 선택이 완료되지 않습니다)</li>
@@ -56,11 +135,11 @@
         <div class="source-qr-col">
           <img id="source-qr" class="qr hidden" alt="qr" />
           <button id="btn-open-picker" class="btn-primary">구글 포토에서 선택</button>
+          <a href="#" id="btn-picker-home" class="text-link small">홈으로</a>
         </div>
       </div>
     </section>
 
-    <!-- 3) 동기화 -->
     <section id="screen-sync" class="card hidden">
       <h2>사진 불러오는 중</h2>
       <p id="sync-status" class="status">준비 중...</p>
@@ -206,21 +285,6 @@
           <a href="/auth/login" id="btn-demo-login" class="text-link small">Google 계정으로 로그인하고 내 사진으로 보기</a>
         </span>
       </div>
-    </div>
-  </div>
-
-  <!-- 사용자 등록 안내 팝업 -->
-  <div id="register-modal" class="modal-overlay hidden">
-    <div class="modal-card">
-      <p class="modal-block">
-        "기억조각 이어주기" 앱 사용을 위해서는 최초 1회 등록이 필요합니다.<br />
-        관리자에게 지메일 계정을 보내주세요 (관리자 이메일 : <b>garzette@paran.com</b>)
-      </p>
-      <p class="modal-block modal-en">
-        To use the "기억조각 이어주기" App, a one-time initial registration is required.<br />
-        Please send your Gmail address to the administrator. (Admin Email: <b>garzette@paran.com</b>)
-      </p>
-      <button id="btn-register-close" class="btn-primary">확인</button>
     </div>
   </div>
 

@@ -5,3 +5,6 @@ web/public/shares/
 
 # Claude Code 로컬 설정 (개인/머신 전용)
 .claude/
+
+# 원본(대용량) 배너 소스 이미지 — 최적화본 web/public/hero.jpg 만 커밋
+Gemini_Generated_Image_*.png

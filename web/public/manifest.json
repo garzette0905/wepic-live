@@ -1,7 +1,7 @@
 {
-  "name": "기억 조각 이어주기",
-  "short_name": "기억조각",
-  "description": "구글 포토 사진·동영상으로 보는 가족 사진 액자. 공유로 사진을 보내 바로 감상하세요.",
+  "name": "Wepic Live",
+  "short_name": "Wepic Live",
+  "description": "capture moments, real-time joy — 구글 포토 사진·동영상으로 보는 실시간 가족 사진 액자.",
   "lang": "ko",
   "start_url": "/",
   "scope": "/",

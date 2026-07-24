@@ -1,70 +1,68 @@
-// ---------- 화면 전환 ----------
-const screens = {
-  login: document.getElementById('screen-login'),
+// ---------- 화면 전환 (홈 / 사진선택·동기화 / 슬라이드쇼) ----------
+const homeShell = document.getElementById('home-shell');
+const pickerShell = document.getElementById('picker-shell');
+const slideshowEl = document.getElementById('screen-slideshow');
+const pickerScreens = {
   source: document.getElementById('screen-source'),
   sync: document.getElementById('screen-sync'),
 };
-const onboardingShell = document.getElementById('onboarding-shell');
-const slideshowEl = document.getElementById('screen-slideshow');
 
-function showOnboarding(name) {
+function showHome() {
+  pickerShell.classList.add('hidden');
   slideshowEl.classList.add('hidden');
-  onboardingShell.classList.remove('hidden');
-  Object.entries(screens).forEach(([key, el]) => el.classList.toggle('hidden', key !== name));
+  homeShell.classList.remove('hidden');
+}
+function showPicker(name) {
+  homeShell.classList.add('hidden');
+  slideshowEl.classList.add('hidden');
+  pickerShell.classList.remove('hidden');
+  Object.entries(pickerScreens).forEach(([k, el]) => el.classList.toggle('hidden', k !== name));
 }
 function showSlideshow() {
-  onboardingShell.classList.add('hidden');
+  homeShell.classList.add('hidden');
+  pickerShell.classList.add('hidden');
   slideshowEl.classList.remove('hidden');
 }
 
-// 밝은 스플래시를 holdMs 동안 보여준 뒤 페이드 아웃
-function withSplash(reveal, holdMs = 3000) {
-  const splash = document.getElementById('splash');
-  splash.style.transition = 'none';
-  splash.classList.remove('fade-out');
-  void splash.offsetHeight;
-  splash.style.transition = '';
-  reveal();
-  setTimeout(() => splash.classList.add('fade-out'), holdMs);
+// ---------- 홈 좌측 메뉴 / 우측 패널 ----------
+function selectPanel(name) {
+  showHome();
+  document.querySelectorAll('#home-menu .menu-item').forEach((b) =>
+    b.classList.toggle('active', b.dataset.panel === name));
+  document.querySelectorAll('.home-frame .panel').forEach((p) =>
+    p.classList.toggle('hidden', p.id !== 'panel-' + name));
 }
+document.querySelectorAll('#home-menu .menu-item').forEach((b) =>
+  b.addEventListener('click', () => selectPanel(b.dataset.panel)));
+document.querySelectorAll('[data-goto]').forEach((el) =>
+  el.addEventListener('click', (e) => { e.preventDefault(); selectPanel(el.dataset.goto); }));
 
 async function api(url, opts) {
   const res = await fetch(url, { credentials: 'same-origin', ...opts });
-  if (res.status === 401) { showOnboarding('login'); throw new Error('로그인이 필요합니다.'); }
+  if (res.status === 401) { selectPanel('login'); throw new Error('로그인이 필요합니다.'); }
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `요청 실패 (${res.status})`);
   return res.json();
 }
 
-// ---------- 로그인 화면 ----------
+// ---------- 로그인 안내 ----------
 const AUTH_ERROR_MESSAGES = {
   missing_photos_scope:
     '로그인 중 "Google 포토" 권한에 동의하지 않아 사진을 가져올 수 없습니다. ' +
     '아래 버튼으로 다시 로그인하시고, 동의 화면에서 사진 관련 권한 체크박스를 꼭 체크해주세요.',
 };
 
-function showLogin() {
-  showOnboarding('login');
-  const params = new URLSearchParams(location.search);
-  const code = params.get('auth_error');
-  if (code) {
-    const el = document.getElementById('login-error');
-    el.textContent = AUTH_ERROR_MESSAGES[code] || '로그인 오류: ' + code;
-    el.classList.remove('hidden');
-  }
-}
-
 // ---------- 사진 선택 (Picker) ----------
 let pickerSessionId = null;
 let pickerPollTimer = null;
 
 async function startPickerFlow() {
-  showOnboarding('source');
+  showPicker('source');
   const qrEl = document.getElementById('source-qr');
   const statusEl = document.getElementById('source-status-text');
   const backEl = document.getElementById('btn-back-to-slideshow');
   const errEl = document.getElementById('source-error');
   const openBtn = document.getElementById('btn-open-picker');
-  const noticeEl = document.getElementById('account-notice');
+  const noticeEl = document.getElementById('account-notice-picker');
   qrEl.classList.add('hidden');
   errEl.classList.add('hidden');
   statusEl.textContent = '선택 화면을 준비하는 중...';
@@ -100,6 +98,12 @@ document.getElementById('btn-back-to-slideshow').addEventListener('click', (e) =
   showSlideshow();
   resetTimer();
 });
+document.getElementById('btn-picker-home').addEventListener('click', (e) => {
+  e.preventDefault();
+  if (pickerPollTimer) clearTimeout(pickerPollTimer);
+  if (pickerSessionId) api(`/api/picker/session/${pickerSessionId}`, { method: 'DELETE' }).catch(() => {});
+  selectPanel('photos');
+});
 
 function pollPicker() {
   if (pickerPollTimer) clearTimeout(pickerPollTimer);
@@ -116,7 +120,7 @@ function pollPicker() {
 // ---------- 동기화 ----------
 async function startSync() {
   if (pickerPollTimer) clearTimeout(pickerPollTimer);
-  showOnboarding('sync');
+  showPicker('sync');
   const statusEl = document.getElementById('sync-status');
   const barEl = document.getElementById('sync-bar');
   statusEl.textContent = '선택한 사진을 불러오는 중...';
@@ -712,25 +716,30 @@ async function startDemo() {
     if (data.musicUrl) document.getElementById('music-url').value = data.musicUrl;
     boot(data.items || []);
   } catch (err) {
-    const el = document.getElementById('login-error');
-    el.textContent = err.message;
-    el.classList.remove('hidden');
+    alert(err.message);
   }
 }
 document.getElementById('btn-demo').addEventListener('click', startDemo);
 
-// ---------- 사용자 등록 안내 팝업 ----------
-const registerModal = document.getElementById('register-modal');
-document.getElementById('btn-register').addEventListener('click', (e) => {
+// ---------- 홈 메뉴 동작 (사진 선택 시작 / 로그아웃 / 피드백) ----------
+document.getElementById('btn-start-picker').addEventListener('click', () => {
+  if (!isLoggedIn) { selectPanel('login'); return; } // 로그인 먼저
+  appendMode = false;
+  startPickerFlow();
+});
+document.getElementById('btn-logout-home').addEventListener('click', async (e) => {
   e.preventDefault();
-  registerModal.classList.remove('hidden');
+  await api('/api/logout', { method: 'POST' }).catch(() => {});
+  location.href = '/';
 });
-document.getElementById('btn-register-close').addEventListener('click', () => {
-  registerModal.classList.add('hidden');
+document.getElementById('btn-feedback-send').addEventListener('click', () => {
+  const txt = document.getElementById('feedback-text').value.trim();
+  const subject = encodeURIComponent('Wepic Live Feedback');
+  const body = encodeURIComponent(txt);
+  window.location.href = `mailto:garzette@paran.com?subject=${subject}&body=${body}`;
 });
-registerModal.addEventListener('click', (e) => {
-  if (e.target === registerModal) registerModal.classList.add('hidden');
-});
+
+// 슬라이드쇼 하단의 "홈페이지로 가기"(데모/공유 모드)
 document.getElementById('btn-demo-home').addEventListener('click', (e) => {
   e.preventDefault();
   location.href = '/';
@@ -927,10 +936,34 @@ function boot(photos) {
   // 있어 로그인 없이도 만들 수 있다(/api/share/blob). 샘플 데모 사진만 제외.
   document.getElementById('share-block').classList.toggle('hidden', isDemoMode);
   loadDisplaySettings();
-  withSplash(() => { showSlideshow(); recomputeFiltered(); });
+  showSlideshow();
+  recomputeFiltered();
 }
 
 let loggedInName = null;
+let isLoggedIn = false;
+
+// 로그인 상태를 홈의 로그인/사진 패널에 반영 (자동 진입은 하지 않음)
+function applyLoginState(status) {
+  isLoggedIn = !!status.loggedIn;
+  loggedInName = isLoggedIn ? (status.name || status.email || null) : null;
+  const btnLogin = document.getElementById('btn-login');
+  const loginActions = document.getElementById('login-actions');
+  const loginStatus = document.getElementById('login-status');
+  const photosNote = document.getElementById('photos-login-note');
+  if (isLoggedIn) {
+    btnLogin.classList.add('hidden');
+    loginActions.classList.remove('hidden');
+    loginStatus.textContent = `✓ ${loggedInName || '내 계정'}으로 로그인됨`;
+    loginStatus.classList.remove('hidden');
+    photosNote.classList.add('hidden');
+  } else {
+    btnLogin.classList.remove('hidden');
+    loginActions.classList.add('hidden');
+    loginStatus.classList.add('hidden');
+    photosNote.classList.remove('hidden');
+  }
+}
 
 // ---------- PWA: 공유 타깃으로 받은 사진 읽어오기 ----------
 // 구글 포토 "공유" → 서비스워커가 파일을 Cache에 저장 → /?shared=1 로 이동.
@@ -965,19 +998,31 @@ async function loadSharedMedia() {
 
 async function init() {
   const params = new URLSearchParams(location.search);
+
+  // 1) 구글 포토 "공유"로 들어온 경우: 곧바로 슬라이드쇼
   if (params.has('shared')) {
-    // 새로고침 시 재유입/혼선을 막기 위해 주소를 정리
     history.replaceState(null, '', '/');
     let shared = null;
-    try { shared = await loadSharedMedia(); } catch { /* 무시하고 일반 흐름으로 */ }
+    try { shared = await loadSharedMedia(); } catch { /* 무시 */ }
     if (shared && shared.length) { isSharedMode = true; boot(shared); return; }
-    if (params.get('shared') === 'empty') showToast('공유된 사진을 찾지 못했습니다.');
-    // 공유 데이터가 없으면 아래 일반 흐름(로그인/로그인화면)으로 계속 진행
+    if (params.get('shared') === 'empty') alert('공유된 사진을 찾지 못했습니다.');
   }
+
+  // 2) 로그인 상태 확인 → 홈의 로그인/사진 패널에 반영 (자동 진입 없음: 항상 홈부터)
   const status = await api('/api/status').catch(() => ({ loggedIn: false }));
-  if (!status.loggedIn) { withSplash(showLogin); return; }
-  loggedInName = status.name || status.email || null;
-  withSplash(startPickerFlow);
+  applyLoginState(status);
+
+  // 3) 로그인 오류(auth_error)가 있으면 로그인 패널에 안내, 아니면 항상 홈(소개)부터
+  const code = params.get('auth_error');
+  if (code) {
+    const el = document.getElementById('login-error');
+    el.textContent = AUTH_ERROR_MESSAGES[code] || '로그인 오류: ' + code;
+    el.classList.remove('hidden');
+    history.replaceState(null, '', '/');
+    selectPanel('login');
+  } else {
+    showHome(); // 홈(소개) 화면을 먼저 보여주고, 사용자가 메뉴로 진입
+  }
 }
 
 // PWA 서비스워커 등록 (공유 타깃 수신용). 실패해도 앱 기능에는 영향 없음.
