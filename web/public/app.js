@@ -608,6 +608,96 @@ document.getElementById('btn-pin-new').addEventListener('click', () => {
   showToast('새 PIN이 준비됐습니다. "링크변경 반영"을 누르면 적용됩니다.');
 });
 
+// ---------- 세션당 액자 목록 (다중 액자) ----------
+// 한 세션이 여러 액자(공유 링크)를 만들고, 이름 붙여 전환하며 각각 계속 갱신할 수 있다.
+// (관리자의 "액자 보기" 미리보기 모드인 isFrameMode/frameManifest와는 다른, 별개의 상태다.)
+let frames = [];
+let currentFrameId = null;
+
+function renderFrameSelect() {
+  const sel = document.getElementById('frame-select');
+  sel.innerHTML = '';
+  frames.forEach((f) => {
+    const opt = document.createElement('option');
+    opt.value = f.id;
+    opt.textContent = f.name + (f.hasContent ? '' : ' (빈 액자)');
+    if (f.id === currentFrameId) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+// 현재 선택된 액자의 공유 상태(URL·PIN·반영 버튼)를 화면에 반영한다.
+function applyCurrentFrameToShareUI() {
+  const f = frames.find((x) => x.id === currentFrameId);
+  const btnUpdate = document.getElementById('btn-update-share');
+  if (f && f.hasContent) {
+    btnUpdate.classList.remove('hidden');
+    document.getElementById('share-url').value = f.url || '';
+    document.getElementById('btn-open-share').href = f.url || '#';
+    if (f.pin) setSharePin(f.pin); else setSharePin('');
+  } else {
+    btnUpdate.classList.add('hidden');
+    setSharePin('');
+  }
+}
+
+async function loadFrames() {
+  try {
+    const r = await api('/api/frames');
+    frames = r.frames || [];
+    currentFrameId = r.currentFrameId || null;
+    renderFrameSelect();
+    applyCurrentFrameToShareUI();
+  } catch { /* 로그인 전이거나 세션이 없으면 조용히 무시 */ }
+}
+
+document.getElementById('frame-select').addEventListener('change', async (e) => {
+  const id = e.target.value;
+  try {
+    await api(`/api/frames/${encodeURIComponent(id)}/select`, { method: 'POST' });
+    currentFrameId = id;
+    applyCurrentFrameToShareUI();
+  } catch (err) {
+    showToast('액자 전환 실패: ' + err.message);
+  }
+});
+
+document.getElementById('btn-frame-new').addEventListener('click', async () => {
+  const name = prompt('새 액자 이름을 입력하세요.', `액자 ${frames.length + 1}`);
+  if (name === null) return;
+  try {
+    const r = await api('/api/frames', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    frames = r.frames || [];
+    currentFrameId = r.currentFrameId || null;
+    renderFrameSelect();
+    applyCurrentFrameToShareUI();
+    showToast(`"${r.frame?.name || name}" 액자를 만들었습니다. 사진을 공유하면 이 액자에 저장됩니다.`);
+  } catch (err) {
+    showToast('액자 추가 실패: ' + err.message);
+  }
+});
+
+document.getElementById('btn-frame-rename').addEventListener('click', async () => {
+  const f = frames.find((x) => x.id === currentFrameId);
+  if (!f) { showToast('먼저 액자를 선택하세요.'); return; }
+  const name = prompt('새 이름을 입력하세요.', f.name);
+  if (name === null || !name.trim()) return;
+  try {
+    await api(`/api/frames/${encodeURIComponent(f.id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name.trim() }),
+    });
+    await loadFrames();
+  } catch (err) {
+    showToast('이름 변경 실패: ' + err.message);
+  }
+});
+
 // 현재 화면의 사진·제목·음악·전환설정을 서버에 올린다.
 // 서버는 세션마다 같은 shareId를 재사용하므로, 다시 올리면 "같은 링크"의 내용이 갱신된다.
 // mode: 'create'(팝업으로 링크 안내) | 'update'(조용히 반영 후 토스트)
@@ -661,6 +751,7 @@ async function pushShare(mode) {
     if (r.pin) setSharePin(r.pin); // 서버가 확정한 PIN을 화면에 표시
     // 링크가 생겼으면 "링크변경 반영" 버튼을 노출한다.
     document.getElementById('btn-update-share').classList.remove('hidden');
+    await loadFrames(); // 액자 목록·이름표 갱신(자동 생성된 첫 액자 포함)
     if (mode === 'update') {
       showToast(`공유 링크에 반영되었습니다. (사진 ${r.count}장, PIN ${r.pin || '없음'})`);
     } else {
@@ -701,6 +792,7 @@ document.getElementById('btn-revoke-share').addEventListener('click', async () =
     await api('/api/share', { method: 'DELETE' });
     shareModal.classList.add('hidden');
     document.getElementById('btn-update-share').classList.add('hidden'); // 반영할 링크가 없어짐
+    await loadFrames(); // 삭제된 액자를 목록에서 제거
     showToast('공유 링크를 폐기했습니다.');
   } catch (err) {
     showToast('폐기 실패: ' + err.message);
@@ -1084,6 +1176,7 @@ function adminShareRow(s) {
   const t = document.createElement('b');
   t.textContent = s.title || '(제목 없음)';
   line1.appendChild(t);
+  if (s.frameName) line1.appendChild(document.createTextNode(`  [${s.frameName}]`));
   line1.appendChild(document.createTextNode(`  ·  사진 ${s.count}장`));
   const line2 = document.createElement('div');
   line2.className = 'dim';
@@ -1138,6 +1231,7 @@ function adminPinRow(s) {
   const b = document.createElement('b');
   b.textContent = s.title || '(제목 없음)';
   l1.appendChild(b);
+  if (s.frameName) l1.appendChild(document.createTextNode(`  [${s.frameName}]`));
   l1.appendChild(document.createTextNode(`  ·  사진 ${s.count}장`));
   const l2 = document.createElement('div');
   l2.className = 'dim';
@@ -1201,6 +1295,13 @@ function boot(photos) {
   // 있어 로그인 없이도 만들 수 있다(/api/share/blob). 샘플 데모 사진만 제외.
   // 액자 보기(isFrameMode)는 남의 공유를 보는 것이므로 공유 만들기/반영을 감춘다.
   document.getElementById('share-block').classList.toggle('hidden', isDemoMode || isFrameMode);
+  // 세션당 액자 목록: 내 화면(데모·남의 액자 보기가 아닐 때)에서만 불러온다.
+  if (!isDemoMode && !isFrameMode) {
+    loadFrames();
+  } else {
+    frames = [];
+    currentFrameId = null;
+  }
   loadDisplaySettings();
   // 액자 보기: 그 액자에 저장된 제목·전환설정을 그대로 재현한다(로컬 설정보다 우선).
   if (isFrameMode && frameManifest) {

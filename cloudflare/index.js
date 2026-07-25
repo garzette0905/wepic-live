@@ -56,6 +56,50 @@ async function pinToken(env, id, pin) {
 }
 const pinCookieName = (id) => `sp_${id}`;
 
+// ---------- 세션당 액자(다중 액자) ----------
+// 한 세션이 여러 액자(shareId)를 동시에 만들고, 각각을 계속 갱신하며 운영할 수 있게 한다.
+// 옛 버전은 세션당 shareId 하나만 있었다 — 그런 세션을 만나면 액자 1개로 자동 이전한다.
+function ensureFrames(data) {
+  if (!Array.isArray(data.frames)) data.frames = [];
+  if (data.shareId && !data.frames.some((f) => f.id === data.shareId)) {
+    data.frames.push({ id: data.shareId, name: '액자 1' });
+    if (!data.currentFrameId) data.currentFrameId = data.shareId;
+  }
+  delete data.shareId; // frames로 완전히 이전
+  if (data.currentFrameId && !data.frames.some((f) => f.id === data.currentFrameId)) {
+    data.currentFrameId = data.frames[0]?.id || null;
+  }
+  if (!data.currentFrameId && data.frames.length) {
+    data.currentFrameId = data.frames[0].id;
+  }
+}
+function frameNameOf(data, id) {
+  return (data.frames || []).find((f) => f.id === id)?.name || '';
+}
+// 액자 하나의 요약 정보(선택 UI·관리자 목록용)
+async function frameInfo(env, data, f) {
+  const m = await readManifest(env, f.id);
+  return {
+    id: f.id,
+    name: f.name,
+    isCurrent: data.currentFrameId === f.id,
+    hasContent: !!m,
+    title: m?.title || '',
+    pin: m?.pin || null,
+    count: m?.items?.length || 0,
+    thumbUrl: m?.items?.[0]?.thumbUrl || null,
+    url: m ? `${env.BASE_URL}/f/${f.id}` : null,
+    updatedAt: m?.updatedAt || null,
+    expiresAt: m?.expiresAt || null,
+    expired: m ? isExpired(m) : false,
+  };
+}
+async function framesInfoList(env, data) {
+  const out = [];
+  for (const f of data.frames || []) out.push(await frameInfo(env, data, f));
+  return out;
+}
+
 // ---------- 공통 응답 헬퍼 ----------
 const json = (obj, status = 200, headers = {}) =>
   new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', ...headers } });
@@ -156,7 +200,8 @@ async function authCallback(env, url) {
       expiresAt: Date.now() + d.expires_in * 1000,
       email: profile?.email || null,
       name: profile?.name || null,
-      shareId: null,
+      frames: [],
+      currentFrameId: null,
     });
     return redirect('/', { 'Set-Cookie': sidCookie(sid) });
   } catch (err) {
@@ -164,10 +209,15 @@ async function authCallback(env, url) {
   }
 }
 async function apiStatus(request, env) {
-  const { data } = await getSession(request, env);
+  const { sid, data } = await getSession(request, env);
+  if (!data) {
+    return json({ loggedIn: false, email: null, name: null, hasShare: false, sharePin: null, isAdmin: false });
+  }
+  ensureFrames(data);
+  await putSession(env, sid, data);
   const loggedIn = !!(data && data.refreshToken);
   // 이미 만들어 둔 공유 링크가 있으면 "링크변경 반영" 버튼을 바로 노출하기 위한 힌트
-  const manifest = data && data.shareId ? await readManifest(env, data.shareId) : null;
+  const manifest = data.currentFrameId ? await readManifest(env, data.currentFrameId) : null;
   const email = loggedIn ? data.email || null : null;
   return json({
     loggedIn,
@@ -177,6 +227,70 @@ async function apiStatus(request, env) {
     sharePin: manifest ? manifest.pin || null : null, // 현재 공유의 PIN(메인화면 표시용)
     isAdmin: loggedIn && isAdminEmail(env, email),    // Admin 메뉴 노출 여부
   });
+}
+
+// ---------- 세션당 액자(다중 액자) 관리 ----------
+async function apiFramesGet(request, env) {
+  const { sid, data } = await getSession(request, env);
+  if (!data) return json({ frames: [], currentFrameId: null });
+  ensureFrames(data);
+  await putSession(env, sid, data);
+  return json({ frames: await framesInfoList(env, data), currentFrameId: data.currentFrameId || null });
+}
+async function apiFramesCreate(request, env) {
+  let { sid, data } = await getSession(request, env);
+  let setCookie = null;
+  if (!data) data = { frames: [], currentFrameId: null };
+  if (!sid) { sid = randomId(); setCookie = sidCookie(sid); }
+  ensureFrames(data);
+  const body = await request.json().catch(() => ({}));
+  const name = (typeof body.name === 'string' && body.name.trim().slice(0, 30))
+    || `액자 ${data.frames.length + 1}`;
+  const id = randomId(9);
+  data.frames.push({ id, name });
+  data.currentFrameId = id;
+  await putSession(env, sid, data);
+  return json({
+    frame: await frameInfo(env, data, { id, name }),
+    frames: await framesInfoList(env, data),
+    currentFrameId: id,
+  }, 200, setCookie ? { 'Set-Cookie': setCookie } : {});
+}
+async function apiFramesRename(request, env, id) {
+  const { sid, data } = await getSession(request, env);
+  if (!data) return json({ error: '없는 액자입니다.' }, 404);
+  ensureFrames(data);
+  const f = data.frames.find((x) => x.id === id);
+  if (!f) return json({ error: '없는 액자입니다.' }, 404);
+  const body = await request.json().catch(() => ({}));
+  const name = typeof body.name === 'string' ? body.name.trim().slice(0, 30) : '';
+  if (!name) return json({ error: '이름을 입력하세요.' }, 400);
+  f.name = name;
+  await putSession(env, sid, data);
+  return json({ ok: true, frame: await frameInfo(env, data, f) });
+}
+async function apiFramesSelect(request, env, id) {
+  const { sid, data } = await getSession(request, env);
+  if (!data) return json({ error: '없는 액자입니다.' }, 404);
+  ensureFrames(data);
+  const f = data.frames.find((x) => x.id === id);
+  if (!f) return json({ error: '없는 액자입니다.' }, 404);
+  data.currentFrameId = f.id;
+  await putSession(env, sid, data);
+  return json({ ok: true, currentFrameId: f.id });
+}
+// 액자 삭제: R2의 폴더(사진·매니페스트)까지 완전히 지우고 목록에서도 제거한다.
+async function apiFramesDelete(request, env, id) {
+  const { sid, data } = await getSession(request, env);
+  if (!data) return json({ error: '없는 액자입니다.' }, 404);
+  ensureFrames(data);
+  const idx = data.frames.findIndex((x) => x.id === id);
+  if (idx === -1) return json({ error: '없는 액자입니다.' }, 404);
+  await deleteShare(env, id);
+  data.frames.splice(idx, 1);
+  if (data.currentFrameId === id) data.currentFrameId = data.frames[0]?.id || null;
+  await putSession(env, sid, data);
+  return json({ ok: true, currentFrameId: data.currentFrameId, frames: await framesInfoList(env, data) });
 }
 async function apiLogout(request, env) {
   const { sid } = await getSession(request, env);
@@ -208,6 +322,7 @@ async function adminShares(env) {
         title: m.title || '',
         pin: m.pin || null,
         owner: m.owner || null,
+        frameName: m.frameName || null,
         updatedAt: m.updatedAt || null,
         expiresAt: m.expiresAt || null,
         expired: isExpired(m),
@@ -255,7 +370,8 @@ async function canViewShare(request, env, id, manifest) {
   if (!manifest || !manifest.pin) return true;                 // 하위 호환
   const sess = await getSession(request, env);
   if (isAdminEmail(env, sess.data?.email)) return true;         // 관리자 통과
-  if (sess.data?.shareId === id) return true;                   // 만든 본인
+  if ((sess.data?.frames || []).some((f) => f.id === id)) return true; // 만든 본인(다중 액자)
+  if (sess.data?.shareId === id) return true;                   // 구버전 세션 안전망
   const want = await pinToken(env, id, manifest.pin);
   return parseCookies(request)[pinCookieName(id)] === want;
 }
@@ -422,12 +538,14 @@ async function shareCreate(request, env, token, sess) {
   const effect = ['fade', 'slide', 'kenburns'].includes(body.effect) ? body.effect : 'fade';
   if (!items.length) return json({ error: '공유할 사진이 없습니다.' }, 400);
 
-  let shareId = sess.data.shareId;
-  if (!shareId) {
-    shareId = randomId(9);
-    sess.data.shareId = shareId;
-    await putSession(env, sess.sid, sess.data);
+  ensureFrames(sess.data);
+  if (!sess.data.currentFrameId) {
+    const newId = randomId(9);
+    sess.data.frames.push({ id: newId, name: `액자 ${sess.data.frames.length + 1}` });
+    sess.data.currentFrameId = newId;
   }
+  const shareId = sess.data.currentFrameId;
+  await putSession(env, sess.sid, sess.data);
   await deleteShare(env, shareId);
 
   const manifestItems = [];
@@ -456,8 +574,9 @@ async function shareCreate(request, env, token, sess) {
   const prev = await readManifest(env, shareId);
   const pin = normalizePin(body.pin) || (prev && prev.pin) || genPin();
   const owner = sess.data?.email || sess.data?.name || null;
-  await writeManifest(env, shareId, { musicUrl, title, intervalSec, effect, pin, owner, items: manifestItems });
-  return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin });
+  const curFrameName = frameNameOf(sess.data, shareId);
+  await writeManifest(env, shareId, { musicUrl, title, intervalSec, effect, pin, owner, frameName: curFrameName, items: manifestItems });
+  return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, frameId: shareId, frameName: curFrameName });
 }
 
 // 로그인 없이(구글 포토 "공유"로 받은 사진 등): 브라우저가 가진 파일(blob)을 그대로 올려 공유 링크 생성
@@ -473,12 +592,17 @@ async function shareBlob(request, env) {
   const intervalSec = Math.min(60, Math.max(3, Number(form.get('intervalSec')) || 10));
   const effect = ['fade', 'slide', 'kenburns'].includes(form.get('effect')) ? form.get('effect') : 'fade';
 
-  // 게스트도 shareId 유지를 위해 세션을 발급/재사용
+  // 게스트도 액자 목록 유지를 위해 세션을 발급/재사용
   let ssid = sid, sdata = data, setCookie = null;
-  if (!sdata) sdata = { shareId: null };
+  if (!sdata) sdata = { frames: [], currentFrameId: null };
   if (!ssid) { ssid = randomId(); setCookie = sidCookie(ssid); }
-  let shareId = sdata.shareId;
-  if (!shareId) { shareId = randomId(9); sdata.shareId = shareId; }
+  ensureFrames(sdata);
+  if (!sdata.currentFrameId) {
+    const newId = randomId(9);
+    sdata.frames.push({ id: newId, name: `액자 ${sdata.frames.length + 1}` });
+    sdata.currentFrameId = newId;
+  }
+  const shareId = sdata.currentFrameId;
   await putSession(env, ssid, sdata);
   await deleteShare(env, shareId);
 
@@ -503,18 +627,25 @@ async function shareBlob(request, env) {
   const prev = await readManifest(env, shareId);
   const pin = normalizePin(form.get('pin')) || (prev && prev.pin) || genPin();
   const owner = sdata.email || sdata.name || '(게스트)';
-  await writeManifest(env, shareId, { musicUrl, title, intervalSec, effect, pin, owner, items: manifestItems });
-  return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin }, 200, setCookie ? { 'Set-Cookie': setCookie } : {});
+  const curFrameName = frameNameOf(sdata, shareId);
+  await writeManifest(env, shareId, { musicUrl, title, intervalSec, effect, pin, owner, frameName: curFrameName, items: manifestItems });
+  return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, frameId: shareId, frameName: curFrameName }, 200, setCookie ? { 'Set-Cookie': setCookie } : {});
 }
 
+// 공유 링크 즉시 폐기: "현재 액자"를 목록에서 완전히 제거한다.
 async function shareDelete(request, env) {
   const { sid, data } = await getSession(request, env);
-  if (data && data.shareId) {
-    await deleteShare(env, data.shareId);
-    data.shareId = null;
-    if (sid) await putSession(env, sid, data);
+  if (!data) return json({ ok: true, currentFrameId: null, frames: [] });
+  ensureFrames(data);
+  const id = data.currentFrameId;
+  if (id) {
+    await deleteShare(env, id);
+    const idx = data.frames.findIndex((f) => f.id === id);
+    if (idx !== -1) data.frames.splice(idx, 1);
+    data.currentFrameId = data.frames[0]?.id || null;
   }
-  return json({ ok: true });
+  if (sid) await putSession(env, sid, data);
+  return json({ ok: true, currentFrameId: data.currentFrameId, frames: await framesInfoList(env, data) });
 }
 
 // 공개 보기 페이지: 매니페스트 확인 후 share.html(정적) 반환
@@ -596,6 +727,15 @@ export default {
       if (p === '/auth/callback' && m === 'GET') return authCallback(env, url);
       if (p === '/api/status' && m === 'GET') return apiStatus(request, env);
       if (p === '/api/logout' && m === 'POST') return apiLogout(request, env);
+
+      // 세션당 액자 목록(다중 액자)
+      if (p === '/api/frames' && m === 'GET') return apiFramesGet(request, env);
+      if (p === '/api/frames' && m === 'POST') return apiFramesCreate(request, env);
+      const mFrameSelect = p.match(/^\/api\/frames\/([\w-]{6,})\/select$/);
+      if (mFrameSelect && m === 'POST') return apiFramesSelect(request, env, mFrameSelect[1]);
+      const mFrame = p.match(/^\/api\/frames\/([\w-]{6,})$/);
+      if (mFrame && m === 'PUT') return apiFramesRename(request, env, mFrame[1]);
+      if (mFrame && m === 'DELETE') return apiFramesDelete(request, env, mFrame[1]);
 
       if (p === '/api/picker/session' && m === 'POST') return requireLogin(request, env, (rq, en, tok) => pickerCreate(rq, en, tok));
       const mSess = p.match(/^\/api\/picker\/session\/([^/]+)$/);

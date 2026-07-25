@@ -320,6 +320,12 @@
 
       <div class="share-block" id="share-block">
         <div class="section-label">공유</div>
+        <!-- 세션당 여러 액자(공유 링크)를 만들고 이름 붙여 전환할 수 있다 -->
+        <div class="frame-select-row">
+          <select id="frame-select" class="mini-select"></select>
+          <button id="btn-frame-new" class="mini-btn" title="새 액자 추가">+</button>
+          <button id="btn-frame-rename" class="mini-btn" title="이름 바꾸기">✎</button>
+        </div>
         <div class="share-btn-row">
           <button id="btn-make-share" class="secondary slim share-btn">실시간 공유 링크 만들기</button>
           <button id="btn-update-share" class="secondary slim share-btn hidden" title="지금 화면의 사진·제목·음악을 기존 공유 링크에 반영">링크변경 반영</button>

@@ -333,6 +333,8 @@ body.ts-large { --title-size: 28px; }
 
 /* ---------- 공유 블록 / 링크 팝업 ---------- */
 .share-block { flex: none; padding-top: 10px; border-top: 1px solid var(--border); }
+.frame-select-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.frame-select-row .mini-select { flex: 1; min-width: 0; }
 .share-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .share-btn-row { display: flex; gap: 6px; }
 .share-btn-row .share-btn { flex: 1; min-width: 0; }

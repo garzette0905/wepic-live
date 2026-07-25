@@ -77,6 +77,45 @@ function pinToken(id, pin) {
 }
 const pinCookieName = (id) => `sp_${id}`;
 
+// ---------- 세션당 액자(다중 액자) ----------
+// 한 세션이 여러 액자(shareId)를 동시에 만들고, 각각을 계속 갱신하며 운영할 수 있게 한다.
+// 옛 버전은 세션당 shareId 하나만 있었다 — 그런 세션을 만나면 액자 1개로 자동 이전한다.
+function ensureFrames(req) {
+  if (!Array.isArray(req.session.frames)) req.session.frames = [];
+  if (req.session.shareId && !req.session.frames.some((f) => f.id === req.session.shareId)) {
+    req.session.frames.push({ id: req.session.shareId, name: '액자 1' });
+    if (!req.session.currentFrameId) req.session.currentFrameId = req.session.shareId;
+  }
+  delete req.session.shareId; // frames로 완전히 이전
+  if (req.session.currentFrameId && !req.session.frames.some((f) => f.id === req.session.currentFrameId)) {
+    req.session.currentFrameId = req.session.frames[0]?.id || null;
+  }
+  if (!req.session.currentFrameId && req.session.frames.length) {
+    req.session.currentFrameId = req.session.frames[0].id;
+  }
+}
+function frameNameOf(req, id) {
+  return (req.session.frames || []).find((f) => f.id === id)?.name || '';
+}
+// 액자 하나의 요약 정보(선택 UI·관리자 목록용)
+function frameInfo(req, f) {
+  const m = readShareManifest(f.id);
+  return {
+    id: f.id,
+    name: f.name,
+    isCurrent: req.session.currentFrameId === f.id,
+    hasContent: !!m,
+    title: m?.title || '',
+    pin: m?.pin || null,
+    count: m?.items?.length || 0,
+    thumbUrl: m?.items?.[0]?.thumbUrl || null,
+    url: m ? `${BASE_URL}/f/${f.id}` : null,
+    updatedAt: m?.updatedAt || null,
+    expiresAt: m?.expiresAt || null,
+    expired: m ? isShareExpired(m) : false,
+  };
+}
+
 const app = express();
 app.use(express.json({ limit: '4mb' })); // 공유 생성 시 사진 목록(메타데이터) 전송 대비
 
@@ -225,17 +264,76 @@ app.post('/api/logout', (req, res) => {
 // ---------- 상태 ----------
 
 app.get('/api/status', (req, res) => {
+  ensureFrames(req);
   const loggedIn = !!(req.session.tokens && req.session.tokens.refreshToken);
   const email = loggedIn ? req.session.tokens.email || null : null;
-  const manifest = req.session.shareId ? readShareManifest(req.session.shareId) : null;
+  const manifest = req.session.currentFrameId ? readShareManifest(req.session.currentFrameId) : null;
   res.json({
     loggedIn,
     email,
     name: loggedIn ? req.session.tokens.name || null : null,
-    // 이미 만들어 둔 공유 링크가 있으면 "링크변경 반영" 버튼을 바로 노출하기 위한 힌트
+    // 이미 만들어 둔 공유 링크(현재 선택된 액자)가 있으면 "링크변경 반영" 버튼을 바로 노출
     hasShare: !!manifest,
-    sharePin: manifest ? manifest.pin || null : null, // 현재 공유의 PIN(메인화면 표시용)
+    sharePin: manifest ? manifest.pin || null : null, // 현재 액자의 PIN(메인화면 표시용)
     isAdmin: loggedIn && isAdminEmail(email),         // Admin 메뉴 노출 여부
+  });
+});
+
+// ---------- 세션당 액자(다중 액자) 관리 ----------
+app.get('/api/frames', (req, res) => {
+  ensureFrames(req);
+  res.json({
+    frames: req.session.frames.map((f) => frameInfo(req, f)),
+    currentFrameId: req.session.currentFrameId || null,
+  });
+});
+
+app.post('/api/frames', (req, res) => {
+  ensureFrames(req);
+  const name = (typeof req.body?.name === 'string' && req.body.name.trim().slice(0, 30))
+    || `액자 ${req.session.frames.length + 1}`;
+  const id = crypto.randomBytes(9).toString('base64url');
+  req.session.frames.push({ id, name });
+  req.session.currentFrameId = id;
+  res.json({
+    frame: frameInfo(req, { id, name }),
+    frames: req.session.frames.map((f) => frameInfo(req, f)),
+    currentFrameId: id,
+  });
+});
+
+app.put('/api/frames/:id', (req, res) => {
+  ensureFrames(req);
+  const f = req.session.frames.find((x) => x.id === req.params.id);
+  if (!f) return res.status(404).json({ error: '없는 액자입니다.' });
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 30) : '';
+  if (!name) return res.status(400).json({ error: '이름을 입력하세요.' });
+  f.name = name;
+  res.json({ ok: true, frame: frameInfo(req, f) });
+});
+
+app.post('/api/frames/:id/select', (req, res) => {
+  ensureFrames(req);
+  const f = req.session.frames.find((x) => x.id === req.params.id);
+  if (!f) return res.status(404).json({ error: '없는 액자입니다.' });
+  req.session.currentFrameId = f.id;
+  res.json({ ok: true, currentFrameId: f.id });
+});
+
+// 액자 삭제: 폴더(사진·매니페스트)까지 완전히 지우고 목록에서도 제거한다.
+app.delete('/api/frames/:id', (req, res) => {
+  ensureFrames(req);
+  const idx = req.session.frames.findIndex((x) => x.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '없는 액자입니다.' });
+  deleteShareDir(req.params.id);
+  req.session.frames.splice(idx, 1);
+  if (req.session.currentFrameId === req.params.id) {
+    req.session.currentFrameId = req.session.frames[0]?.id || null;
+  }
+  res.json({
+    ok: true,
+    currentFrameId: req.session.currentFrameId,
+    frames: req.session.frames.map((f) => frameInfo(req, f)),
   });
 });
 
@@ -495,6 +593,7 @@ setInterval(cleanupExpiredShares, 60 * 60 * 1000);
 app.post(
   '/api/share',
   requireLogin(async (req, res, token) => {
+    ensureFrames(req);
     const items = Array.isArray(req.body.items) ? req.body.items : [];
     const musicUrl = typeof req.body.musicUrl === 'string' ? req.body.musicUrl : '';
     // 공유 화면에도 동일하게 적용할 제목·전환 간격·전환 효과 (값이 없거나 이상하면 기본값).
@@ -503,9 +602,14 @@ app.post(
     const effect = ['fade', 'slide', 'kenburns'].includes(req.body.effect) ? req.body.effect : 'fade';
     if (!items.length) return res.status(400).json({ error: '공유할 사진이 없습니다.' });
 
-    // 세션마다 고정 공유 id (없으면 생성). 재생성 시 같은 링크에 내용만 갱신.
-    if (!req.session.shareId) req.session.shareId = crypto.randomBytes(9).toString('base64url');
-    const shareId = req.session.shareId;
+    // "현재 액자"에 저장한다(세션당 여러 액자를 각각 독립적으로 갱신할 수 있다).
+    // 아직 액자가 하나도 없으면(첫 공유) 자동으로 하나 만든다.
+    if (!req.session.currentFrameId) {
+      const id = crypto.randomBytes(9).toString('base64url');
+      req.session.frames.push({ id, name: `액자 ${req.session.frames.length + 1}` });
+      req.session.currentFrameId = id;
+    }
+    const shareId = req.session.currentFrameId;
 
     const dir = shareDir(shareId);
     fs.rmSync(dir, { recursive: true, force: true }); // 이전 내용 제거 후 최신본으로 교체
@@ -538,8 +642,9 @@ app.post(
     const prev = readShareManifest(shareId);
     const pin = normalizePin(req.body.pin) || (prev && prev.pin) || genPin();
     const owner = req.session.tokens?.email || req.session.tokens?.name || null;
-    writeShareManifest(shareId, { musicUrl, title, intervalSec, effect, pin, owner, items: manifestItems });
-    res.json({ url: `${BASE_URL}/f/${shareId}`, count: manifestItems.length, pin });
+    const curFrameName = frameNameOf(req, shareId);
+    writeShareManifest(shareId, { musicUrl, title, intervalSec, effect, pin, owner, frameName: curFrameName, items: manifestItems });
+    res.json({ url: `${BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, frameId: shareId, frameName: curFrameName });
   })
 );
 
@@ -557,8 +662,13 @@ app.post('/api/share/blob', upload.array('files', MAX_SHARE_ITEMS), (req, res) =
     const intervalSec = Math.min(60, Math.max(3, Number(req.body.intervalSec) || 10));
     const effect = ['fade', 'slide', 'kenburns'].includes(req.body.effect) ? req.body.effect : 'fade';
 
-    if (!req.session.shareId) req.session.shareId = crypto.randomBytes(9).toString('base64url');
-    const shareId = req.session.shareId;
+    ensureFrames(req);
+    if (!req.session.currentFrameId) {
+      const newId = crypto.randomBytes(9).toString('base64url');
+      req.session.frames.push({ id: newId, name: `액자 ${req.session.frames.length + 1}` });
+      req.session.currentFrameId = newId;
+    }
+    const shareId = req.session.currentFrameId;
 
     const dir = shareDir(shareId);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -587,23 +697,28 @@ app.post('/api/share/blob', upload.array('files', MAX_SHARE_ITEMS), (req, res) =
     const prev = readShareManifest(shareId);
     const pin = normalizePin(req.body.pin) || (prev && prev.pin) || genPin();
     const owner = req.session.tokens?.email || req.session.tokens?.name || '(게스트)';
-    writeShareManifest(shareId, { musicUrl, title, intervalSec, effect, pin, owner, items: manifestItems });
-    res.json({ url: `${BASE_URL}/f/${shareId}`, count: manifestItems.length, pin });
+    const curFrameName = frameNameOf(req, shareId);
+    writeShareManifest(shareId, { musicUrl, title, intervalSec, effect, pin, owner, frameName: curFrameName, items: manifestItems });
+    res.json({ url: `${BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, frameId: shareId, frameName: curFrameName });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// 공유 링크 즉시 폐기: 이 브라우저 세션이 만든 링크를 지금 지운다. 로그인 여부와
-// 무관하게(게스트가 만든 링크도 있으므로) 세션에 저장된 shareId만으로 동작한다.
+// 공유 링크 즉시 폐기: 이 브라우저 세션이 만든 "현재 액자"의 링크를 지금 지운다.
+// 로그인 여부와 무관하게(게스트가 만든 링크도 있으므로) 세션에 저장된 정보만으로 동작한다.
+// 액자 자체를 목록에서 제거하므로, 삭제 후에는 남은 액자 중 하나(또는 없음)가 현재 액자가 된다.
 app.delete('/api/share', (req, res) => {
-  const id = req.session.shareId;
+  ensureFrames(req);
+  const id = req.session.currentFrameId;
   if (id) {
     deleteShareDir(id);
-    req.session.shareId = null;
+    const idx = req.session.frames.findIndex((f) => f.id === id);
+    if (idx !== -1) req.session.frames.splice(idx, 1);
+    req.session.currentFrameId = req.session.frames[0]?.id || null;
   }
-  res.json({ ok: true });
+  res.json({ ok: true, currentFrameId: req.session.currentFrameId, frames: req.session.frames.map((f) => frameInfo(req, f)) });
 });
 
 // ---------- PIN 검증 ----------
@@ -619,7 +734,8 @@ function readCookies(req) {
 function canViewShare(req, id, manifest) {
   if (!manifest || !manifest.pin) return true;                       // 하위 호환
   if (isAdminEmail(req.session?.tokens?.email)) return true;          // 관리자는 통과
-  if (req.session?.shareId === id) return true;                       // 만든 본인
+  if ((req.session?.frames || []).some((f) => f.id === id)) return true; // 만든 본인(다중 액자)
+  if (req.session?.shareId === id) return true;                       // 구버전 세션 안전망
   return readCookies(req)[pinCookieName(id)] === pinToken(id, manifest.pin);
 }
 
@@ -668,6 +784,7 @@ app.get('/api/admin/shares', requireAdmin((req, res) => {
       title: m.title || '',
       pin: m.pin || null,
       owner: m.owner || null,
+      frameName: m.frameName || null,
       updatedAt: m.updatedAt || null,
       expiresAt: m.expiresAt || null,
       expired: isShareExpired(m),
