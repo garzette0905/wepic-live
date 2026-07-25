@@ -40,14 +40,42 @@
      - 실제 배포 시: `https://<도메인>/auth/callback`
    - 생성된 **클라이언트 ID / 시크릿** 복사
 
-## 2. 실행
+## 2. 실행 (권장: `.env` 파일)
 
 ```bash
 cd web
 npm install
+cp .env.example .env      # 그 뒤 .env 를 열어 실제 값 입력
+npm start
 ```
 
-환경변수를 지정해 실행합니다 (PowerShell 예시):
+`npm start`는 `node --env-file-if-exists=.env server.js`로 실행되어 **`.env`를 자동으로 읽습니다.**
+한 번 적어두면 이후에는 `npm start`만 하면 되고, 서버를 껐다 켜도 값이 유지됩니다.
+
+`.env`에 넣는 값 (자세한 설명은 [.env.example](.env.example) 참고):
+
+| 이름 | 설명 |
+|---|---|
+| `GOOGLE_CLIENT_ID` | OAuth 클라이언트 ID (웹 애플리케이션) |
+| `GOOGLE_CLIENT_SECRET` | 그 클라이언트의 시크릿 |
+| `SESSION_SECRET` | 세션·PIN 쿠키 서명 키 (아무 긴 랜덤 문자열) |
+| `ADMIN_EMAILS` | wepic 관리자 메뉴를 쓸 계정 (쉼표로 여러 개) |
+| `BASE_URL` | 공개 주소 (로컬은 생략 → `http://localhost:3000`) |
+| `SHARE_TTL_HOURS` | 공유 링크 자동 만료 시간 (기본 24) |
+
+> ⚠️ **`.env`는 커밋하지 마세요.** `.gitignore`에 등록되어 있습니다(`.env.example`만 커밋됨).
+> 실제 시크릿이 GitHub에 올라가면 유출됩니다.
+>
+> ⚠️ **`SESSION_SECRET`은 고정해서 쓰세요.** 값이 바뀌면 기존 로그인 세션과
+> PIN 열람 쿠키가 모두 무효화되어 재로그인·PIN 재입력이 필요합니다.
+>
+> ℹ️ `--env-file-if-exists`는 **파일이 없으면 그냥 건너뜁니다.** 그래서 `.env`가 없는
+> 배포 환경(Render/Cloudflare — 대시보드 환경변수 사용)에서도 같은 `npm start`가 정상 동작합니다.
+> (Node 22 이상 필요 — `package.json`의 `engines`에 명시)
+
+### `.env` 없이 그때그때 지정하려면
+
+PowerShell:
 
 ```powershell
 $env:GOOGLE_CLIENT_ID="복사한-클라이언트-ID"
@@ -61,6 +89,8 @@ Git Bash / macOS / Linux:
 ```bash
 GOOGLE_CLIENT_ID="..." GOOGLE_CLIENT_SECRET="..." SESSION_SECRET="..." npm start
 ```
+
+이 방식은 **그 터미널 세션에만** 유효해서, 서버를 껐다 켜면 다시 지정해야 합니다.
 
 브라우저에서 `http://localhost:3000` 접속 → "Google 계정으로 로그인" → 사진 선택 → 슬라이드쇼.
 

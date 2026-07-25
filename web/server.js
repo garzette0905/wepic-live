@@ -1,5 +1,5 @@
 /**
- * 기억 조각 이어주기 - 웹 버전 백엔드
+ * Wepic Live - 웹 버전 백엔드
  *
  * 브라우저에 클라이언트 시크릿·토큰을 노출하지 않기 위해, OAuth 토큰 교환과
  * 구글 API 호출을 모두 이 서버에서 처리한다. 브라우저는 세션 쿠키만 들고
@@ -726,6 +726,6 @@ app.post('/share-target', (req, res) => res.redirect('/'));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.listen(PORT, () => {
-  console.log(`\n기억 조각 이어주기 (웹) 실행 중: ${BASE_URL}`);
+  console.log(`\nWepic Live (웹) 실행 중: ${BASE_URL}`);
   console.log(`OAuth 리디렉션 URI: ${REDIRECT_URI}\n`);
 });

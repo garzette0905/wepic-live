@@ -16,3 +16,9 @@ node_modules/
 
 # 런타임 생성 설정 파일 (Default 정보관리)
 web/settings.json
+
+# 로컬 환경변수 (시크릿 포함) — 절대 커밋 금지. 예시는 web/.env.example 참고
+.env
+*.env
+!.env.example
+!*.env.example

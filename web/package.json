@@ -1,10 +1,13 @@
 {
-  "name": "memory-frame-web",
+  "name": "wepic-live-web",
   "version": "0.1.0",
-  "description": "기억 조각 이어주기 - 웹 버전 (Google Photos Picker API)",
+  "description": "Wepic Live - 웹 버전 (Google Photos Picker API)",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node --env-file-if-exists=.env server.js"
+  },
+  "engines": {
+    "node": ">=22"
   },
   "dependencies": {
     "express": "^4.21.2",
