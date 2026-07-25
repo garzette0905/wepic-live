@@ -3,9 +3,6 @@
   "private": true,
   "type": "module",
   "description": "Wepic Live — Cloudflare Worker 백엔드",
-  "dependencies": {
-    "@paulmillr/qr": "^0.2.1"
-  },
   "devDependencies": {
     "wrangler": "^3.90.0"
   }

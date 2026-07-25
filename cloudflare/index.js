@@ -2,7 +2,7 @@
 // 세션: Workers KV(SESSIONS) · 공유 파일: R2(SHARES) · 정적: ASSETS(web/public 복사본)
 // 시크릿: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET
 // 변수: BASE_URL, SHARE_TTL_HOURS
-import encodeQR from '@paulmillr/qr';
+// (QR 코드는 CPU 제한 때문에 서버에서 만들지 않고 브라우저에서 생성한다 — pickerCreate 참고)
 
 const SCOPE = 'email profile https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -154,12 +154,10 @@ async function pickerCreate(request, env, token) {
   });
   if (!r.ok) return json({ error: await upstreamError('사진 선택 세션 생성', r) }, r.status === 401 ? 500 : r.status);
   const s = await r.json();
-  let qrDataUrl = '';
-  try {
-    const svg = encodeQR(s.pickerUri, 'svg');
-    qrDataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-  } catch { /* QR 실패해도 pickerUri로 진행 */ }
-  return json({ id: s.id, pickerUri: s.pickerUri, qrDataUrl, pollingConfig: s.pollingConfig });
+  // QR은 여기서 만들지 않는다: 무료 플랜의 요청당 CPU 10ms 한도를 QR 인코딩(10~30ms)이
+  // 넘겨 Worker가 강제 종료되고, Cloudflare가 HTML 오류 페이지를 반환한다(try/catch로 못 잡음).
+  // 대신 브라우저가 pickerUri로 직접 생성한다(web/public/vendor/qr.js).
+  return json({ id: s.id, pickerUri: s.pickerUri, qrDataUrl: '', pollingConfig: s.pollingConfig });
 }
 async function pickerPoll(env, token, id) {
   const r = await fetch(`${PICKER_BASE}/sessions/${encodeURIComponent(id)}`, { headers: { Authorization: 'Bearer ' + token } });

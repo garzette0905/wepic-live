@@ -315,6 +315,18 @@
     </div>
   </div>
 
+  <!-- QR 생성은 브라우저에서 한다. (Cloudflare Workers 무료 플랜은 요청당 CPU 10ms 제한이라
+       서버에서 QR을 만들면 리소스 한도를 초과해 Worker가 종료된다.) 외부 서비스로 pickerUri를
+       보내지 않도록 라이브러리를 프로젝트에 포함해 로컬에서 생성한다. -->
+  <script type="module">
+    import encodeQR from './vendor/qr.js';
+    window.makeQrDataUrl = (text) => {
+      try {
+        const svg = encodeQR(text, 'svg', { border: 2, ecc: 'medium' });
+        return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      } catch { return ''; }
+    };
+  </script>
   <script src="app.js"></script>
 </body>
 </html>

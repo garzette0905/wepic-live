@@ -85,8 +85,11 @@ async function startPickerFlow() {
   try {
     const s = await api('/api/picker/session', { method: 'POST' });
     pickerSessionId = s.id;
-    qrEl.src = s.qrDataUrl;
-    qrEl.classList.remove('hidden');
+    // QR은 서버가 보내주면 그대로 쓰고, 없으면(Cloudflare Workers 등 CPU 제한 환경)
+    // 브라우저에서 직접 만든다. pickerUri를 외부로 보내지 않는다.
+    const qrSrc = s.qrDataUrl || (window.makeQrDataUrl ? window.makeQrDataUrl(s.pickerUri) : '');
+    qrEl.src = qrSrc;
+    qrEl.classList.toggle('hidden', !qrSrc);
     openBtn.onclick = () => window.open(s.pickerUri, '_blank');
     statusEl.textContent = '사진을 선택하면 자동으로 이어집니다...';
     pollPicker();
