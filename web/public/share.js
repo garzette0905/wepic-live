@@ -87,28 +87,83 @@ function ytId(url) {
   for (const re of pats) { const m = url.match(re); if (m) return m[1]; }
   return null;
 }
-// 무음으로 플레이어를 만들어(음소거 자동재생) 곡 제목을 얻고 캡션에 표시한다. 소리는 나지 않는다.
-async function initMusic() {
-  const id = musicUrl ? ytId(musicUrl) : null;
-  if (!id) return;
-  await loadYouTubeApi();
-  await new Promise((resolve) => {
-    ytPlayer = new YT.Player('yt-player', {
-      videoId: id,
-      playerVars: { autoplay: 1, mute: 1, loop: 1, playlist: id, controls: 0 },
-      events: { onReady: (e) => { try { e.target.mute(); e.target.playVideo(); } catch {} resolve(); } },
+// 플레이어는 페이지당 딱 한 번만 만든다. (같은 요소에 두 번 new YT.Player를 하면 두 번째
+// 객체는 API 메서드가 없는 깨진 객체가 되어 재생·곡목·곡교체가 전부 실패한다.)
+let playerPromise = null; // 생성 1회 보장 + 준비 완료 대기용
+
+function ensurePlayer(videoId) {
+  if (playerPromise) return playerPromise;
+  playerPromise = (async () => {
+    await loadYouTubeApi();
+    await new Promise((resolve) => {
+      ytPlayer = new YT.Player('yt-player', {
+        videoId,
+        playerVars: { autoplay: 1, mute: 1, loop: 1, playlist: videoId, controls: 0 },
+        events: {
+          onReady: (e) => { try { e.target.mute(); e.target.playVideo(); } catch {} resolve(); kickPlay(); },
+          // 재생 불가(퍼가기 금지·삭제된 영상 등)면 곡목 안내를 지운다
+          onError: () => { musicTitle = ''; renderCaption(); },
+        },
+      });
     });
-  });
-  // 제목 읽기 (소리와 무관). 메타데이터 로딩 지연 대비 두 번 시도.
-  const readTitle = () => { try { musicTitle = ytPlayer.getVideoData()?.title || musicTitle; renderCaption(); } catch {} };
+  })();
+  return playerPromise;
+}
+
+// 제목 읽기 (소리와 무관). 메타데이터 로딩 지연 대비 두 번 시도.
+function readMusicTitleSoon() {
+  const readTitle = () => {
+    try { musicTitle = ytPlayer?.getVideoData?.()?.title || musicTitle; renderCaption(); } catch {}
+  };
   setTimeout(readTitle, 900);
   setTimeout(readTitle, 2500);
+}
+
+// 무음으로 재생을 시작해 곡 제목만 확보한다(소리는 ▶ 버튼으로). 여러 번 호출해도 안전.
+async function initMusic() {
+  const id = musicUrl ? ytId(musicUrl) : null;
+  const btn = document.getElementById('btn-music');
+  if (!id) { btn.style.display = 'none'; return; }
+  await ensurePlayer(id);
+  readMusicTitleSoon();
+  btn.style.display = 'flex';
+  updateMusicBtn();
+}
+
+// loadVideoById 직후의 playVideo()는 아직 로딩 중이라 무시될 수 있다(미시작 -1 상태로 멈춤).
+// 재생/버퍼링 상태가 될 때까지 몇 번 더 눌러준다.
+function kickPlay(attempts = 8) {
+  let n = 0;
+  const tick = () => {
+    if (!ytPlayer) return;
+    let st;
+    try { st = ytPlayer.getPlayerState(); } catch { return; }
+    if (st === 1 || st === 3) return; // 1=재생중, 3=버퍼링 → 성공
+    try { ytPlayer.playVideo(); } catch {}
+    if (++n < attempts) setTimeout(tick, 700);
+  };
+  setTimeout(tick, 250);
+}
+
+// 곡 교체 (플레이어가 아직 준비 중이면 준비된 뒤에 적용)
+async function changeMusic(id) {
+  await ensurePlayer(id); // 아직 없으면 이 곡으로 생성됨
+  try {
+    if (ytPlayer.getVideoData?.()?.video_id !== id) ytPlayer.loadVideoById(id);
+    if (soundOn) { ytPlayer.unMute(); ytPlayer.setVolume(80); } else { ytPlayer.mute(); }
+  } catch {}
+  kickPlay();
+  musicTitle = '';
+  readMusicTitleSoon();
   document.getElementById('btn-music').style.display = 'flex';
   updateMusicBtn();
 }
-function playSound() {
+
+async function playSound() {
+  if (playerPromise) await playerPromise; // 준비 전 클릭 대비
   if (!ytPlayer) return;
   try { ytPlayer.unMute(); ytPlayer.setVolume(80); ytPlayer.playVideo(); } catch {}
+  kickPlay(); // 미시작 상태였다면 재생까지 확실히
   soundOn = true;
   updateMusicBtn();
 }
@@ -228,21 +283,13 @@ function applyManifest(data) {
     musicUrl = newMusic;
     const newId = musicUrl ? ytId(musicUrl) : null;
     if (!newId) {
-      try { ytPlayer?.pauseVideo(); } catch {}
+      // 음악이 제거된 경우: 정지하고 버튼·곡목 숨김
+      try { ytPlayer?.pauseVideo?.(); } catch {}
       musicTitle = '';
       document.getElementById('btn-music').style.display = 'none';
       renderCaption();
-    } else if (ytPlayer) {
-      try {
-        ytPlayer.loadVideoById(newId);
-        if (!soundOn) ytPlayer.mute();
-      } catch {}
-      musicTitle = '';
-      const readTitle = () => { try { musicTitle = ytPlayer.getVideoData()?.title || ''; renderCaption(); } catch {} };
-      setTimeout(readTitle, 900);
-      setTimeout(readTitle, 2500);
     } else {
-      initMusic(); // 원래 음악이 없다가 새로 생긴 경우
+      changeMusic(newId); // 최초 생성/곡 교체 모두 여기서 처리(중복 생성 없음)
     }
   }
 }
@@ -287,8 +334,9 @@ async function init() {
   await show();
   resetTimer();
 
-  // 음악이 있으면 무음으로 시작해 곡목만 표시(소리는 ▶ 버튼으로). 자동으로 소리 내지 않음.
-  if (musicUrl) initMusic();
+  // 음악은 위 applyManifest에서 이미 무음 재생으로 시작됨(중복 생성 방지). 여기서는
+  // 혹시 누락된 경우만 보정한다(initMusic은 여러 번 호출해도 안전).
+  if (musicUrl && !playerPromise) initMusic();
 
   setInterval(pollForUpdates, POLL_MS);
 }
