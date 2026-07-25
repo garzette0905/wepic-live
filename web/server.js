@@ -292,6 +292,15 @@ app.get(
   })
 );
 
+// ?dl=<파일명> 이 오면 Content-Disposition: attachment 를 붙여 브라우저가 저장하게 만든다.
+// (헤더 인젝션·경로 이탈을 막기 위해 개행·따옴표·슬래시를 제거하고 길이를 제한)
+function setDownloadHeader(res, dl) {
+  if (!dl) return;
+  const safe = String(dl).replace(/[\r\n"\\/]/g, '').replace(/[^\w.\-()가-힣 ]/g, '').slice(0, 120);
+  if (!safe) return;
+  res.set('Content-Disposition', `attachment; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(safe)}`);
+}
+
 // 이미지 프록시: baseUrl은 Authorization 헤더가 있어야 받을 수 있어 서버가 대신 받아 전달.
 // 오픈 프록시가 되지 않도록 구글 사용자 콘텐츠 호스트만 허용한다.
 app.get(
@@ -308,6 +317,10 @@ app.get(
     if (!r.ok) return res.status(r.status).send('image fetch failed');
     res.set('Content-Type', r.headers.get('content-type') || 'image/jpeg');
     res.set('Cache-Control', 'private, max-age=3000');
+    res.set('X-Robots-Tag', 'noindex, nofollow');
+    // ?dl=<파일명> 이 있으면 브라우저가 "저장"하도록 한다. blob 대신 이 실제 URL을 쓰면
+    // 카카오톡 등 인앱 브라우저(WebView)의 다운로드 매니저도 파일을 받을 수 있다.
+    setDownloadHeader(res, req.query.dl);
     const buf = Buffer.from(await r.arrayBuffer());
     res.send(buf);
   })
@@ -524,8 +537,17 @@ app.delete('/api/share', (req, res) => {
   res.json({ ok: true });
 });
 
+// 공유 사진 파일(/shares/...): 검색엔진 색인 금지 + ?dl=<파일명> 이면 저장(attachment).
+// express.static 보다 먼저 등록해야 헤더가 적용된다.
+app.use('/shares', (req, res, next) => {
+  res.set('X-Robots-Tag', 'noindex, nofollow');
+  setDownloadHeader(res, req.query.dl);
+  next();
+});
+
 // 공개 보기 페이지 (로그인 불필요)
 app.get('/f/:id', (req, res) => {
+  res.set('X-Robots-Tag', 'noindex, nofollow');
   if (!/^[\w-]{6,}$/.test(req.params.id)) return res.status(404).send('잘못된 링크입니다.');
   const manifest = readShareManifest(req.params.id);
   if (!manifest) {

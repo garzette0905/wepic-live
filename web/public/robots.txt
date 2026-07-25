@@ -1,0 +1,9 @@
+# Wepic Live
+# 공유 링크(/f/<id>)와 공유 사진 파일(/shares/...)은 링크를 아는 사람만 보는
+# 비공개성 경로다. 검색엔진에 색인되지 않도록 크롤링을 금지한다.
+User-agent: *
+Disallow: /f/
+Disallow: /shares/
+Disallow: /img
+Disallow: /video
+Disallow: /api/

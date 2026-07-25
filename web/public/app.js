@@ -282,6 +282,7 @@ function updateMeta(photo) {
   updateFullscreenCaption(photo);
   updateActiveThumb();
   updateProgress();
+  updateDownloadBtn(); // 동영상이면 저장 버튼 비활성
 }
 
 // 하단 진행바: 현재 사진이 전체에서 몇 번째인지 (희미한 참고용)
@@ -453,85 +454,45 @@ function showToast(msg) {
   toastHandle = setTimeout(() => el.classList.add('hidden'), 2500);
 }
 
-// ---------- 다운로드 (이 사진만 / 전체) ----------
-// blob으로 받아 <a download>로 저장한다. 원본(프록시가 내려주는 원본 화질)을 그대로 저장하며
-// 모바일에서도 같은 방식으로 동작한다(캔버스 변환·재압축 없음).
-function fileExtFromType(type) {
-  if (/png/.test(type)) return 'png';
-  if (/webp/.test(type)) return 'webp';
-  if (/gif/.test(type)) return 'gif';
-  if (/mp4/.test(type)) return 'mp4';
-  if (/quicktime|mov/.test(type)) return 'mov';
-  if (/webm/.test(type)) return 'webm';
-  return 'jpg';
-}
-function photoFileName(photo, idx, type) {
+// ---------- 다운로드 (현재 사진 1장) ----------
+// 서버가 ?dl=<파일명>에 Content-Disposition: attachment 를 붙여주므로, blob을 만들지 않고
+// "실제 URL"을 가리키는 <a>만 클릭한다. blob: URL은 카카오톡 등 인앱 브라우저(WebView)의
+// 다운로드 매니저가 받아올 수 없어 저장이 실패하기 때문이다.
+// 동영상은 저장 대상이 아니다(아이콘 비활성).
+function photoFileName(photo, idx) {
   const d = new Date(photo.createTime);
   const stamp = Number.isNaN(d.getTime())
     ? String(idx + 1).padStart(3, '0')
     : `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
-  return `wepic_${String(idx + 1).padStart(3, '0')}_${stamp}.${fileExtFromType(type)}`;
+  return `wepic_${String(idx + 1).padStart(3, '0')}_${stamp}.jpg`;
 }
-function saveBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
+function downloadPhoto(photo, idx) {
+  const filename = photoFileName(photo, idx);
+  const sep = photo.fullUrl.includes('?') ? '&' : '?';
   const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
+  a.href = `${photo.fullUrl}${sep}dl=${encodeURIComponent(filename)}`;
+  a.download = filename; // PC 브라우저용 힌트(실제 강제는 서버 헤더가 담당)
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
-}
-// 동영상이면 원본(videoUrl), 사진이면 fullUrl을 내려받는다.
-async function downloadOne(photo, idx) {
-  const src = photo.type === 'video' && photo.videoUrl ? photo.videoUrl : photo.fullUrl;
-  const res = await fetch(src, { credentials: 'same-origin' });
-  if (!res.ok) throw new Error(`다운로드 실패 (${res.status})`);
-  const blob = await res.blob();
-  saveBlob(blob, photoFileName(photo, idx, blob.type));
 }
 
-const downloadMenu = document.getElementById('download-menu');
-const hideDownloadMenu = () => downloadMenu.classList.add('hidden');
+// 현재 항목이 동영상이면 저장 불가 → 버튼 비활성화
+function updateDownloadBtn() {
+  const btn = document.getElementById('btn-download');
+  if (!btn) return;
+  const cur = filteredPhotos[currentIndex];
+  const isVideo = !!(cur && cur.type === 'video');
+  btn.disabled = !cur || isVideo;
+  btn.title = isVideo ? '동영상은 저장할 수 없습니다' : '이 사진 저장';
+}
 
-document.getElementById('btn-download').addEventListener('click', (e) => {
-  e.stopPropagation();
-  if (!filteredPhotos.length) { showToast('저장할 사진이 없습니다.'); return; }
-  downloadMenu.classList.toggle('hidden');
-});
-// 메뉴 밖을 누르면 닫기
-document.addEventListener('click', (e) => {
-  if (!downloadMenu.classList.contains('hidden') && !downloadMenu.contains(e.target)) hideDownloadMenu();
-});
-
-document.getElementById('dl-current').addEventListener('click', async () => {
-  hideDownloadMenu();
+document.getElementById('btn-download').addEventListener('click', () => {
   const photo = filteredPhotos[currentIndex];
-  if (!photo) return;
-  try {
-    showToast('저장 중...');
-    await downloadOne(photo, currentIndex);
-    showToast('저장되었습니다.');
-  } catch (err) {
-    showToast('저장 실패: ' + err.message);
-  }
-});
-
-document.getElementById('dl-all').addEventListener('click', async () => {
-  hideDownloadMenu();
-  const list = filteredPhotos.slice();
-  if (!list.length) return;
-  let ok = 0, fail = 0;
-  for (let i = 0; i < list.length; i++) {
-    showToast(`전체 저장 중... (${i + 1}/${list.length})`);
-    try {
-      await downloadOne(list[i], i);
-      ok++;
-    } catch { fail++; }
-    // 브라우저가 연속 다운로드를 차단하지 않도록 약간의 간격을 둔다
-    await new Promise((r) => setTimeout(r, 350));
-  }
-  showToast(fail ? `저장 완료 ${ok}장 (실패 ${fail}장)` : `전체 ${ok}장 저장되었습니다.`);
+  if (!photo) { showToast('저장할 사진이 없습니다.'); return; }
+  if (photo.type === 'video') { showToast('동영상은 저장할 수 없습니다.'); return; }
+  downloadPhoto(photo, currentIndex);
+  showToast('저장을 시작했습니다.');
 });
 
 // ---------- 배경음악 (YouTube IFrame API) ----------

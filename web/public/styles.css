@@ -134,18 +134,9 @@ video.photo-layer { background: #000; }
 .icon-btn:hover { opacity: 1; background: rgba(0,0,0,0.7); filter: none; }
 .photo-actions { position: absolute; left: 16px; bottom: 16px; display: flex; gap: 8px; z-index: 5; }
 
-/* 다운로드 옵션 메뉴 (아이콘 위로 펼침) */
-.download-menu {
-  position: absolute; left: 0; bottom: 46px; z-index: 8;
-  background: rgba(13, 20, 36, 0.96); border: 1px solid var(--border); border-radius: 10px;
-  padding: 6px; display: flex; flex-direction: column; gap: 4px; min-width: 176px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5); backdrop-filter: blur(6px);
-}
-.dl-item {
-  background: transparent; color: var(--text-main); text-align: left;
-  padding: 9px 11px; font-size: 13px; font-weight: 500; border-radius: 7px; white-space: nowrap;
-}
-.dl-item:hover { background: rgba(255, 255, 255, 0.1); filter: none; }
+/* 저장할 수 없을 때(동영상 등) 다운로드 아이콘 비활성 표시 */
+.icon-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+.icon-btn:disabled:hover { opacity: 0.25; background: rgba(0,0,0,0.45); }
 .fullscreen-btn { position: absolute; right: 16px; z-index: 5; }
 .fullscreen-btn.fs-bottom { bottom: 16px; }
 .fullscreen-btn .icon-shrink { display: none; }

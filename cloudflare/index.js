@@ -212,6 +212,14 @@ async function pickerMedia(env, token, url) {
 function allowedHost(u) {
   try { return /(^|\.)googleusercontent\.com$/.test(new URL(u).hostname); } catch { return false; }
 }
+// ?dl=<파일명> 이면 Content-Disposition: attachment 를 붙여 브라우저가 저장하게 만든다.
+// (헤더 인젝션·경로 이탈 방지를 위해 개행·따옴표·슬래시 제거 + 길이 제한)
+function setDownloadHeader(headers, dl) {
+  if (!dl) return;
+  const safe = String(dl).replace(/[\r\n"\\/]/g, '').replace(/[^\w.\-()가-힣 ]/g, '').slice(0, 120);
+  if (!safe) return;
+  headers.set('Content-Disposition', `attachment; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(safe)}`);
+}
 async function imgProxy(env, token, url) {
   const u = url.searchParams.get('u');
   const sz = (url.searchParams.get('sz') || 'w800-h800').replace(/[^\w-]/g, '');
@@ -219,10 +227,13 @@ async function imgProxy(env, token, url) {
   if (!allowedHost(u)) return text('forbidden host', 403);
   const r = await fetch(`${u}=${sz}`, { headers: { Authorization: 'Bearer ' + token } });
   if (!r.ok) return text('image fetch failed', r.status);
-  return new Response(r.body, {
-    status: 200,
-    headers: { 'Content-Type': r.headers.get('content-type') || 'image/jpeg', 'Cache-Control': 'private, max-age=3000' },
+  const h = new Headers({
+    'Content-Type': r.headers.get('content-type') || 'image/jpeg',
+    'Cache-Control': 'private, max-age=3000',
+    'X-Robots-Tag': 'noindex, nofollow',
   });
+  setDownloadHeader(h, url.searchParams.get('dl'));
+  return new Response(r.body, { status: 200, headers: h });
 }
 async function videoProxy(request, env, token, url) {
   const u = url.searchParams.get('u');
@@ -383,7 +394,11 @@ async function shareViewPage(env, id) {
     await deleteShare(env, id);
     return html('링크가 만료되었습니다. 공유한 분에게 새 링크를 요청해주세요.', 404);
   }
-  return env.ASSETS.fetch(new Request(env.BASE_URL + '/share.html'));
+  // 검색엔진 색인 금지 헤더를 붙여 내려준다(share.html의 meta robots와 이중 안전장치).
+  const res = await env.ASSETS.fetch(new Request(env.BASE_URL + '/share.html'));
+  const h = new Headers(res.headers);
+  h.set('X-Robots-Tag', 'noindex, nofollow');
+  return new Response(res.body, { status: res.status, headers: h });
 }
 
 // /shares/<id>/... → R2에서 서빙
@@ -393,13 +408,14 @@ function guessType(key) {
   if (key.endsWith('.json')) return 'application/json; charset=utf-8';
   return 'application/octet-stream';
 }
-async function shareAsset(env, pathname) {
+async function shareAsset(env, pathname, url) {
   const key = pathname.replace(/^\/shares\//, '');
   if (!/^[\w-]{6,}\//.test(key)) return text('not found', 404);
   const obj = await env.SHARES.get(key);
   if (!obj) return text('not found', 404);
   const headers = new Headers();
   headers.set('Content-Type', obj.httpMetadata?.contentType || guessType(key));
+  headers.set('X-Robots-Tag', 'noindex, nofollow'); // 검색엔진 색인 금지
   if (key.endsWith('photos.json')) {
     let m = null;
     try { m = JSON.parse(await obj.text()); } catch {}
@@ -408,6 +424,7 @@ async function shareAsset(env, pathname) {
     return new Response(JSON.stringify(m), { status: 200, headers });
   }
   headers.set('Cache-Control', 'public, max-age=300');
+  setDownloadHeader(headers, url && url.searchParams.get('dl')); // ?dl=<파일명> → 저장
   return new Response(obj.body, { status: 200, headers });
 }
 
@@ -456,7 +473,7 @@ export default {
 
       const mF = p.match(/^\/f\/([\w-]{6,})$/);
       if (mF && m === 'GET') return shareViewPage(env, mF[1]);
-      if (p.startsWith('/shares/') && m === 'GET') return shareAsset(env, p);
+      if (p.startsWith('/shares/') && m === 'GET') return shareAsset(env, p, url);
 
       // 그 외에는 정적 자산(web/public)
       return env.ASSETS.fetch(request);

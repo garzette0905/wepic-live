@@ -6,6 +6,7 @@ let idx = 0;
 let activeLayer = 'a';
 let timer = null;
 let intervalMs = 10000; // 링크 생성 시점의 전환 간격 (없으면 10초)
+let slidePaused = false; // 사진 슬라이드 멈춤 여부 (음악 소리 on/off와는 별개)
 
 function formatDate(iso) {
   const d = new Date(iso);
@@ -56,7 +57,12 @@ function updateProgress() {
 }
 
 function advance() { if (photos.length) { idx = (idx + 1) % photos.length; show(); } }
-function resetTimer() { if (timer) clearInterval(timer); timer = setInterval(advance, intervalMs); }
+function resetTimer() {
+  if (timer) clearInterval(timer);
+  timer = null;
+  if (slidePaused) return; // 멈춤 상태면 타이머를 다시 걸지 않는다
+  timer = setInterval(advance, intervalMs);
+}
 
 // ---- 전체화면 ----
 function setFullscreen(on) {
@@ -196,64 +202,49 @@ function showToast(msg) {
   if (toastHandle) clearTimeout(toastHandle);
   toastHandle = setTimeout(() => el.classList.add('hidden'), 2500);
 }
-function saveBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
-}
-function dlName(p, i, type) {
+// 서버가 ?dl=<파일명>에 Content-Disposition: attachment 를 붙여주므로, blob을 만들지 않고
+// "실제 URL"을 가리키는 <a>만 클릭한다. blob: URL은 카카오톡 등 인앱 브라우저(WebView)의
+// 다운로드 매니저가 받아올 수 없어 저장이 실패한다.
+function dlName(p, i) {
   const d = new Date(p.createTime);
   const stamp = Number.isNaN(d.getTime())
     ? String(i + 1).padStart(3, '0')
     : `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
-  const ext = /png/.test(type) ? 'png' : /webp/.test(type) ? 'webp' : 'jpg';
+  const ext = /\.png($|\?)/i.test(p.fullUrl) ? 'png' : 'jpg';
   return `wepic_${String(i + 1).padStart(3, '0')}_${stamp}.${ext}`;
 }
-async function downloadOne(p, i) {
-  const res = await fetch(p.fullUrl, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`다운로드 실패 (${res.status})`);
-  const blob = await res.blob();
-  saveBlob(blob, dlName(p, i, blob.type));
+function downloadPhoto(p, i) {
+  const filename = dlName(p, i);
+  const sep = p.fullUrl.includes('?') ? '&' : '?';
+  const a = document.createElement('a');
+  a.href = `${p.fullUrl}${sep}dl=${encodeURIComponent(filename)}`;
+  a.download = filename; // PC 브라우저용 힌트(실제 강제는 서버 헤더가 담당)
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
-const downloadMenu = document.getElementById('download-menu');
-document.getElementById('btn-download').addEventListener('click', (e) => {
-  e.stopPropagation();
-  if (!photos.length) return;
-  downloadMenu.classList.toggle('hidden');
-});
-document.addEventListener('click', (e) => {
-  if (!downloadMenu.classList.contains('hidden') && !downloadMenu.contains(e.target)) downloadMenu.classList.add('hidden');
-});
-document.getElementById('dl-current').addEventListener('click', async () => {
-  downloadMenu.classList.add('hidden');
+document.getElementById('btn-download').addEventListener('click', () => {
   const p = photos[idx];
-  if (!p) return;
-  try {
-    showToast('저장 중...');
-    await downloadOne(p, idx);
-    showToast('저장되었습니다.');
-  } catch (err) {
-    showToast('저장 실패: ' + err.message);
-  }
+  if (!p) { showToast('저장할 사진이 없습니다.'); return; }
+  downloadPhoto(p, idx);
+  showToast('저장을 시작했습니다.');
 });
-document.getElementById('dl-all').addEventListener('click', async () => {
-  downloadMenu.classList.add('hidden');
-  const list = photos.slice();
-  if (!list.length) return;
-  let ok = 0, fail = 0;
-  for (let i = 0; i < list.length; i++) {
-    showToast(`전체 저장 중... (${i + 1}/${list.length})`);
-    try { await downloadOne(list[i], i); ok++; } catch { fail++; }
-    await new Promise((r) => setTimeout(r, 350)); // 연속 다운로드 차단 방지
-  }
-  showToast(fail ? `저장 완료 ${ok}장 (실패 ${fail}장)` : `전체 ${ok}장 저장되었습니다.`);
-});
+
+// ---- 사진 슬라이드 멈춤/재개 (음악 토글과 별개) ----
+function updateSlideBtn() {
+  const b = document.getElementById('btn-slide');
+  b.classList.toggle('paused', slidePaused);
+  b.title = slidePaused ? '사진 슬라이드 재개' : '사진 슬라이드 멈춤';
+  b.style.opacity = slidePaused ? '1' : '0.7';
+}
+function setSlidePaused(paused) {
+  slidePaused = paused;
+  if (paused) { if (timer) clearInterval(timer); timer = null; }
+  else resetTimer();
+  updateSlideBtn();
+}
+document.getElementById('btn-slide').addEventListener('click', () => setSlidePaused(!slidePaused));
 
 // ---- 매니페스트 적용 (최초 로드 / 변경 반영 공용) ----
 let lastUpdatedAt = null;
@@ -333,6 +324,7 @@ async function init() {
   idx = 0;
   await show();
   resetTimer();
+  updateSlideBtn(); // 슬라이드 멈춤/재개 버튼 초기 상태(재생 중 = ⏸ 표시)
 
   // 음악은 위 applyManifest에서 이미 무음 재생으로 시작됨(중복 생성 방지). 여기서는
   // 혹시 누락된 경우만 보정한다(initMusic은 여러 번 호출해도 안전).
