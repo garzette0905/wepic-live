@@ -138,13 +138,21 @@ async function apiLogout(request, env) {
 }
 
 // ---------- Picker 프록시 ----------
+// 업스트림(구글) 실패를 사용자에게 읽히는 메시지로 만든다. 본문이 비어 있으면 상태코드라도 보이게.
+async function upstreamError(label, r) {
+  let body = '';
+  try { body = (await r.text()) || ''; } catch { /* 무시 */ }
+  const brief = body.slice(0, 300).replace(/\s+/g, ' ').trim();
+  return `${label} 실패 (Google ${r.status})${brief ? ': ' + brief : ' — 응답 본문 없음'}`;
+}
+
 async function pickerCreate(request, env, token) {
   const r = await fetch(`${PICKER_BASE}/sessions`, {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
     body: '{}',
   });
-  if (!r.ok) return json({ error: await r.text() }, r.status);
+  if (!r.ok) return json({ error: await upstreamError('사진 선택 세션 생성', r) }, r.status === 401 ? 500 : r.status);
   const s = await r.json();
   let qrDataUrl = '';
   try {
@@ -455,7 +463,10 @@ export default {
       // 그 외에는 정적 자산(web/public)
       return env.ASSETS.fetch(request);
     } catch (err) {
-      return json({ error: err.message || String(err) }, 500);
+      // 메시지가 비면 화면에 "요청 실패 (500)"만 떠서 원인을 알 수 없다 → 최대한 정보를 담는다.
+      const detail = (err && (err.message || err.name)) || String(err) || '알 수 없는 오류';
+      console.error('worker error', p, detail, err && err.stack);
+      return json({ error: `서버 오류: ${detail}` }, 500);
     }
   },
   async scheduled(event, env, ctx) {

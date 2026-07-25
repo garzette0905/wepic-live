@@ -40,7 +40,13 @@ document.querySelectorAll('[data-goto]').forEach((el) =>
 async function api(url, opts) {
   const res = await fetch(url, { credentials: 'same-origin', ...opts });
   if (res.status === 401) { selectPanel('login'); throw new Error('로그인이 필요합니다.'); }
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `요청 실패 (${res.status})`);
+  if (!res.ok) {
+    // 원인 파악을 위해 JSON의 error, 없으면 본문 텍스트라도 보여준다.
+    const body = await res.text().catch(() => '');
+    let msg = '';
+    try { msg = JSON.parse(body).error || ''; } catch { msg = body.slice(0, 300).trim(); }
+    throw new Error(msg || `요청 실패 (${res.status})`);
+  }
   return res.json();
 }
 

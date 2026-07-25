@@ -199,6 +199,14 @@ app.get('/api/status', (req, res) => {
 
 // ---------- Picker API 프록시 ----------
 
+// 업스트림(구글) 실패를 사용자에게 읽히는 메시지로 만든다. 본문이 비어 있으면 상태코드라도 보이게.
+async function upstreamError(label, r) {
+  let body = '';
+  try { body = (await r.text()) || ''; } catch { /* 무시 */ }
+  const brief = body.slice(0, 300).replace(/\s+/g, ' ').trim();
+  return `${label} 실패 (Google ${r.status})${brief ? ': ' + brief : ' — 응답 본문 없음'}`;
+}
+
 app.post(
   '/api/picker/session',
   requireLogin(async (req, res, token) => {
@@ -207,7 +215,7 @@ app.post(
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     });
-    if (!r.ok) return res.status(r.status).json({ error: await r.text() });
+    if (!r.ok) return res.status(r.status).json({ error: await upstreamError('사진 선택 세션 생성', r) });
     const s = await r.json();
     const qrDataUrl = await QRCode.toDataURL(s.pickerUri);
     res.json({ id: s.id, pickerUri: s.pickerUri, qrDataUrl, pollingConfig: s.pollingConfig });
