@@ -13,3 +13,6 @@ Gemini_Generated_Image_*.png
 .wrangler/
 .dev.vars
 node_modules/
+
+# 런타임 생성 설정 파일 (Default 정보관리)
+web/settings.json

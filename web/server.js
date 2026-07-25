@@ -39,6 +39,44 @@ const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SHARES_DIR = path.join(__dirname, 'public', 'shares');
 fs.mkdirSync(SHARES_DIR, { recursive: true });
 
+// wepic 관리자: 아래 이메일로 로그인한 사용자에게만 Admin 메뉴/API를 허용한다.
+// 쉼표로 여러 개 지정 가능 (환경변수 ADMIN_EMAILS).
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || 'garzette@gmail.com')
+  .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+const isAdminEmail = (email) => !!email && ADMIN_EMAILS.includes(String(email).toLowerCase());
+
+// Default 정보관리(전역 설정) 저장 파일. 값이 하나뿐이라 DB 없이 JSON 파일로 충분하다.
+// (주의: Render 무료 플랜은 디스크가 임시라 재배포 시 초기화된다 → Cloudflare는 KV 사용)
+const SETTINGS_FILE = path.join(__dirname, 'settings.json');
+const DEFAULT_SETTINGS = { title: '', musicUrl: '', titleFont: 'cursive', titleSize: 'medium' };
+const TITLE_FONTS = ['cursive', 'handwriting-ko', 'sans', 'serif'];
+const TITLE_SIZES = ['small', 'medium', 'large'];
+
+function readSettings() {
+  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) }; }
+  catch { return { ...DEFAULT_SETTINGS }; }
+}
+function writeSettings(patch) {
+  const cur = readSettings();
+  const next = {
+    title: typeof patch.title === 'string' ? patch.title.slice(0, 40) : cur.title,
+    musicUrl: typeof patch.musicUrl === 'string' ? patch.musicUrl.slice(0, 300) : cur.musicUrl,
+    titleFont: TITLE_FONTS.includes(patch.titleFont) ? patch.titleFont : cur.titleFont,
+    titleSize: TITLE_SIZES.includes(patch.titleSize) ? patch.titleSize : cur.titleSize,
+  };
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(next, null, 2));
+  return next;
+}
+
+// 공유 열람용 PIN: 4자리 숫자. 쿠키에는 PIN 자체가 아니라 HMAC 토큰을 담는다.
+const genPin = () => String(crypto.randomInt(0, 10000)).padStart(4, '0');
+const normalizePin = (v) => (/^\d{4}$/.test(String(v || '').trim()) ? String(v).trim() : null);
+function pinToken(id, pin) {
+  const secret = process.env.SESSION_SECRET || 'memory-frame-dev-secret-change-me';
+  return crypto.createHmac('sha256', secret).update(`${id}:${pin}`).digest('base64url').slice(0, 32);
+}
+const pinCookieName = (id) => `sp_${id}`;
+
 const app = express();
 app.use(express.json({ limit: '4mb' })); // 공유 생성 시 사진 목록(메타데이터) 전송 대비
 
@@ -188,14 +226,37 @@ app.post('/api/logout', (req, res) => {
 
 app.get('/api/status', (req, res) => {
   const loggedIn = !!(req.session.tokens && req.session.tokens.refreshToken);
+  const email = loggedIn ? req.session.tokens.email || null : null;
+  const manifest = req.session.shareId ? readShareManifest(req.session.shareId) : null;
   res.json({
     loggedIn,
-    email: loggedIn ? req.session.tokens.email || null : null,
+    email,
     name: loggedIn ? req.session.tokens.name || null : null,
     // 이미 만들어 둔 공유 링크가 있으면 "링크변경 반영" 버튼을 바로 노출하기 위한 힌트
-    hasShare: !!(req.session.shareId && readShareManifest(req.session.shareId)),
+    hasShare: !!manifest,
+    sharePin: manifest ? manifest.pin || null : null, // 현재 공유의 PIN(메인화면 표시용)
+    isAdmin: loggedIn && isAdminEmail(email),         // Admin 메뉴 노출 여부
   });
 });
+
+// ---------- Default 정보관리 (전역 설정) ----------
+// 모든 화면(데모·wepic 메인화면·wepic 공유화면)이 로딩 시 이 값을 먼저 읽어 적용한다.
+app.get('/api/settings', (req, res) => res.json(readSettings()));
+
+// 관리자 전용 가드
+function requireAdmin(handler) {
+  return (req, res) => {
+    const loggedIn = !!(req.session.tokens && req.session.tokens.refreshToken);
+    const email = loggedIn ? req.session.tokens.email : null;
+    if (!loggedIn) return res.status(401).json({ error: '로그인이 필요합니다.' });
+    if (!isAdminEmail(email)) return res.status(403).json({ error: '관리자만 사용할 수 있습니다.' });
+    return handler(req, res);
+  };
+}
+
+app.put('/api/admin/settings', requireAdmin((req, res) => {
+  res.json(writeSettings(req.body || {}));
+}));
 
 // ---------- Picker API 프록시 ----------
 
@@ -472,8 +533,13 @@ app.post(
     if (!manifestItems.length) return res.status(500).json({ error: '사진을 저장하지 못했습니다. 다시 시도해주세요.' });
 
     manifestItems.sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
-    writeShareManifest(shareId, { musicUrl, title, intervalSec, effect, items: manifestItems });
-    res.json({ url: `${BASE_URL}/f/${shareId}`, count: manifestItems.length });
+    // PIN: 클라이언트가 보낸 값이 유효하면 그것(=링크변경 반영 시 수정된 PIN), 없으면
+    // 기존 PIN을 유지하고, 그것도 없으면 새로 4자리 발급.
+    const prev = readShareManifest(shareId);
+    const pin = normalizePin(req.body.pin) || (prev && prev.pin) || genPin();
+    const owner = req.session.tokens?.email || req.session.tokens?.name || null;
+    writeShareManifest(shareId, { musicUrl, title, intervalSec, effect, pin, owner, items: manifestItems });
+    res.json({ url: `${BASE_URL}/f/${shareId}`, count: manifestItems.length, pin });
   })
 );
 
@@ -518,8 +584,11 @@ app.post('/api/share/blob', upload.array('files', MAX_SHARE_ITEMS), (req, res) =
     }
 
     manifestItems.sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
-    writeShareManifest(shareId, { musicUrl, title, intervalSec, effect, items: manifestItems });
-    res.json({ url: `${BASE_URL}/f/${shareId}`, count: manifestItems.length });
+    const prev = readShareManifest(shareId);
+    const pin = normalizePin(req.body.pin) || (prev && prev.pin) || genPin();
+    const owner = req.session.tokens?.email || req.session.tokens?.name || '(게스트)';
+    writeShareManifest(shareId, { musicUrl, title, intervalSec, effect, pin, owner, items: manifestItems });
+    res.json({ url: `${BASE_URL}/f/${shareId}`, count: manifestItems.length, pin });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
@@ -537,13 +606,101 @@ app.delete('/api/share', (req, res) => {
   res.json({ ok: true });
 });
 
-// 공유 사진 파일(/shares/...): 검색엔진 색인 금지 + ?dl=<파일명> 이면 저장(attachment).
-// express.static 보다 먼저 등록해야 헤더가 적용된다.
+// ---------- PIN 검증 ----------
+function readCookies(req) {
+  const out = {};
+  (req.headers.cookie || '').split(';').forEach((p) => {
+    const i = p.indexOf('=');
+    if (i > 0) out[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim());
+  });
+  return out;
+}
+// 이 요청이 해당 공유를 볼 자격이 있는지. PIN이 없는 공유(기존 링크)는 그대로 통과.
+function canViewShare(req, id, manifest) {
+  if (!manifest || !manifest.pin) return true;                       // 하위 호환
+  if (isAdminEmail(req.session?.tokens?.email)) return true;          // 관리자는 통과
+  if (req.session?.shareId === id) return true;                       // 만든 본인
+  return readCookies(req)[pinCookieName(id)] === pinToken(id, manifest.pin);
+}
+
+// PIN 입력 → 맞으면 열람 쿠키 발급(24시간). 공유 화면이 재생 전에 호출한다.
+app.post('/api/share/:id/verify-pin', (req, res) => {
+  const id = req.params.id;
+  if (!/^[\w-]{6,}$/.test(id)) return res.status(404).json({ error: '잘못된 링크입니다.' });
+  const manifest = readShareManifest(id);
+  if (!manifest) return res.status(404).json({ error: '공유 사진을 찾을 수 없습니다.' });
+  if (!manifest.pin) return res.json({ ok: true }); // PIN 없는 공유
+  const pin = normalizePin(req.body?.pin);
+  if (!pin || pin !== manifest.pin) return res.status(403).json({ error: 'PIN 번호가 올바르지 않습니다.' });
+  res.cookie(pinCookieName(id), pinToken(id, manifest.pin), {
+    maxAge: 24 * 60 * 60 * 1000, httpOnly: true, secure: IS_HTTPS, sameSite: 'lax',
+  });
+  res.json({ ok: true });
+});
+
+// 공유 사진 파일(/shares/...): 검색엔진 색인 금지 + ?dl=<파일명> 이면 저장(attachment) +
+// PIN이 걸린 공유는 열람 쿠키가 없으면 차단(화면에서만 막으면 URL 직접 접근으로 우회되므로
+// 파일과 photos.json 자체를 서버에서 막아야 한다). express.static 보다 먼저 등록.
 app.use('/shares', (req, res, next) => {
   res.set('X-Robots-Tag', 'noindex, nofollow');
   setDownloadHeader(res, req.query.dl);
+  const id = (req.path || '').split('/').filter(Boolean)[0];
+  if (id && /^[\w-]{6,}$/.test(id)) {
+    const manifest = readShareManifest(id);
+    if (manifest && manifest.pin && !canViewShare(req, id, manifest)) {
+      return res.status(401).json({ error: 'PIN 번호가 필요합니다.', pinRequired: true });
+    }
+  }
   next();
 });
+
+// ---------- wepic 관리자 API ----------
+// 화면관리: 공유(폴더) 목록. 폴더를 훑어 매니페스트를 읽는다(별도 DB 불필요).
+app.get('/api/admin/shares', requireAdmin((req, res) => {
+  let ids = [];
+  try { ids = fs.readdirSync(SHARES_DIR); } catch { /* 폴더 없음 */ }
+  const shares = [];
+  for (const id of ids) {
+    const m = readShareManifest(id);
+    if (!m) continue;
+    shares.push({
+      id,
+      title: m.title || '',
+      pin: m.pin || null,
+      owner: m.owner || null,
+      updatedAt: m.updatedAt || null,
+      expiresAt: m.expiresAt || null,
+      expired: isShareExpired(m),
+      count: (m.items || []).length,
+      thumbUrl: m.items?.[0]?.thumbUrl || null,
+      url: `${BASE_URL}/f/${id}`,
+    });
+  }
+  shares.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  res.json({ shares });
+}));
+
+// 폴더 삭제
+app.delete('/api/admin/shares/:id', requireAdmin((req, res) => {
+  const id = req.params.id;
+  if (!/^[\w-]{6,}$/.test(id)) return res.status(400).json({ error: '잘못된 id' });
+  if (!readShareManifest(id)) return res.status(404).json({ error: '없는 공유입니다.' });
+  deleteShareDir(id);
+  res.json({ ok: true });
+}));
+
+// PIN 수정
+app.put('/api/admin/shares/:id/pin', requireAdmin((req, res) => {
+  const id = req.params.id;
+  const pin = normalizePin(req.body?.pin);
+  if (!/^[\w-]{6,}$/.test(id)) return res.status(400).json({ error: '잘못된 id' });
+  if (!pin) return res.status(400).json({ error: 'PIN은 4자리 숫자여야 합니다.' });
+  const m = readShareManifest(id);
+  if (!m) return res.status(404).json({ error: '없는 공유입니다.' });
+  // 만료시각을 유지하면서 PIN만 교체 (writeShareManifest는 만료를 새로 계산하므로 직접 기록)
+  fs.writeFileSync(path.join(shareDir(id), 'photos.json'), JSON.stringify({ ...m, pin }, null, 2));
+  res.json({ ok: true, pin });
+}));
 
 // 공개 보기 페이지 (로그인 불필요)
 app.get('/f/:id', (req, res) => {

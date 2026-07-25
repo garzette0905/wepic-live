@@ -18,6 +18,8 @@
   <div id="home-shell" class="home-shell">
     <header class="hero">
       <div class="hero-scrim"></div>
+      <!-- 관리자 메뉴를 보고 있을 때만 좌측 상단에 눈에 띄게 표시 -->
+      <div id="admin-badge" class="admin-badge hidden">🛠 ADMIN</div>
       <div class="hero-inner">
         <div class="hero-brand">
           <img class="hero-logo" src="favicon.svg" alt="Wepic Live" />
@@ -36,6 +38,14 @@
         <button class="menu-item" data-panel="demo">▶ 데모로 보기</button>
         <button class="menu-item" data-panel="register">✉️ 사용자 등록 신청</button>
         <button class="menu-item" data-panel="feedback">💬 Feedback</button>
+
+        <!-- wepic 관리자: 허용된 계정으로 로그인한 경우에만 노출된다 -->
+        <div id="admin-menu-group" class="admin-menu-group hidden">
+          <div class="admin-menu-label">🛠 Admin</div>
+          <button class="menu-item admin-sub" data-panel="admin-screens">📁 화면관리</button>
+          <button class="menu-item admin-sub" data-panel="admin-pins">🔢 PIN번호관리</button>
+          <button class="menu-item admin-sub" data-panel="admin-defaults">⚙️ Default 정보관리</button>
+        </div>
       </nav>
 
       <section class="home-frame">
@@ -102,6 +112,65 @@
           <textarea id="feedback-text" class="feedback-text" rows="5" placeholder="여기에 의견을 적어주세요 · Write your feedback here"></textarea>
           <button id="btn-feedback-send" class="btn-primary">이메일로 보내기 · Send via email</button>
           <p class="hint" style="margin:8px 0 0;">보내기를 누르면 메일 앱이 열립니다 · Opens your email app (to: garzette@paran.com)</p>
+        </div>
+
+        <!-- ===== wepic 관리자: 화면관리 ===== -->
+        <div class="panel panel-wide hidden" id="panel-admin-screens">
+          <h2>화면관리</h2>
+          <p class="panel-muted">공유 폴더별 정보입니다. 폴더를 삭제하면 해당 공유 링크는 즉시 열리지 않습니다.</p>
+          <div class="admin-toolbar">
+            <button id="admin-shares-reload" class="secondary slim">새로 고침</button>
+            <span id="admin-shares-count" class="panel-muted"></span>
+          </div>
+          <div id="admin-shares-list" class="admin-list">불러오는 중...</div>
+        </div>
+
+        <!-- ===== wepic 관리자: PIN번호관리 ===== -->
+        <div class="panel panel-wide hidden" id="panel-admin-pins">
+          <h2>PIN번호관리</h2>
+          <p class="panel-muted">폴더별 PIN(4자리 숫자)을 확인·수정할 수 있습니다. 수정하면 기존에 PIN을 입력해 보던 사람도 다시 입력해야 합니다.</p>
+          <div class="admin-toolbar">
+            <button id="admin-pins-reload" class="secondary slim">새로 고침</button>
+          </div>
+          <div id="admin-pins-list" class="admin-list">불러오는 중...</div>
+        </div>
+
+        <!-- ===== wepic 관리자: Default 정보관리 ===== -->
+        <div class="panel hidden" id="panel-admin-defaults">
+          <h2>Default 정보관리</h2>
+          <p class="panel-muted">여기서 정한 값이 <b>데모 · wepic 메인화면 · wepic 공유화면</b>의 기본값으로 쓰입니다.
+            각 화면은 로딩할 때 이 설정을 먼저 읽어 적용합니다.</p>
+          <div class="setting-row">
+            <span class="setting-label">기본 타이틀</span>
+            <input type="text" id="def-title" class="title-input" maxlength="40" placeholder="예: 우리 가족 앨범" />
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">기본 배경음악</span>
+            <input type="text" id="def-music" class="title-input" placeholder="YouTube 링크" />
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">타이틀 폰트</span>
+            <select id="def-font" class="mini-select">
+              <option value="cursive">필기체 (Dancing Script)</option>
+              <option value="handwriting-ko">손글씨 (나눔손글씨 펜)</option>
+              <option value="sans">고딕 (기본)</option>
+              <option value="serif">명조 (Serif)</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">타이틀 크기</span>
+            <select id="def-size" class="mini-select">
+              <option value="small">작게</option>
+              <option value="medium">보통</option>
+              <option value="large">크게</option>
+            </select>
+          </div>
+          <div class="admin-preview">
+            <span class="panel-muted">미리보기:</span>
+            <span id="def-preview" class="title-overlay-preview">Wepic Live</span>
+          </div>
+          <button id="def-save" class="btn-primary">저장</button>
+          <p id="def-saved" class="share-copied hidden">저장되었습니다.</p>
         </div>
       </section>
     </div>
@@ -252,6 +321,13 @@
         <div class="share-btn-row">
           <button id="btn-make-share" class="secondary slim share-btn">실시간 공유 링크 만들기</button>
           <button id="btn-update-share" class="secondary slim share-btn hidden" title="지금 화면의 사진·제목·음악을 기존 공유 링크에 반영">링크변경 반영</button>
+        </div>
+        <!-- 공유 링크 열람용 PIN(4자리). 수정 후 "링크변경 반영"을 누르면 새 PIN이 적용된다. -->
+        <div id="share-pin-row" class="share-pin-row hidden">
+          <span class="setting-label">PIN</span>
+          <input type="text" id="share-pin" class="pin-input" maxlength="4" inputmode="numeric" pattern="[0-9]*" />
+          <button id="btn-pin-new" class="mini-btn" title="새 PIN 만들기">🎲</button>
+          <span class="panel-muted" style="font-size:11px;">받는 분에게 링크와 함께 알려주세요</span>
         </div>
       </div>
 

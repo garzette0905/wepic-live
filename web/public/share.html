@@ -35,6 +35,27 @@
   #btn-slide.paused .icon-play { display: block; }
   /* 동영상 재생 중 등 저장할 수 없을 때 */
   .icon-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+  /* PIN 입력 화면 (사진 위 전체를 덮어 재생 전 차단) */
+  .pin-gate {
+    position: absolute; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+    background: rgba(6, 10, 20, 0.92); backdrop-filter: blur(6px); padding: 24px;
+  }
+  .pin-card {
+    background: rgba(13, 20, 36, 0.96); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 30px 32px; max-width: 380px; width: 100%; text-align: center;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+  }
+  .pin-logo { width: 46px; height: 46px; border-radius: 12px; margin-bottom: 10px; }
+  .pin-card h2 { margin: 0 0 8px; font-size: 19px; }
+  .pin-card p { color: var(--text-muted); font-size: 13.5px; line-height: 1.6; margin: 0 0 16px; }
+  .pin-card p b { color: var(--text-main); }
+  .pin-entry {
+    width: 160px; text-align: center; letter-spacing: 10px; font-size: 26px; font-weight: 700;
+    background: rgba(255,255,255,0.08); border: 1px solid var(--border); color: #fff;
+    border-radius: 10px; padding: 12px 10px; font-family: inherit; margin-bottom: 12px;
+  }
+  .pin-card .btn-primary { width: 100%; }
+  .pin-card .error { margin: 0 0 10px; }
   .share-loading, .share-error {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     color: var(--text-muted); font-size: 15px; text-align: center; padding: 24px;
@@ -58,6 +79,19 @@
 
     <div id="share-loading" class="share-loading">사진을 불러오는 중...</div>
     <div id="share-error" class="share-error hidden"></div>
+
+    <!-- PIN 입력: PIN이 걸린 공유는 맞는 번호를 넣기 전까지 사진이 재생되지 않는다 -->
+    <div id="pin-gate" class="pin-gate hidden">
+      <div class="pin-card">
+        <img class="pin-logo" src="/favicon.svg" alt="" />
+        <h2>PIN 번호 입력</h2>
+        <p>공유해 주신 분에게 받은 <b>4자리 숫자</b>를 입력하세요.</p>
+        <input type="text" id="pin-entry" class="pin-entry" maxlength="4" inputmode="numeric"
+               pattern="[0-9]*" autocomplete="off" placeholder="----" />
+        <p id="pin-error" class="error hidden"></p>
+        <button id="pin-submit" class="btn-primary">확인</button>
+      </div>
+    </div>
 
     <div class="share-actions">
       <button id="btn-fullscreen" class="icon-btn fullscreen-btn" title="전체 화면 (Esc로 복귀)">

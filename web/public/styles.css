@@ -249,14 +249,29 @@ body.has-title .demo-badge { top: 50px; }
 
 /* ---------- 제목 · 시계/날씨 오버레이 (전체화면에서도 표시) ---------- */
 /* 제목과 시계 시각의 폰트 크기를 하나의 변수로 묶어 항상 같은 크기로 유지한다. */
-:root { --overlay-size: 21px; }
+:root {
+  --overlay-size: 21px;
+  /* Default 정보관리(관리자)에서 정한 타이틀 폰트/크기가 여기에 주입된다 */
+  --title-font: 'Dancing Script', 'Nanum Pen Script', cursive;
+  --title-size: 21px;
+}
 .title-overlay {
   position: absolute; left: 18px; top: 14px; z-index: 6; max-width: 62%;
-  font-family: 'Dancing Script', 'Nanum Pen Script', cursive;
-  font-size: var(--overlay-size); font-weight: 600; color: #fff;
+  font-family: var(--title-font);
+  font-size: var(--title-size); font-weight: 600; color: #fff;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75); pointer-events: none;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* 관리자 설정용 폰트/크기 선택지 (body에 클래스로 적용) */
+body.tf-cursive { --title-font: 'Dancing Script', 'Nanum Pen Script', cursive; }
+body.tf-handwriting-ko { --title-font: 'Nanum Pen Script', 'Dancing Script', cursive; }
+body.tf-sans { --title-font: 'Pretendard', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; }
+body.tf-serif { --title-font: Georgia, 'Nanum Myeongjo', 'Batang', serif; }
+body.ts-small { --title-size: 17px; }
+body.ts-medium { --title-size: 21px; }
+body.ts-large { --title-size: 28px; }
+/* Default 정보관리 미리보기도 같은 폰트/크기를 쓴다 */
+.title-overlay-preview { font-family: var(--title-font); font-size: var(--title-size); font-weight: 600; }
 .ambient-widget {
   position: absolute; right: 18px; top: 14px; z-index: 6; text-align: right;
   color: #fff; line-height: 1.15; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.78);
@@ -431,6 +446,48 @@ body.has-title .demo-badge { top: 50px; }
 /* 사진선택/동기화 화면 상단 브랜드 */
 .brand-header { display: flex; align-items: center; justify-content: center; gap: 8px; }
 .brand-logo-sm { width: 30px; height: 30px; border-radius: 8px; }
+
+/* ---------- wepic 관리자 ---------- */
+/* 관리자 메뉴를 보고 있을 때 좌측 상단에 눈에 띄게 */
+.admin-badge {
+  position: absolute; left: 16px; top: 14px; z-index: 7;
+  background: #e0322f; color: #fff; font-size: 13px; font-weight: 800; letter-spacing: 1px;
+  padding: 6px 12px; border-radius: 8px; box-shadow: 0 3px 14px rgba(0,0,0,0.5);
+}
+.admin-menu-group { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.18); }
+.admin-menu-label {
+  font-size: 11px; font-weight: 800; letter-spacing: 1.2px; color: #ffb4b2;
+  padding: 2px 6px 6px; text-transform: uppercase;
+}
+.menu-item.admin-sub { font-size: 13px; padding: 10px 12px 10px 18px; }
+.panel.panel-wide { max-width: 900px; }
+.admin-toolbar { display: flex; align-items: center; gap: 10px; margin: 10px 0 12px; }
+.admin-list { display: flex; flex-direction: column; gap: 8px; }
+.admin-row {
+  display: flex; align-items: center; gap: 12px;
+  background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 12px;
+}
+.admin-row.expired { opacity: 0.55; }
+.admin-row img.admin-thumb {
+  width: 56px; height: 56px; object-fit: cover; border-radius: 8px; flex: none;
+  background: rgba(255,255,255,0.08);
+}
+.admin-row .admin-meta { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.6; }
+.admin-row .admin-meta b { color: #fff; }
+.admin-row .admin-meta .dim { color: var(--text-muted); }
+.admin-row .admin-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.admin-empty { color: var(--text-muted); font-size: 13px; }
+.btn-danger { background: rgba(224,91,91,0.18); color: #ff9b9b; padding: 8px 12px; font-size: 12.5px; }
+.btn-danger:hover { background: rgba(224,91,91,0.3); filter: none; }
+.pin-input {
+  width: 74px; text-align: center; letter-spacing: 3px; font-weight: 700; font-size: 15px;
+  background: rgba(255,255,255,0.08); border: 1px solid var(--border); color: var(--text-main);
+  border-radius: 8px; padding: 7px 8px; font-family: inherit;
+}
+.share-pin-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.admin-preview { display: flex; align-items: center; gap: 10px; margin: 6px 0 14px; }
+.title-overlay-preview { color: #fff; }
 
 /* 홈 모바일: 배너 아래로 메뉴(가로 스크롤) + 프레임 세로 배치 */
 @media (max-width: 768px) {

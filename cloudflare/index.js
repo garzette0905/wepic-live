@@ -12,6 +12,50 @@ const PICKER_BASE = 'https://photospicker.googleapis.com/v1';
 const PHOTOS_SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
 const MAX_SHARE_ITEMS = 60;
 
+// wepic 관리자: 이 이메일로 로그인한 사용자만 Admin 메뉴/API 사용 가능 (환경변수 ADMIN_EMAILS)
+const adminEmails = (env) => (env.ADMIN_EMAILS || 'garzette@gmail.com')
+  .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+const isAdminEmail = (env, email) => !!email && adminEmails(env).includes(String(email).toLowerCase());
+
+// Default 정보관리(전역 설정) — KV에 JSON 하나로 저장(DB 불필요)
+const SETTINGS_KEY = 'settings:global';
+const DEFAULT_SETTINGS = { title: '', musicUrl: '', titleFont: 'cursive', titleSize: 'medium' };
+const TITLE_FONTS = ['cursive', 'handwriting-ko', 'sans', 'serif'];
+const TITLE_SIZES = ['small', 'medium', 'large'];
+async function readSettings(env) {
+  try {
+    const raw = await env.SESSIONS.get(SETTINGS_KEY);
+    return raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : { ...DEFAULT_SETTINGS };
+  } catch { return { ...DEFAULT_SETTINGS }; }
+}
+async function writeSettings(env, patch) {
+  const cur = await readSettings(env);
+  const next = {
+    title: typeof patch.title === 'string' ? patch.title.slice(0, 40) : cur.title,
+    musicUrl: typeof patch.musicUrl === 'string' ? patch.musicUrl.slice(0, 300) : cur.musicUrl,
+    titleFont: TITLE_FONTS.includes(patch.titleFont) ? patch.titleFont : cur.titleFont,
+    titleSize: TITLE_SIZES.includes(patch.titleSize) ? patch.titleSize : cur.titleSize,
+  };
+  await env.SESSIONS.put(SETTINGS_KEY, JSON.stringify(next));
+  return next;
+}
+
+// 공유 열람용 PIN(4자리). 쿠키에는 PIN 대신 HMAC 토큰을 담는다.
+function genPin() {
+  const a = new Uint32Array(1);
+  crypto.getRandomValues(a);
+  return String(a[0] % 10000).padStart(4, '0');
+}
+const normalizePin = (v) => (/^\d{4}$/.test(String(v || '').trim()) ? String(v).trim() : null);
+async function pinToken(env, id, pin) {
+  const secret = env.SESSION_SECRET || 'memory-frame-dev-secret-change-me';
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${id}:${pin}`));
+  return b64url(new Uint8Array(sig)).slice(0, 32);
+}
+const pinCookieName = (id) => `sp_${id}`;
+
 // ---------- 공통 응답 헬퍼 ----------
 const json = (obj, status = 200, headers = {}) =>
   new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', ...headers } });
@@ -123,18 +167,97 @@ async function apiStatus(request, env) {
   const { data } = await getSession(request, env);
   const loggedIn = !!(data && data.refreshToken);
   // 이미 만들어 둔 공유 링크가 있으면 "링크변경 반영" 버튼을 바로 노출하기 위한 힌트
-  const hasShare = !!(data && data.shareId && (await readManifest(env, data.shareId)));
+  const manifest = data && data.shareId ? await readManifest(env, data.shareId) : null;
+  const email = loggedIn ? data.email || null : null;
   return json({
     loggedIn,
-    email: loggedIn ? data.email || null : null,
+    email,
     name: loggedIn ? data.name || null : null,
-    hasShare,
+    hasShare: !!manifest,
+    sharePin: manifest ? manifest.pin || null : null, // 현재 공유의 PIN(메인화면 표시용)
+    isAdmin: loggedIn && isAdminEmail(env, email),    // Admin 메뉴 노출 여부
   });
 }
 async function apiLogout(request, env) {
   const { sid } = await getSession(request, env);
   await delSession(env, sid);
   return json({ ok: true }, 200, { 'Set-Cookie': clearCookie() });
+}
+
+// 관리자 전용 가드
+async function requireAdmin(request, env, handler) {
+  const sess = await getSession(request, env);
+  const loggedIn = !!(sess.data && sess.data.refreshToken);
+  if (!loggedIn) return json({ error: '로그인이 필요합니다.' }, 401);
+  if (!isAdminEmail(env, sess.data.email)) return json({ error: '관리자만 사용할 수 있습니다.' }, 403);
+  return handler(request, env, sess);
+}
+
+// 화면관리: 공유(폴더) 목록 — R2 프리픽스를 훑어 매니페스트를 읽는다(별도 DB 불필요)
+async function adminShares(env) {
+  const shares = [];
+  let cursor;
+  do {
+    const list = await env.SHARES.list({ cursor, delimiter: '/' });
+    for (const pfx of list.delimitedPrefixes || []) {
+      const id = pfx.replace(/\/$/, '');
+      const m = await readManifest(env, id);
+      if (!m) continue;
+      shares.push({
+        id,
+        title: m.title || '',
+        pin: m.pin || null,
+        owner: m.owner || null,
+        updatedAt: m.updatedAt || null,
+        expiresAt: m.expiresAt || null,
+        expired: isExpired(m),
+        count: (m.items || []).length,
+        thumbUrl: m.items?.[0]?.thumbUrl || null,
+        url: `${env.BASE_URL}/f/${id}`,
+      });
+    }
+    cursor = list.truncated ? list.cursor : null;
+  } while (cursor);
+  shares.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  return json({ shares });
+}
+
+// PIN 수정 (만료시각은 유지하고 pin만 교체)
+async function adminSetPin(request, env, id) {
+  if (!/^[\w-]{6,}$/.test(id)) return json({ error: '잘못된 id' }, 400);
+  const body = await request.json().catch(() => ({}));
+  const pin = normalizePin(body.pin);
+  if (!pin) return json({ error: 'PIN은 4자리 숫자여야 합니다.' }, 400);
+  const m = await readManifest(env, id);
+  if (!m) return json({ error: '없는 공유입니다.' }, 404);
+  await env.SHARES.put(`${id}/photos.json`, JSON.stringify({ ...m, pin }, null, 2),
+    { httpMetadata: { contentType: 'application/json; charset=utf-8' } });
+  return json({ ok: true, pin });
+}
+
+// PIN 입력 → 맞으면 열람 쿠키 발급(24시간)
+async function verifyPin(request, env, id) {
+  if (!/^[\w-]{6,}$/.test(id)) return json({ error: '잘못된 링크입니다.' }, 404);
+  const m = await readManifest(env, id);
+  if (!m) return json({ error: '공유 사진을 찾을 수 없습니다.' }, 404);
+  if (!m.pin) return json({ ok: true }); // PIN 없는 공유(기존 링크)
+  const body = await request.json().catch(() => ({}));
+  const pin = normalizePin(body.pin);
+  if (!pin || pin !== m.pin) return json({ error: 'PIN 번호가 올바르지 않습니다.' }, 403);
+  const tok = await pinToken(env, id, m.pin);
+  return json({ ok: true }, 200, {
+    'Set-Cookie': `${pinCookieName(id)}=${tok}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`,
+  });
+}
+
+// 이 요청이 해당 공유를 볼 자격이 있는지. PIN이 없는 공유(기존 링크)는 그대로 통과.
+async function canViewShare(request, env, id, manifest) {
+  if (!manifest || !manifest.pin) return true;                 // 하위 호환
+  const sess = await getSession(request, env);
+  if (isAdminEmail(env, sess.data?.email)) return true;         // 관리자 통과
+  if (sess.data?.shareId === id) return true;                   // 만든 본인
+  const want = await pinToken(env, id, manifest.pin);
+  return parseCookies(request)[pinCookieName(id)] === want;
 }
 
 // ---------- Picker 프록시 ----------
@@ -328,8 +451,13 @@ async function shareCreate(request, env, token, sess) {
   }
   if (!manifestItems.length) return json({ error: '사진을 저장하지 못했습니다. 다시 시도해주세요.' }, 500);
   manifestItems.sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
-  await writeManifest(env, shareId, { musicUrl, title, intervalSec, effect, items: manifestItems });
-  return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length });
+  // PIN: 클라이언트가 보낸 값이 유효하면 그것(=링크변경 반영 시 수정된 PIN), 없으면 기존 유지,
+  // 그것도 없으면 새로 4자리 발급.
+  const prev = await readManifest(env, shareId);
+  const pin = normalizePin(body.pin) || (prev && prev.pin) || genPin();
+  const owner = sess.data?.email || sess.data?.name || null;
+  await writeManifest(env, shareId, { musicUrl, title, intervalSec, effect, pin, owner, items: manifestItems });
+  return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin });
 }
 
 // 로그인 없이(구글 포토 "공유"로 받은 사진 등): 브라우저가 가진 파일(blob)을 그대로 올려 공유 링크 생성
@@ -372,8 +500,11 @@ async function shareBlob(request, env) {
   }
   if (!manifestItems.length) return json({ error: '사진을 저장하지 못했습니다. (동영상은 공유 링크에 포함되지 않습니다)' }, 500);
   manifestItems.sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
-  await writeManifest(env, shareId, { musicUrl, title, intervalSec, effect, items: manifestItems });
-  return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length }, 200, setCookie ? { 'Set-Cookie': setCookie } : {});
+  const prev = await readManifest(env, shareId);
+  const pin = normalizePin(form.get('pin')) || (prev && prev.pin) || genPin();
+  const owner = sdata.email || sdata.name || '(게스트)';
+  await writeManifest(env, shareId, { musicUrl, title, intervalSec, effect, pin, owner, items: manifestItems });
+  return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin }, 200, setCookie ? { 'Set-Cookie': setCookie } : {});
 }
 
 async function shareDelete(request, env) {
@@ -408,9 +539,18 @@ function guessType(key) {
   if (key.endsWith('.json')) return 'application/json; charset=utf-8';
   return 'application/octet-stream';
 }
-async function shareAsset(env, pathname, url) {
+async function shareAsset(request, env, pathname, url) {
   const key = pathname.replace(/^\/shares\//, '');
   if (!/^[\w-]{6,}\//.test(key)) return text('not found', 404);
+  const id = key.split('/')[0];
+
+  // PIN이 걸린 공유는 열람 쿠키가 없으면 차단한다. 화면에서만 막으면 이 URL을 직접 열어
+  // 우회할 수 있으므로 photos.json과 사진 파일 자체를 서버에서 막아야 한다.
+  const manifest = await readManifest(env, id);
+  if (manifest && manifest.pin && !(await canViewShare(request, env, id, manifest))) {
+    return json({ error: 'PIN 번호가 필요합니다.', pinRequired: true }, 401);
+  }
+
   const obj = await env.SHARES.get(key);
   if (!obj) return text('not found', 404);
   const headers = new Headers();
@@ -419,7 +559,7 @@ async function shareAsset(env, pathname, url) {
   if (key.endsWith('photos.json')) {
     let m = null;
     try { m = JSON.parse(await obj.text()); } catch {}
-    if (isExpired(m)) { await deleteShare(env, key.split('/')[0]); return text('not found', 404); }
+    if (isExpired(m)) { await deleteShare(env, id); return text('not found', 404); }
     headers.set('Cache-Control', 'no-store');
     return new Response(JSON.stringify(m), { status: 200, headers });
   }
@@ -471,9 +611,35 @@ export default {
       if (p === '/api/share/blob' && m === 'POST') return shareBlob(request, env);
       if (p === '/share-target' && m === 'POST') return redirect('/'); // 보통 서비스워커가 가로챔
 
+      // PIN 검증 (공유화면이 재생 전에 호출)
+      const mPin = p.match(/^\/api\/share\/([\w-]{6,})\/verify-pin$/);
+      if (mPin && m === 'POST') return verifyPin(request, env, mPin[1]);
+
+      // Default 정보관리 / wepic 관리자
+      if (p === '/api/settings' && m === 'GET') return json(await readSettings(env));
+      if (p === '/api/admin/settings' && m === 'PUT') {
+        return requireAdmin(request, env, async (rq, en) =>
+          json(await writeSettings(en, await rq.json().catch(() => ({})))));
+      }
+      if (p === '/api/admin/shares' && m === 'GET') {
+        return requireAdmin(request, env, (rq, en) => adminShares(en));
+      }
+      const mAdminShare = p.match(/^\/api\/admin\/shares\/([\w-]{6,})$/);
+      if (mAdminShare && m === 'DELETE') {
+        return requireAdmin(request, env, async (rq, en) => {
+          if (!(await readManifest(en, mAdminShare[1]))) return json({ error: '없는 공유입니다.' }, 404);
+          await deleteShare(en, mAdminShare[1]);
+          return json({ ok: true });
+        });
+      }
+      const mAdminPin = p.match(/^\/api\/admin\/shares\/([\w-]{6,})\/pin$/);
+      if (mAdminPin && m === 'PUT') {
+        return requireAdmin(request, env, (rq, en) => adminSetPin(rq, en, mAdminPin[1]));
+      }
+
       const mF = p.match(/^\/f\/([\w-]{6,})$/);
       if (mF && m === 'GET') return shareViewPage(env, mF[1]);
-      if (p.startsWith('/shares/') && m === 'GET') return shareAsset(env, p, url);
+      if (p.startsWith('/shares/') && m === 'GET') return shareAsset(request, env, p, url);
 
       // 그 외에는 정적 자산(web/public)
       return env.ASSETS.fetch(request);

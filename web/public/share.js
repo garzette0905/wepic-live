@@ -7,6 +7,10 @@ let activeLayer = 'a';
 let timer = null;
 let intervalMs = 10000; // 링크 생성 시점의 전환 간격 (없으면 10초)
 let slidePaused = false; // 사진 슬라이드 멈춤 여부 (음악 소리 on/off와는 별개)
+// 관리자 Default 정보관리 값 (공유 매니페스트에 값이 없을 때 대체로 사용)
+let defaultTitle = '';
+let defaultMusicUrl = '';
+let pollStarted = false;
 
 function formatDate(iso) {
   const d = new Date(iso);
@@ -254,9 +258,9 @@ function applyManifest(data) {
   photos = data.items || [];
   lastUpdatedAt = data.updatedAt || null;
 
-  // 제목
+  // 제목 (공유에 제목이 없으면 관리자 Default 타이틀을 쓴다)
   const t = document.getElementById('share-title');
-  const title = (data.title || '').trim();
+  const title = (data.title || defaultTitle || '').trim();
   t.textContent = title;
   t.classList.toggle('hidden', !title);
 
@@ -268,8 +272,9 @@ function applyManifest(data) {
   intervalMs = sec * 1000;
   view.style.setProperty('--kb-duration', sec + 's');
 
-  // 배경음악: 곡이 바뀌면 새 곡으로 교체(무음/소리 상태는 유지)
-  const newMusic = data.musicUrl || '';
+  // 배경음악: 곡이 바뀌면 새 곡으로 교체(무음/소리 상태는 유지).
+  // 공유에 음악이 없으면 관리자 Default 배경음악을 쓴다.
+  const newMusic = data.musicUrl || defaultMusicUrl || '';
   if (newMusic !== musicUrl) {
     musicUrl = newMusic;
     const newId = musicUrl ? ytId(musicUrl) : null;
@@ -304,10 +309,64 @@ async function pollForUpdates() {
   } catch { /* 네트워크 순단 무시 */ }
 }
 
-// ---- 초기화 ----
-async function init() {
+// ---- PIN 입력 게이트 ----
+// PIN이 걸린 공유는 서버가 photos.json과 사진 파일까지 막는다(401 pinRequired).
+// 맞는 PIN을 넣으면 서버가 열람 쿠키를 주고, 그 뒤부터 정상 재생된다.
+function showPinGate(message) {
+  document.getElementById('share-loading').classList.add('hidden');
+  const gate = document.getElementById('pin-gate');
+  gate.classList.remove('hidden');
+  const err = document.getElementById('pin-error');
+  if (message) { err.textContent = message; err.classList.remove('hidden'); }
+  else err.classList.add('hidden');
+  const input = document.getElementById('pin-entry');
+  input.focus();
+  input.select();
+}
+
+async function submitPin() {
+  const input = document.getElementById('pin-entry');
+  const pin = input.value.trim();
+  const err = document.getElementById('pin-error');
+  if (!/^\d{4}$/.test(pin)) {
+    err.textContent = '4자리 숫자를 입력하세요.';
+    err.classList.remove('hidden');
+    return;
+  }
+  const btn = document.getElementById('pin-submit');
+  btn.disabled = true;
   try {
-    const res = await fetch(`/shares/${shareId}/photos.json`, { cache: 'no-store' });
+    const res = await fetch(`/api/share/${shareId}/verify-pin`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin }), credentials: 'same-origin',
+    });
+    if (!res.ok) {
+      const msg = await res.json().then((d) => d.error).catch(() => '');
+      err.textContent = msg || 'PIN 번호가 올바르지 않습니다.';
+      err.classList.remove('hidden');
+      input.select();
+      return;
+    }
+    document.getElementById('pin-gate').classList.add('hidden');
+    await start(); // 통과 → 재생 시작
+  } catch {
+    err.textContent = '확인 중 오류가 났습니다. 다시 시도해주세요.';
+    err.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+  }
+}
+document.getElementById('pin-submit').addEventListener('click', submitPin);
+document.getElementById('pin-entry').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') submitPin();
+});
+
+// ---- 초기화 ----
+// 재생 시작(PIN 통과 후 또는 PIN이 없는 공유). 실패 사유에 따라 PIN 게이트/에러를 띄운다.
+async function start() {
+  try {
+    const res = await fetch(`/shares/${shareId}/photos.json`, { cache: 'no-store', credentials: 'same-origin' });
+    if (res.status === 401) { showPinGate(); return false; } // PIN 필요
     if (!res.ok) throw new Error();
     const data = await res.json();
     if (!(data.items || []).length) throw new Error();
@@ -317,7 +376,7 @@ async function init() {
     const e = document.getElementById('share-error');
     e.textContent = '공유 사진을 찾을 수 없습니다. 링크가 만료되었거나 삭제되었을 수 있습니다.';
     e.classList.remove('hidden');
-    return;
+    return false;
   }
 
   document.getElementById('share-loading').classList.add('hidden');
@@ -329,7 +388,22 @@ async function init() {
   // 음악은 위 applyManifest에서 이미 무음 재생으로 시작됨(중복 생성 방지). 여기서는
   // 혹시 누락된 경우만 보정한다(initMusic은 여러 번 호출해도 안전).
   if (musicUrl && !playerPromise) initMusic();
+  // 변경 감지 폴링은 재생이 시작된 뒤 한 번만 걸어둔다(PIN 통과 전에는 돌지 않음).
+  if (!pollStarted) { pollStarted = true; setInterval(pollForUpdates, POLL_MS); }
+  return true;
+}
 
-  setInterval(pollForUpdates, POLL_MS);
+async function init() {
+  // 관리자가 정한 Default 정보(타이틀 폰트·크기)를 먼저 적용한다.
+  try {
+    const s = await fetch('/api/settings').then((r) => r.json());
+    const b = document.body;
+    b.classList.add('tf-' + (s.titleFont || 'cursive'));
+    b.classList.add('ts-' + (s.titleSize || 'medium'));
+    defaultTitle = s.title || '';
+    defaultMusicUrl = s.musicUrl || '';
+  } catch { /* 실패해도 기본값으로 진행 */ }
+
+  await start(); // 폴링은 start() 안에서 재생 시작 후 설정된다
 }
 init();

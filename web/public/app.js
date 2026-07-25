@@ -31,6 +31,11 @@ function selectPanel(name) {
     b.classList.toggle('active', b.dataset.panel === name));
   document.querySelectorAll('.home-frame .panel').forEach((p) =>
     p.classList.toggle('hidden', p.id !== 'panel-' + name));
+  // 관리자 패널을 보고 있을 때만 좌측 상단 ADMIN 배지 표시
+  document.getElementById('admin-badge').classList.toggle('hidden', !name.startsWith('admin-'));
+  if (name === 'admin-screens') loadAdminShares('admin-shares-list');
+  if (name === 'admin-pins') loadAdminShares('admin-pins-list');
+  if (name === 'admin-defaults') fillDefaultsForm();
 }
 document.querySelectorAll('#home-menu .menu-item').forEach((b) =>
   b.addEventListener('click', () => selectPanel(b.dataset.panel)));
@@ -586,6 +591,23 @@ document.getElementById('btn-music-clear').addEventListener('click', () => {
 // ---------- 실시간 공유 링크 ----------
 const shareModal = document.getElementById('share-modal');
 
+// 공유 열람용 PIN(4자리). 링크를 만들면 서버가 발급해 내려주고, 사용자가 직접 고칠 수도 있다.
+// 고친 뒤 "링크변경 반영"을 누르면 서버에 새 PIN이 저장된다.
+function setSharePin(pin) {
+  const row = document.getElementById('share-pin-row');
+  document.getElementById('share-pin').value = pin || '';
+  row.classList.toggle('hidden', !pin);
+}
+const getSharePin = () => {
+  const v = document.getElementById('share-pin').value.trim();
+  return /^\d{4}$/.test(v) ? v : '';
+};
+document.getElementById('btn-pin-new').addEventListener('click', () => {
+  const pin = String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+  document.getElementById('share-pin').value = pin;
+  showToast('새 PIN이 준비됐습니다. "링크변경 반영"을 누르면 적용됩니다.');
+});
+
 // 현재 화면의 사진·제목·음악·전환설정을 서버에 올린다.
 // 서버는 세션마다 같은 shareId를 재사용하므로, 다시 올리면 "같은 링크"의 내용이 갱신된다.
 // mode: 'create'(팝업으로 링크 안내) | 'update'(조용히 반영 후 토스트)
@@ -603,6 +625,8 @@ async function pushShare(mode) {
     // 공유 시점의 제목·전환 간격·전환 효과를 함께 저장해 공유 화면에도 동일 적용.
     const title = document.getElementById('title-input').value.trim();
     const intervalSec = Math.round(slideIntervalMs / 1000);
+    // 화면에 표시/수정된 PIN을 함께 보낸다(비어 있으면 서버가 기존 유지 또는 새로 발급).
+    const pin = getSharePin();
     let r;
     if (isSharedMode) {
       // 구글 포토 "공유"로 받은 사진은 구글 서버 baseUrl이 없고, 이 브라우저가 이미
@@ -620,6 +644,7 @@ async function pushShare(mode) {
       form.append('title', title);
       form.append('intervalSec', String(intervalSec));
       form.append('effect', slideEffect);
+      if (pin) form.append('pin', pin);
       r = await api('/api/share/blob', { method: 'POST', body: form });
     } else {
       const items = sharePhotos.map((p) => ({
@@ -628,15 +653,16 @@ async function pushShare(mode) {
       r = await api('/api/share', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items, musicUrl, title, intervalSec, effect: slideEffect }),
+        body: JSON.stringify({ items, musicUrl, title, intervalSec, effect: slideEffect, pin }),
       });
     }
     document.getElementById('share-url').value = r.url;
     document.getElementById('btn-open-share').href = r.url;
+    if (r.pin) setSharePin(r.pin); // 서버가 확정한 PIN을 화면에 표시
     // 링크가 생겼으면 "링크변경 반영" 버튼을 노출한다.
     document.getElementById('btn-update-share').classList.remove('hidden');
     if (mode === 'update') {
-      showToast(`공유 링크에 반영되었습니다. (사진 ${r.count}장)`);
+      showToast(`공유 링크에 반영되었습니다. (사진 ${r.count}장, PIN ${r.pin || '없음'})`);
     } else {
       document.getElementById('share-copied').classList.add('hidden');
       shareModal.classList.remove('hidden');
@@ -919,7 +945,8 @@ function loadDisplaySettings() {
                    document.querySelector('#effect-radios input[value="fade"]');
   effRadio.checked = true;
   applyEffect(effRadio.value);
-  const title = lsGet('slideTitle', '');
+  // 제목: 사용자가 직접 정한 값이 있으면 그것, 없으면 관리자 Default 타이틀
+  const title = lsGet('slideTitle', '') || globalSettings.title || '';
   document.getElementById('title-input').value = title;
   applyTitle(title);
   const amb = lsGet('ambientOn', '1') !== '0';
@@ -939,6 +966,205 @@ document.getElementById('title-input').addEventListener('input', (e) => applyTit
 document.getElementById('ambient-toggle').addEventListener('change', (e) => applyAmbient(e.target.checked));
 document.getElementById('video-sound-toggle').addEventListener('change', (e) => applyVideoSound(e.target.checked));
 
+// ---------- Default 정보관리 (전역 설정) ----------
+// 모든 화면(데모·wepic 메인화면·wepic 공유화면)이 로딩 시 이 값을 먼저 읽어 적용한다.
+let globalSettings = { title: '', musicUrl: '', titleFont: 'cursive', titleSize: 'medium' };
+
+function applyGlobalSettingsToBody(s) {
+  const b = document.body;
+  ['tf-cursive', 'tf-handwriting-ko', 'tf-sans', 'tf-serif'].forEach((c) => b.classList.remove(c));
+  ['ts-small', 'ts-medium', 'ts-large'].forEach((c) => b.classList.remove(c));
+  b.classList.add('tf-' + (s.titleFont || 'cursive'));
+  b.classList.add('ts-' + (s.titleSize || 'medium'));
+}
+async function loadGlobalSettings() {
+  try {
+    const s = await fetch('/api/settings', { credentials: 'same-origin' }).then((r) => r.json());
+    globalSettings = { ...globalSettings, ...s };
+  } catch { /* 실패해도 기본값으로 진행 */ }
+  applyGlobalSettingsToBody(globalSettings);
+  return globalSettings;
+}
+
+// 관리자 화면: Default 정보관리 폼
+function fillDefaultsForm() {
+  document.getElementById('def-title').value = globalSettings.title || '';
+  document.getElementById('def-music').value = globalSettings.musicUrl || '';
+  document.getElementById('def-font').value = globalSettings.titleFont || 'cursive';
+  document.getElementById('def-size').value = globalSettings.titleSize || 'medium';
+  updateDefaultsPreview();
+}
+function updateDefaultsPreview() {
+  const el = document.getElementById('def-preview');
+  el.textContent = document.getElementById('def-title').value.trim() || 'Wepic Live';
+  // 미리보기는 선택 중인 폰트/크기를 즉시 반영 (저장 전에도 확인 가능)
+  applyGlobalSettingsToBody({
+    titleFont: document.getElementById('def-font').value,
+    titleSize: document.getElementById('def-size').value,
+  });
+}
+['def-title', 'def-font', 'def-size'].forEach((id) =>
+  document.getElementById(id).addEventListener('input', updateDefaultsPreview));
+document.getElementById('def-save').addEventListener('click', async () => {
+  const body = {
+    title: document.getElementById('def-title').value.trim(),
+    musicUrl: document.getElementById('def-music').value.trim(),
+    titleFont: document.getElementById('def-font').value,
+    titleSize: document.getElementById('def-size').value,
+  };
+  try {
+    const saved = await api('/api/admin/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    globalSettings = { ...globalSettings, ...saved };
+    applyGlobalSettingsToBody(globalSettings);
+    const ok = document.getElementById('def-saved');
+    ok.classList.remove('hidden');
+    setTimeout(() => ok.classList.add('hidden'), 2000);
+  } catch (err) {
+    alert('저장 실패: ' + err.message);
+  }
+});
+
+// ---------- wepic 관리자: 화면관리 / PIN번호관리 ----------
+function fmtDateTime(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '-'
+    : new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(d);
+}
+
+async function loadAdminShares(targetId) {
+  const box = document.getElementById(targetId);
+  box.textContent = '불러오는 중...';
+  let shares = [];
+  try {
+    ({ shares } = await api('/api/admin/shares'));
+  } catch (err) {
+    box.innerHTML = '';
+    const p = document.createElement('div');
+    p.className = 'admin-empty';
+    p.textContent = '목록을 불러오지 못했습니다: ' + err.message;
+    box.appendChild(p);
+    return;
+  }
+  const countEl = document.getElementById('admin-shares-count');
+  if (countEl) countEl.textContent = `총 ${shares.length}개`;
+
+  box.innerHTML = '';
+  if (!shares.length) {
+    const p = document.createElement('div');
+    p.className = 'admin-empty';
+    p.textContent = '아직 만들어진 공유가 없습니다.';
+    box.appendChild(p);
+    return;
+  }
+  const pinMode = targetId === 'admin-pins-list';
+  shares.forEach((s) => box.appendChild(pinMode ? adminPinRow(s) : adminShareRow(s)));
+}
+
+// 화면관리 행: 썸네일 · 날짜 · PIN · 만든사람 · 삭제
+function adminShareRow(s) {
+  const row = document.createElement('div');
+  row.className = 'admin-row' + (s.expired ? ' expired' : '');
+
+  const img = document.createElement('img');
+  img.className = 'admin-thumb';
+  img.alt = '';
+  if (s.thumbUrl) img.src = s.thumbUrl;
+  row.appendChild(img);
+
+  const meta = document.createElement('div');
+  meta.className = 'admin-meta';
+  const line1 = document.createElement('div');
+  const t = document.createElement('b');
+  t.textContent = s.title || '(제목 없음)';
+  line1.appendChild(t);
+  line1.appendChild(document.createTextNode(`  ·  사진 ${s.count}장`));
+  const line2 = document.createElement('div');
+  line2.className = 'dim';
+  line2.textContent = `날짜 ${fmtDateTime(s.updatedAt)}  ·  PIN ${s.pin || '없음'}  ·  만든사람 ${s.owner || '-'}`;
+  const line3 = document.createElement('div');
+  line3.className = 'dim';
+  line3.textContent = `만료 ${fmtDateTime(s.expiresAt)}${s.expired ? ' (만료됨)' : ''}  ·  ${s.id}`;
+  meta.append(line1, line2, line3);
+  row.appendChild(meta);
+
+  const actions = document.createElement('div');
+  actions.className = 'admin-actions';
+  const open = document.createElement('a');
+  open.className = 'text-link small';
+  open.href = s.url; open.target = '_blank'; open.textContent = '열기';
+  const del = document.createElement('button');
+  del.className = 'btn-danger';
+  del.textContent = '삭제';
+  del.addEventListener('click', async () => {
+    if (!confirm(`이 공유 폴더를 삭제할까요?\n\n제목: ${s.title || '(없음)'}\n사진 ${s.count}장\n\n삭제하면 이 링크는 즉시 열리지 않습니다.`)) return;
+    try {
+      await api(`/api/admin/shares/${s.id}`, { method: 'DELETE' });
+      loadAdminShares('admin-shares-list');
+    } catch (err) { alert('삭제 실패: ' + err.message); }
+  });
+  actions.append(open, del);
+  row.appendChild(actions);
+  return row;
+}
+
+// PIN번호관리 행: PIN 확인·수정
+function adminPinRow(s) {
+  const row = document.createElement('div');
+  row.className = 'admin-row' + (s.expired ? ' expired' : '');
+
+  const img = document.createElement('img');
+  img.className = 'admin-thumb';
+  img.alt = '';
+  if (s.thumbUrl) img.src = s.thumbUrl;
+  row.appendChild(img);
+
+  const meta = document.createElement('div');
+  meta.className = 'admin-meta';
+  const l1 = document.createElement('div');
+  const b = document.createElement('b');
+  b.textContent = s.title || '(제목 없음)';
+  l1.appendChild(b);
+  l1.appendChild(document.createTextNode(`  ·  사진 ${s.count}장`));
+  const l2 = document.createElement('div');
+  l2.className = 'dim';
+  l2.textContent = `${fmtDateTime(s.updatedAt)}  ·  만든사람 ${s.owner || '-'}  ·  ${s.id}`;
+  meta.append(l1, l2);
+  row.appendChild(meta);
+
+  const actions = document.createElement('div');
+  actions.className = 'admin-actions';
+  const input = document.createElement('input');
+  input.className = 'pin-input';
+  input.type = 'text';
+  input.maxLength = 4;
+  input.inputMode = 'numeric';
+  input.value = s.pin || '';
+  input.placeholder = '----';
+  const save = document.createElement('button');
+  save.className = 'secondary slim';
+  save.textContent = '저장';
+  save.addEventListener('click', async () => {
+    const pin = input.value.trim();
+    if (!/^\d{4}$/.test(pin)) { alert('PIN은 4자리 숫자여야 합니다.'); return; }
+    try {
+      await api(`/api/admin/shares/${s.id}/pin`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin }),
+      });
+      save.textContent = '저장됨';
+      setTimeout(() => { save.textContent = '저장'; }, 1500);
+    } catch (err) { alert('저장 실패: ' + err.message); }
+  });
+  actions.append(input, save);
+  row.appendChild(actions);
+  return row;
+}
+
+document.getElementById('admin-shares-reload').addEventListener('click', () => loadAdminShares('admin-shares-list'));
+document.getElementById('admin-pins-reload').addEventListener('click', () => loadAdminShares('admin-pins-list'));
+
 // ---------- 부팅 ----------
 function boot(photos) {
   allPhotos = photos;
@@ -949,10 +1175,12 @@ function boot(photos) {
   if (allRadio) allRadio.checked = true;
   // 데모·공유 유입은 로그인 없이 보는 "게스트" 상태
   const guest = isDemoMode || isSharedMode;
-  if (!guest) {
-    // 이전에 직접 설정한 곡이 있으면 그것을, 없으면 기본 곡을 채운다.
+  // 배경음악: 관리자 Default 설정 > 이전에 직접 설정한 곡 > 앱 기본곡 순으로 채운다.
+  // (데모 데이터에 musicUrl이 있으면 startDemo가 이미 채워두므로 비어있을 때만 건드린다)
+  const musicEl = document.getElementById('music-url');
+  if (!musicEl.value.trim()) {
     const saved = (() => { try { return localStorage.getItem('bgMusicUrl'); } catch { return null; } })();
-    document.getElementById('music-url').value = saved || DEFAULT_MUSIC_URL;
+    musicEl.value = globalSettings.musicUrl || saved || DEFAULT_MUSIC_URL;
   }
   document.getElementById('demo-badge').classList.toggle('hidden', !isDemoMode);
   document.getElementById('account-links').classList.toggle('hidden', guest);
@@ -973,7 +1201,12 @@ let isLoggedIn = false;
 function applyLoginState(status) {
   isLoggedIn = !!status.loggedIn;
   // 이전에 만든 공유 링크가 있으면 "링크변경 반영"을 바로 쓸 수 있게 노출
-  if (status.hasShare) document.getElementById('btn-update-share').classList.remove('hidden');
+  if (status.hasShare) {
+    document.getElementById('btn-update-share').classList.remove('hidden');
+    if (status.sharePin) setSharePin(status.sharePin); // 기존 공유의 PIN 표시
+  }
+  // wepic 관리자 메뉴는 허용된 계정으로 로그인했을 때만 노출
+  document.getElementById('admin-menu-group').classList.toggle('hidden', !status.isAdmin);
   loggedInName = isLoggedIn ? (status.name || status.email || null) : null;
   const btnLogin = document.getElementById('btn-login');
   const loginActions = document.getElementById('login-actions');
@@ -1026,6 +1259,10 @@ async function loadSharedMedia() {
 
 async function init() {
   const params = new URLSearchParams(location.search);
+
+  // 0) 관리자가 정한 Default 정보(타이틀·배경음악·폰트/크기)를 가장 먼저 읽어 적용한다.
+  //    데모·wepic 메인화면·wepic 공유화면 모두 이 값을 기준으로 시작한다.
+  await loadGlobalSettings();
 
   // 1) 구글 포토 "공유"로 들어온 경우: 곧바로 슬라이드쇼
   if (params.has('shared')) {
