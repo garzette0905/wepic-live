@@ -192,6 +192,8 @@ app.get('/api/status', (req, res) => {
     loggedIn,
     email: loggedIn ? req.session.tokens.email || null : null,
     name: loggedIn ? req.session.tokens.name || null : null,
+    // 이미 만들어 둔 공유 링크가 있으면 "링크변경 반영" 버튼을 바로 노출하기 위한 힌트
+    hasShare: !!(req.session.shareId && readShareManifest(req.session.shareId)),
   });
 });
 

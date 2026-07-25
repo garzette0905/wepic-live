@@ -444,42 +444,85 @@ function showToast(msg) {
   toastHandle = setTimeout(() => el.classList.add('hidden'), 2500);
 }
 
-// 브라우저의 비동기 클립보드 API는 이미지 타입으로 image/png만 안정적으로 지원한다
-// (구글 포토가 내려주는 image/jpeg를 그대로 쓰면 브라우저가 거부한다).
-// 그래서 캔버스로 그린 뒤 PNG로 변환해서 복사한다.
-function toPngBlob(url) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      canvas.getContext('2d').drawImage(img, 0, 0);
-      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('이미지 변환 실패'))), 'image/png');
-    };
-    img.onerror = () => reject(new Error('이미지를 불러오지 못했습니다.'));
-    img.src = url;
-  });
+// ---------- 다운로드 (이 사진만 / 전체) ----------
+// blob으로 받아 <a download>로 저장한다. 원본(프록시가 내려주는 원본 화질)을 그대로 저장하며
+// 모바일에서도 같은 방식으로 동작한다(캔버스 변환·재압축 없음).
+function fileExtFromType(type) {
+  if (/png/.test(type)) return 'png';
+  if (/webp/.test(type)) return 'webp';
+  if (/gif/.test(type)) return 'gif';
+  if (/mp4/.test(type)) return 'mp4';
+  if (/quicktime|mov/.test(type)) return 'mov';
+  if (/webm/.test(type)) return 'webm';
+  return 'jpg';
+}
+function photoFileName(photo, idx, type) {
+  const d = new Date(photo.createTime);
+  const stamp = Number.isNaN(d.getTime())
+    ? String(idx + 1).padStart(3, '0')
+    : `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
+  return `wepic_${String(idx + 1).padStart(3, '0')}_${stamp}.${fileExtFromType(type)}`;
+}
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+// 동영상이면 원본(videoUrl), 사진이면 fullUrl을 내려받는다.
+async function downloadOne(photo, idx) {
+  const src = photo.type === 'video' && photo.videoUrl ? photo.videoUrl : photo.fullUrl;
+  const res = await fetch(src, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(`다운로드 실패 (${res.status})`);
+  const blob = await res.blob();
+  saveBlob(blob, photoFileName(photo, idx, blob.type));
 }
 
-// 모바일폰(Android/iPhone/iPod)에서는 클립보드 이미지 복사가 사실상 동작하지 않으므로
-// 공유(복사) 버튼 자체를 숨긴다. 데스크톱/태블릿에서는 그대로 노출.
-const IS_PHONE = /Android|iPhone|iPod/i.test(navigator.userAgent);
-if (IS_PHONE) document.getElementById('btn-share').classList.add('hidden');
+const downloadMenu = document.getElementById('download-menu');
+const hideDownloadMenu = () => downloadMenu.classList.add('hidden');
 
-document.getElementById('btn-share').addEventListener('click', async () => {
+document.getElementById('btn-download').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!filteredPhotos.length) { showToast('저장할 사진이 없습니다.'); return; }
+  downloadMenu.classList.toggle('hidden');
+});
+// 메뉴 밖을 누르면 닫기
+document.addEventListener('click', (e) => {
+  if (!downloadMenu.classList.contains('hidden') && !downloadMenu.contains(e.target)) hideDownloadMenu();
+});
+
+document.getElementById('dl-current').addEventListener('click', async () => {
+  hideDownloadMenu();
   const photo = filteredPhotos[currentIndex];
   if (!photo) return;
   try {
-    if (!navigator.clipboard || !window.ClipboardItem) {
-      throw new Error('이 브라우저는 이미지 복사를 지원하지 않습니다.');
-    }
-    const pngBlob = await toPngBlob(photo.fullUrl);
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
-    showToast('사진이 클립보드에 복사되었습니다. 붙여넣기(Ctrl+V) 하세요.');
+    showToast('저장 중...');
+    await downloadOne(photo, currentIndex);
+    showToast('저장되었습니다.');
   } catch (err) {
-    showToast('복사 실패: ' + err.message);
+    showToast('저장 실패: ' + err.message);
   }
+});
+
+document.getElementById('dl-all').addEventListener('click', async () => {
+  hideDownloadMenu();
+  const list = filteredPhotos.slice();
+  if (!list.length) return;
+  let ok = 0, fail = 0;
+  for (let i = 0; i < list.length; i++) {
+    showToast(`전체 저장 중... (${i + 1}/${list.length})`);
+    try {
+      await downloadOne(list[i], i);
+      ok++;
+    } catch { fail++; }
+    // 브라우저가 연속 다운로드를 차단하지 않도록 약간의 간격을 둔다
+    await new Promise((r) => setTimeout(r, 350));
+  }
+  showToast(fail ? `저장 완료 ${ok}장 (실패 ${fail}장)` : `전체 ${ok}장 저장되었습니다.`);
 });
 
 // ---------- 배경음악 (YouTube IFrame API) ----------
@@ -573,18 +616,21 @@ document.getElementById('btn-music-clear').addEventListener('click', () => {
 // ---------- 실시간 공유 링크 ----------
 const shareModal = document.getElementById('share-modal');
 
-document.getElementById('btn-make-share').addEventListener('click', async () => {
-  const btn = document.getElementById('btn-make-share');
+// 현재 화면의 사진·제목·음악·전환설정을 서버에 올린다.
+// 서버는 세션마다 같은 shareId를 재사용하므로, 다시 올리면 "같은 링크"의 내용이 갱신된다.
+// mode: 'create'(팝업으로 링크 안내) | 'update'(조용히 반영 후 토스트)
+async function pushShare(mode) {
+  const btn = document.getElementById(mode === 'update' ? 'btn-update-share' : 'btn-make-share');
   // 공유 링크는 사진만 지원한다(동영상은 서버가 정지 이미지로만 저장돼 오해 소지). 동영상은 제외.
   const sharePhotos = allPhotos.filter((p) => p.type !== 'video');
   const excludedVideos = allPhotos.length - sharePhotos.length;
   if (!sharePhotos.length) { showToast('공유할 사진이 없습니다. (동영상은 공유 링크에 포함되지 않습니다)'); return; }
   const orig = btn.innerHTML;
   btn.disabled = true;
-  btn.textContent = '사진 저장 중... (사진이 많으면 시간이 걸립니다)';
+  btn.textContent = mode === 'update' ? '반영 중...' : '사진 저장 중... (사진이 많으면 시간이 걸립니다)';
   try {
     const musicUrl = document.getElementById('music-url').value.trim();
-    // 공유 링크를 만드는 시점의 제목·전환 간격·전환 효과를 함께 저장해 공유 화면에도 동일 적용.
+    // 공유 시점의 제목·전환 간격·전환 효과를 함께 저장해 공유 화면에도 동일 적용.
     const title = document.getElementById('title-input').value.trim();
     const intervalSec = Math.round(slideIntervalMs / 1000);
     let r;
@@ -617,16 +663,25 @@ document.getElementById('btn-make-share').addEventListener('click', async () => 
     }
     document.getElementById('share-url').value = r.url;
     document.getElementById('btn-open-share').href = r.url;
-    document.getElementById('share-copied').classList.add('hidden');
-    shareModal.classList.remove('hidden');
-    if (excludedVideos) showToast(`동영상 ${excludedVideos}개는 공유 링크에서 제외되었습니다.`);
+    // 링크가 생겼으면 "링크변경 반영" 버튼을 노출한다.
+    document.getElementById('btn-update-share').classList.remove('hidden');
+    if (mode === 'update') {
+      showToast(`공유 링크에 반영되었습니다. (사진 ${r.count}장)`);
+    } else {
+      document.getElementById('share-copied').classList.add('hidden');
+      shareModal.classList.remove('hidden');
+      if (excludedVideos) showToast(`동영상 ${excludedVideos}개는 공유 링크에서 제외되었습니다.`);
+    }
   } catch (err) {
-    showToast('공유 링크 생성 실패: ' + err.message);
+    showToast((mode === 'update' ? '반영 실패: ' : '공유 링크 생성 실패: ') + err.message);
   } finally {
     btn.disabled = false;
     btn.innerHTML = orig;
   }
-});
+}
+
+document.getElementById('btn-make-share').addEventListener('click', () => pushShare('create'));
+document.getElementById('btn-update-share').addEventListener('click', () => pushShare('update'));
 
 document.getElementById('btn-copy-share').addEventListener('click', async () => {
   const input = document.getElementById('share-url');
@@ -649,6 +704,7 @@ document.getElementById('btn-revoke-share').addEventListener('click', async () =
   try {
     await api('/api/share', { method: 'DELETE' });
     shareModal.classList.add('hidden');
+    document.getElementById('btn-update-share').classList.add('hidden'); // 반영할 링크가 없어짐
     showToast('공유 링크를 폐기했습니다.');
   } catch (err) {
     showToast('폐기 실패: ' + err.message);
@@ -946,6 +1002,8 @@ let isLoggedIn = false;
 // 로그인 상태를 홈의 로그인/사진 패널에 반영 (자동 진입은 하지 않음)
 function applyLoginState(status) {
   isLoggedIn = !!status.loggedIn;
+  // 이전에 만든 공유 링크가 있으면 "링크변경 반영"을 바로 쓸 수 있게 노출
+  if (status.hasShare) document.getElementById('btn-update-share').classList.remove('hidden');
   loggedInName = isLoggedIn ? (status.name || status.email || null) : null;
   const btnLogin = document.getElementById('btn-login');
   const loginActions = document.getElementById('login-actions');
