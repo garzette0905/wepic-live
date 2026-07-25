@@ -246,6 +246,8 @@ button.preset.active { background: var(--accent-strong); color: #fff; }
 }
 /* 데모 배지와 제목이 겹치지 않도록, 제목이 있으면 배지를 아래로 */
 body.has-title .demo-badge { top: 50px; }
+/* 액자 보기(관리자가 특정 공유를 메인화면으로 열어본 상태) */
+.frame-badge { background: rgba(224, 50, 47, 0.92); }
 
 /* ---------- 제목 · 시계/날씨 오버레이 (전체화면에서도 표시) ---------- */
 /* 제목과 시계 시각의 폰트 크기를 하나의 변수로 묶어 항상 같은 크기로 유지한다. */
@@ -477,6 +479,10 @@ body.ts-large { --title-size: 28px; }
 .admin-row .admin-meta b { color: #fff; }
 .admin-row .admin-meta .dim { color: var(--text-muted); }
 .admin-row .admin-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+/* 화면관리는 열기 링크가 2개(메인/공유) + 삭제라 세로로 정리한다 */
+#admin-shares-list .admin-row .admin-actions {
+  flex-direction: column; align-items: flex-end; gap: 4px; min-width: 132px;
+}
 .admin-empty { color: var(--text-muted); font-size: 13px; }
 .btn-danger { background: rgba(224,91,91,0.18); color: #ff9b9b; padding: 8px 12px; font-size: 12.5px; }
 .btn-danger:hover { background: rgba(224,91,91,0.3); filter: none; }

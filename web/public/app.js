@@ -758,6 +758,10 @@ document.getElementById('btn-exclude-apply').addEventListener('click', () => {
 // ---------- 데모 (계정 없이 보기) ----------
 let isDemoMode = false;
 let isSharedMode = false; // 구글 포토 "공유"로 사진을 받아 로그인 없이 보는 상태(PWA 공유 타깃)
+// 액자 보기 모드: 관리자가 특정 공유(액자)를 wepic 메인화면으로 열어본 상태(/?frame=<id>).
+// 남의 공유를 실수로 덮어쓰지 않도록 공유·계정 관련 조작은 감춘다.
+let isFrameMode = false;
+let frameManifest = null;
 
 async function startDemo() {
   try {
@@ -1092,9 +1096,16 @@ function adminShareRow(s) {
 
   const actions = document.createElement('div');
   actions.className = 'admin-actions';
-  const open = document.createElement('a');
-  open.className = 'text-link small';
-  open.href = s.url; open.target = '_blank'; open.textContent = '열기';
+  // 액자마다 두 가지로 열 수 있다: 관리용 메인화면(설정 패널 포함) / 가족이 보는 공유화면
+  const openMain = document.createElement('a');
+  openMain.className = 'text-link small';
+  openMain.href = `/?frame=${encodeURIComponent(s.id)}`;
+  openMain.target = '_blank';
+  openMain.textContent = 'wepic 메인화면 열기';
+  const openShare = document.createElement('a');
+  openShare.className = 'text-link small';
+  openShare.href = s.url; openShare.target = '_blank';
+  openShare.textContent = 'wepic 공유화면 열기';
   const del = document.createElement('button');
   del.className = 'btn-danger';
   del.textContent = '삭제';
@@ -1105,7 +1116,7 @@ function adminShareRow(s) {
       loadAdminShares('admin-shares-list');
     } catch (err) { alert('삭제 실패: ' + err.message); }
   });
-  actions.append(open, del);
+  actions.append(openMain, openShare, del);
   row.appendChild(actions);
   return row;
 }
@@ -1183,13 +1194,31 @@ function boot(photos) {
     musicEl.value = globalSettings.musicUrl || saved || DEFAULT_MUSIC_URL;
   }
   document.getElementById('demo-badge').classList.toggle('hidden', !isDemoMode);
-  document.getElementById('account-links').classList.toggle('hidden', guest);
+  document.getElementById('account-links').classList.toggle('hidden', guest || isFrameMode);
   document.getElementById('demo-links').classList.toggle('hidden', !guest);
   // 사진 재선택 등은 로그인 사용자만 가능(게스트는 토큰이 없어 불가)하지만, 실시간 공유
   // 링크는 구글 포토 "공유"로 받은 사진(isSharedMode)의 경우 브라우저가 이미 파일을 들고
   // 있어 로그인 없이도 만들 수 있다(/api/share/blob). 샘플 데모 사진만 제외.
-  document.getElementById('share-block').classList.toggle('hidden', isDemoMode);
+  // 액자 보기(isFrameMode)는 남의 공유를 보는 것이므로 공유 만들기/반영을 감춘다.
+  document.getElementById('share-block').classList.toggle('hidden', isDemoMode || isFrameMode);
   loadDisplaySettings();
+  // 액자 보기: 그 액자에 저장된 제목·전환설정을 그대로 재현한다(로컬 설정보다 우선).
+  if (isFrameMode && frameManifest) {
+    const badge = document.getElementById('frame-badge');
+    badge.textContent = `액자 보기 — ${frameManifest.title || '(제목 없음)'}`;
+    badge.classList.remove('hidden');
+    applyTitle(frameManifest.title || '');
+    if (frameManifest.intervalSec) {
+      const sec = Math.min(60, Math.max(3, Number(frameManifest.intervalSec)));
+      const sel = document.getElementById('interval-select');
+      if ([...sel.options].some((o) => o.value === String(sec))) sel.value = String(sec);
+      applyInterval(sec);
+    }
+    if (frameManifest.effect) {
+      const r = document.querySelector(`#effect-radios input[value="${frameManifest.effect}"]`);
+      if (r) { r.checked = true; applyEffect(frameManifest.effect); }
+    }
+  }
   showSlideshow();
   recomputeFiltered();
 }
@@ -1257,12 +1286,46 @@ async function loadSharedMedia() {
   return items;
 }
 
+// ---------- 액자 보기 (/?frame=<shareId>) ----------
+// 관리자 화면관리에서 "wepic 메인화면 열기"로 진입한다. 해당 공유(액자)에 저장된 사진과
+// 설정으로 메인화면을 재현한다. 사진 파일은 서버가 PIN으로 보호하며 관리자·소유자만 통과한다.
+async function loadFrame(id) {
+  const res = await fetch(`/shares/${encodeURIComponent(id)}/photos.json`, {
+    cache: 'no-store', credentials: 'same-origin',
+  });
+  if (res.status === 401) throw new Error('이 액자를 볼 권한이 없습니다. (관리자 계정으로 로그인했는지 확인하세요)');
+  if (!res.ok) throw new Error('액자를 찾을 수 없습니다. 링크가 만료되었거나 삭제되었을 수 있습니다.');
+  const m = await res.json();
+  if (!(m.items || []).length) throw new Error('이 액자에는 사진이 없습니다.');
+  return m;
+}
+
 async function init() {
   const params = new URLSearchParams(location.search);
 
   // 0) 관리자가 정한 Default 정보(타이틀·배경음악·폰트/크기)를 가장 먼저 읽어 적용한다.
   //    데모·wepic 메인화면·wepic 공유화면 모두 이 값을 기준으로 시작한다.
   await loadGlobalSettings();
+
+  // 0-1) 액자 보기: 특정 공유를 메인화면으로 열기
+  const frameId = params.get('frame');
+  if (frameId) {
+    try {
+      const m = await loadFrame(frameId);
+      isFrameMode = true;
+      frameManifest = m;
+      if (m.musicUrl) document.getElementById('music-url').value = m.musicUrl;
+      boot((m.items || []).map((it) => ({
+        id: it.id, type: 'photo', createTime: it.createTime,
+        width: it.width || null, height: it.height || null,
+        fullUrl: it.fullUrl, thumbUrl: it.thumbUrl || it.fullUrl,
+      })));
+      return;
+    } catch (err) {
+      alert(err.message);
+      history.replaceState(null, '', '/'); // 주소 정리 후 일반 홈으로
+    }
+  }
 
   // 1) 구글 포토 "공유"로 들어온 경우: 곧바로 슬라이드쇼
   if (params.has('shared')) {
