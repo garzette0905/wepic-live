@@ -1,8 +1,8 @@
 {
-  "name": "wepic-live-worker",
+  "name": "wepic-live",
   "private": true,
   "type": "module",
-  "description": "Wepic Live — Cloudflare Worker 백엔드 (Render/Express 포팅)",
+  "description": "Wepic Live — Cloudflare Worker 백엔드",
   "dependencies": {
     "@paulmillr/qr": "^0.2.1"
   },

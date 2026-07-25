@@ -1,0 +1,32 @@
+name = "wepic-live"
+main = "cloudflare/index.js"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# 프론트엔드 정적 자산은 web/public 을 그대로 서빙(복사 불필요).
+# 정적 파일이 없는 경로(/api/*, /auth/*, /img, /video, /shares/*, /f/*, POST 등)는 Worker로 넘어간다.
+[assets]
+directory = "web/public"
+binding = "ASSETS"
+not_found_handling = "none"
+
+# 공유 사진 저장용 R2 (대시보드에서 'wepic-shares' 버킷 먼저 생성)
+[[r2_buckets]]
+binding = "SHARES"
+bucket_name = "wepic-shares"
+
+# 로그인 세션 저장용 KV
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "df7d7aa4228a478db2fb2779d41d0cd2"
+
+[vars]
+BASE_URL = "https://wepic-live.garzette.workers.dev"
+SHARE_TTL_HOURS = "24"
+
+# 만료 공유 정리: 매시간
+[triggers]
+crons = ["0 * * * *"]
+
+# 시크릿은 대시보드(Settings → Variables and secrets, Encrypt)로 등록:
+#   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET
