@@ -23,24 +23,32 @@ function preload(url) {
   return new Promise((resolve) => { const im = new Image(); im.onload = resolve; im.onerror = resolve; im.src = url; });
 }
 
+let videoStallTimer = null;
+
 // 동영상 재생을 멈추고 비디오 레이어를 숨긴다(사진으로 돌아갈 때).
 function stopVideo() {
   const v = document.getElementById('video-layer');
   v.classList.remove('active');
   v.onended = null;
   v.onerror = null;
+  v.oncanplay = null;
+  if (videoStallTimer) { clearTimeout(videoStallTimer); videoStallTimer = null; }
   try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* 무시 */ }
   resumeMusicAfterVideo();
 }
 
 // 동영상 항목 재생. 끝나면 다음 항목으로 넘어간다(타이머 대신 재생 종료가 신호).
-// 실패 신호는 error 이벤트와 play() 거부 두 곳에서 올 수 있으므로, 한 항목당 한 번만
-// 다음으로 넘어가게 막는다(둘 다 처리하면 두 칸씩 건너뛰어 제자리를 맴돈다).
+// 촬영 원본 그대로인 동영상은 메타데이터(moov)가 파일 맨 끝에 있는 경우가 많아,
+// 큰 파일일수록 재생 가능해지기까지 시간이 좀 걸린다(끝부분을 한 번 더 받아와야 함).
+// 그래서 play()가 한 번 거절됐다고 바로 실패로 보지 않고 canplay가 오면 다시 시도하며,
+// 실제로 넘어가는 것은 재생 종료(onended)·진짜 디코딩 실패(onerror)·너무 오래 준비가
+// 안 될 때(정체 타임아웃)뿐이다.
 function showVideo(p) {
   const v = document.getElementById('video-layer');
   document.getElementById('photo-a').classList.remove('active');
   document.getElementById('photo-b').classList.remove('active');
   if (timer) { clearInterval(timer); timer = null; } // 재생 중에는 자동 전환을 멈춘다
+  if (videoStallTimer) { clearTimeout(videoStallTimer); videoStallTimer = null; }
   v.poster = p.fullUrl || '';
   v.src = p.videoUrl;
   v.classList.add('active');
@@ -51,18 +59,31 @@ function showVideo(p) {
   const goNext = (delay) => {
     if (done) return;
     done = true;
+    if (videoStallTimer) { clearTimeout(videoStallTimer); videoStallTimer = null; }
     // 이미 다른 항목으로 넘어갔다면 아무것도 하지 않는다.
     setTimeout(() => { if (photos[idx] === p && !slidePaused) advance(); }, delay);
   };
   v.onended = () => goNext(0);
-  // 코덱 미지원 등으로 재생이 안 되면 멈추지 않고 다음으로 넘어간다.
+  // 진짜 디코딩 실패(코덱 미지원 등)일 때만 즉시 넘어간다.
   v.onerror = () => goNext(1500);
-  v.play().catch(() => {
-    // 소리 있는 자동재생이 막히면 음소거로 다시 시도한다(브라우저 정책).
-    v.muted = true;
-    resumeMusicAfterVideo();
-    v.play().catch(() => goNext(1500));
-  });
+
+  let started = false;
+  const tryPlay = () => {
+    if (started || done) return;
+    v.play().then(() => { started = true; if (videoStallTimer) { clearTimeout(videoStallTimer); videoStallTimer = null; } }).catch(() => {
+      if (!v.muted) {
+        // 소리 있는 자동재생이 브라우저 정책으로 막힌 경우: 음소거로 다시 시도.
+        v.muted = true;
+        resumeMusicAfterVideo();
+        tryPlay();
+      }
+      // 그 외(아직 메타데이터 준비 전 등)는 실패로 보지 않는다 — canplay가 오면 재시도된다.
+    });
+  };
+  v.oncanplay = tryPlay;
+  tryPlay(); // 이미 준비돼 있으면(작은 동영상 등) 곧바로 재생
+  // 그래도 너무 오래 멈춰 있으면(정말 재생 불가) 넘어간다.
+  videoStallTimer = setTimeout(() => { if (!started) goNext(0); }, 15000);
 }
 
 async function show() {
