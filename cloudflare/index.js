@@ -273,8 +273,16 @@ async function apiFramesSelect(request, env, id) {
   const { sid, data } = await getSession(request, env);
   if (!data) return json({ error: '없는 액자입니다.' }, 404);
   ensureFrames(data);
-  const f = data.frames.find((x) => x.id === id);
-  if (!f) return json({ error: '없는 액자입니다.' }, 404);
+  let f = data.frames.find((x) => x.id === id);
+  if (!f) {
+    // 관리자는 다른 세션이 만든 액자도 wepic 메인화면에서 그대로 이어서 관리할 수 있도록,
+    // "wepic 메인화면 열기" 진입 시 자기 액자 목록에 편입시킨 뒤 선택한다.
+    if (!isAdminEmail(env, data.email)) return json({ error: '없는 액자입니다.' }, 404);
+    const m = await readManifest(env, id);
+    if (!m) return json({ error: '없는 액자입니다.' }, 404);
+    f = { id, name: m.frameName || m.title || '관리자로 연 액자' };
+    data.frames.push(f);
+  }
   data.currentFrameId = f.id;
   await putSession(env, sid, data);
   return json({ ok: true, currentFrameId: f.id });
@@ -546,14 +554,46 @@ async function shareCreate(request, env, token, sess) {
   }
   const shareId = sess.data.currentFrameId;
   await putSession(env, sess.sid, sess.data);
+
+  // 관리자가 이 액자를 열어(/?frame=<id>) 기존 사진은 그대로 두고 몇 장만 추가/제외하는
+  // 경우, 넘어온 항목 중 "이미 이 액자에 저장된 파일"은 구글에서 다시 받지 않고 그대로
+  // 들고 온다(구글 base URL이 없어 재다운로드가 불가능하므로 지우기 전에 미리 읽어둔다).
+  const keepRe = new RegExp(`^/shares/${shareId}/photos/(\\d+)_full\\.(\\w+)$`);
+  const kept = new Map();
+  for (const it of items) {
+    const m = keepRe.exec(it.fullUrl || '');
+    if (!m) continue;
+    try {
+      const fullObj = await env.SHARES.get(`${shareId}/photos/${m[1]}_full.${m[2]}`);
+      if (!fullObj) continue;
+      const full = new Uint8Array(await fullObj.arrayBuffer());
+      let thumb = null;
+      const thumbObj = await env.SHARES.get(`${shareId}/photos/${m[1]}_thumb.${m[2]}`);
+      if (thumbObj) thumb = new Uint8Array(await thumbObj.arrayBuffer());
+      kept.set(it.fullUrl, { full, thumb, ext: m[2] });
+    } catch { /* 읽기 실패하면 새로 받도록 건너뜀(아래에서 baseUrl이 없어 결국 제외됨) */ }
+  }
+
   await deleteShare(env, shareId);
 
   const manifestItems = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
+    const n = String(i + 1).padStart(3, '0');
+    const carry = kept.get(it.fullUrl);
+    if (carry) {
+      await env.SHARES.put(`${shareId}/photos/${n}_full.${carry.ext}`, carry.full, { httpMetadata: { contentType: 'image/jpeg' } });
+      if (carry.thumb) await env.SHARES.put(`${shareId}/photos/${n}_thumb.${carry.ext}`, carry.thumb, { httpMetadata: { contentType: 'image/jpeg' } });
+      manifestItems.push({
+        id: it.id, createTime: it.createTime,
+        width: it.width || null, height: it.height || null,
+        fullUrl: `/shares/${shareId}/photos/${n}_full.${carry.ext}`,
+        thumbUrl: carry.thumb ? `/shares/${shareId}/photos/${n}_thumb.${carry.ext}` : `/shares/${shareId}/photos/${n}_full.${carry.ext}`,
+      });
+      continue;
+    }
     const base = baseUrlFromImgPath(it.fullUrl || '');
     if (!base) continue;
-    const n = String(i + 1).padStart(3, '0');
     try {
       const full = await downloadImage(base, 'w1920-h1080', token);
       const thumb = await downloadImage(base, 'w300-h300-c', token);

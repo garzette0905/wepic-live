@@ -314,8 +314,16 @@ app.put('/api/frames/:id', (req, res) => {
 
 app.post('/api/frames/:id/select', (req, res) => {
   ensureFrames(req);
-  const f = req.session.frames.find((x) => x.id === req.params.id);
-  if (!f) return res.status(404).json({ error: '없는 액자입니다.' });
+  let f = req.session.frames.find((x) => x.id === req.params.id);
+  if (!f) {
+    // 관리자는 다른 세션이 만든 액자도 wepic 메인화면에서 그대로 이어서 관리할 수 있도록,
+    // "wepic 메인화면 열기" 진입 시 자기 액자 목록에 편입시킨 뒤 선택한다.
+    if (!isAdminEmail(req.session.tokens?.email)) return res.status(404).json({ error: '없는 액자입니다.' });
+    const m = readShareManifest(req.params.id);
+    if (!m) return res.status(404).json({ error: '없는 액자입니다.' });
+    f = { id: req.params.id, name: m.frameName || m.title || '관리자로 연 액자' };
+    req.session.frames.push(f);
+  }
   req.session.currentFrameId = f.id;
   res.json({ ok: true, currentFrameId: f.id });
 });
@@ -610,17 +618,45 @@ app.post(
       req.session.currentFrameId = id;
     }
     const shareId = req.session.currentFrameId;
-
     const dir = shareDir(shareId);
+
+    // 관리자가 이 액자를 열어(/?frame=<id>) 기존 사진은 그대로 두고 몇 장만 추가/제외하는
+    // 경우, 넘어온 항목 중 "이미 이 액자에 저장된 파일"은 구글에서 다시 받지 않고 그대로
+    // 들고 온다(구글 base URL이 없어 재다운로드가 불가능하므로 폴더를 지우기 전에 미리 읽어둔다).
+    const keepRe = new RegExp(`^/shares/${shareId}/photos/(\\d+)_(full)\\.(\\w+)$`);
+    const kept = new Map();
+    for (const it of items) {
+      const m = keepRe.exec(it.fullUrl || '');
+      if (!m) continue;
+      try {
+        const full = fs.readFileSync(path.join(dir, 'photos', `${m[1]}_full.${m[3]}`));
+        let thumb = null;
+        try { thumb = fs.readFileSync(path.join(dir, 'photos', `${m[1]}_thumb.${m[3]}`)); } catch { /* 썸네일 없으면 원본으로 대체 */ }
+        kept.set(it.fullUrl, { full, thumb, ext: m[3] });
+      } catch { /* 파일이 이미 없으면 새로 받도록 건너뜀(아래에서 baseUrl이 없어 결국 제외됨) */ }
+    }
+
     fs.rmSync(dir, { recursive: true, force: true }); // 이전 내용 제거 후 최신본으로 교체
     fs.mkdirSync(path.join(dir, 'photos'), { recursive: true });
 
     const manifestItems = [];
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
+      const n = String(i + 1).padStart(3, '0');
+      const carry = kept.get(it.fullUrl);
+      if (carry) {
+        fs.writeFileSync(path.join(dir, 'photos', `${n}_full.${carry.ext}`), carry.full);
+        if (carry.thumb) fs.writeFileSync(path.join(dir, 'photos', `${n}_thumb.${carry.ext}`), carry.thumb);
+        manifestItems.push({
+          id: it.id, createTime: it.createTime,
+          width: it.width || null, height: it.height || null,
+          fullUrl: `/shares/${shareId}/photos/${n}_full.${carry.ext}`,
+          thumbUrl: carry.thumb ? `/shares/${shareId}/photos/${n}_thumb.${carry.ext}` : `/shares/${shareId}/photos/${n}_full.${carry.ext}`,
+        });
+        continue;
+      }
       const base = baseUrlFromImgPath(it.fullUrl || '');
       if (!base) continue;
-      const n = String(i + 1).padStart(3, '0');
       try {
         const full = await downloadImage(base, 'w1920-h1080', token);
         const thumb = await downloadImage(base, 'w300-h300-c', token);

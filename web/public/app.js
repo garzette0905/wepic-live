@@ -610,7 +610,8 @@ document.getElementById('btn-pin-new').addEventListener('click', () => {
 
 // ---------- 세션당 액자 목록 (다중 액자) ----------
 // 한 세션이 여러 액자(공유 링크)를 만들고, 이름 붙여 전환하며 각각 계속 갱신할 수 있다.
-// (관리자의 "액자 보기" 미리보기 모드인 isFrameMode/frameManifest와는 다른, 별개의 상태다.)
+// 관리자가 "wepic 메인화면 열기"(isFrameMode)로 연 액자도 서버가 currentFrameId로 선택해
+// 두므로 이 목록에 함께 나타난다.
 let frames = [];
 let currentFrameId = null;
 
@@ -850,8 +851,9 @@ document.getElementById('btn-exclude-apply').addEventListener('click', () => {
 // ---------- 데모 (계정 없이 보기) ----------
 let isDemoMode = false;
 let isSharedMode = false; // 구글 포토 "공유"로 사진을 받아 로그인 없이 보는 상태(PWA 공유 타깃)
-// 액자 보기 모드: 관리자가 특정 공유(액자)를 wepic 메인화면으로 열어본 상태(/?frame=<id>).
-// 남의 공유를 실수로 덮어쓰지 않도록 공유·계정 관련 조작은 감춘다.
+// 관리자 모드: 관리자가 특정 액자를 wepic 메인화면으로 열어(/?frame=<id>) 자기 세션에
+// 편입시킨 상태. frameManifest는 최초 진입 시 제목·전환설정 초기값을 채우는 용도일 뿐,
+// 이후에는 일반 메인화면과 동일하게 자유롭게 편집·저장할 수 있다.
 let isFrameMode = false;
 let frameManifest = null;
 
@@ -1189,11 +1191,12 @@ function adminShareRow(s) {
 
   const actions = document.createElement('div');
   actions.className = 'admin-actions';
-  // 액자마다 두 가지로 열 수 있다: 관리용 메인화면(설정 패널 포함) / 가족이 보는 공유화면
+  // 액자마다 두 가지로 열 수 있다: 관리용 메인화면(사진 추가/제외·PIN·설정 편집 가능) / 가족이 보는 공유화면
   const openMain = document.createElement('a');
   openMain.className = 'text-link small';
   openMain.href = `/?frame=${encodeURIComponent(s.id)}`;
   openMain.target = '_blank';
+  openMain.title = '이 액자를 wepic 메인화면에서 열어 사진 추가/제외·PIN·설정을 바로 편집합니다';
   openMain.textContent = 'wepic 메인화면 열기';
   const openShare = document.createElement('a');
   openShare.className = 'text-link small';
@@ -1288,25 +1291,26 @@ function boot(photos) {
     musicEl.value = globalSettings.musicUrl || saved || DEFAULT_MUSIC_URL;
   }
   document.getElementById('demo-badge').classList.toggle('hidden', !isDemoMode);
-  document.getElementById('account-links').classList.toggle('hidden', guest || isFrameMode);
+  document.getElementById('account-links').classList.toggle('hidden', guest);
   document.getElementById('demo-links').classList.toggle('hidden', !guest);
   // 사진 재선택 등은 로그인 사용자만 가능(게스트는 토큰이 없어 불가)하지만, 실시간 공유
   // 링크는 구글 포토 "공유"로 받은 사진(isSharedMode)의 경우 브라우저가 이미 파일을 들고
   // 있어 로그인 없이도 만들 수 있다(/api/share/blob). 샘플 데모 사진만 제외.
-  // 액자 보기(isFrameMode)는 남의 공유를 보는 것이므로 공유 만들기/반영을 감춘다.
-  document.getElementById('share-block').classList.toggle('hidden', isDemoMode || isFrameMode);
-  // 세션당 액자 목록: 내 화면(데모·남의 액자 보기가 아닐 때)에서만 불러온다.
-  if (!isDemoMode && !isFrameMode) {
+  document.getElementById('share-block').classList.toggle('hidden', isDemoMode);
+  // 세션당 액자 목록: 데모가 아니면 불러온다. 관리자가 액자를 열었을 때(isFrameMode)도
+  // 서버가 이미 그 액자를 currentFrameId로 선택해 두었으므로 그대로 반영된다.
+  if (!isDemoMode) {
     loadFrames();
   } else {
     frames = [];
     currentFrameId = null;
   }
   loadDisplaySettings();
-  // 액자 보기: 그 액자에 저장된 제목·전환설정을 그대로 재현한다(로컬 설정보다 우선).
+  // 관리자가 액자를 열었을 때: 그 액자에 저장된 제목·전환설정을 초기값으로 재현한다
+  // (이후에는 일반 메인화면처럼 자유롭게 사진 추가·제외, PIN 변경, 링크변경 반영이 가능하다).
   if (isFrameMode && frameManifest) {
     const badge = document.getElementById('frame-badge');
-    badge.textContent = `액자 보기 — ${frameManifest.title || '(제목 없음)'}`;
+    badge.textContent = `관리자 모드 — ${frameManifest.title || '(제목 없음)'}`;
     badge.classList.remove('hidden');
     applyTitle(frameManifest.title || '');
     if (frameManifest.intervalSec) {
@@ -1387,9 +1391,11 @@ async function loadSharedMedia() {
   return items;
 }
 
-// ---------- 액자 보기 (/?frame=<shareId>) ----------
-// 관리자 화면관리에서 "wepic 메인화면 열기"로 진입한다. 해당 공유(액자)에 저장된 사진과
-// 설정으로 메인화면을 재현한다. 사진 파일은 서버가 PIN으로 보호하며 관리자·소유자만 통과한다.
+// ---------- 관리자 모드 (/?frame=<shareId>) ----------
+// 관리자 화면관리에서 "wepic 메인화면 열기"로 진입한다. 그 액자를 관리자 자신의 세션에
+// 편입시켜(currentFrameId) 저장된 사진·설정을 그대로 불러오고, 이후 일반 메인화면과 똑같이
+// 사진 추가/제외·PIN 변경·"링크변경 반영"으로 이어서 관리할 수 있게 한다(더 이상 읽기 전용 아님).
+// 사진 파일은 서버가 PIN으로 보호하며 관리자·소유자만 통과한다.
 async function loadFrame(id) {
   const res = await fetch(`/shares/${encodeURIComponent(id)}/photos.json`, {
     cache: 'no-store', credentials: 'same-origin',
@@ -1408,10 +1414,13 @@ async function init() {
   //    데모·wepic 메인화면·wepic 공유화면 모두 이 값을 기준으로 시작한다.
   await loadGlobalSettings();
 
-  // 0-1) 액자 보기: 특정 공유를 메인화면으로 열기
+  // 0-1) 관리자 모드: 특정 액자를 wepic 메인화면에서 그대로 이어서 관리
   const frameId = params.get('frame');
   if (frameId) {
     try {
+      // 이 액자를 내 세션의 "현재 액자"로 선택한다(관리자면 목록에 없어도 자동 편입).
+      // 이후의 사진 추가/제외·PIN 변경·"링크변경 반영"이 전부 이 액자를 대상으로 동작한다.
+      await api(`/api/frames/${encodeURIComponent(frameId)}/select`, { method: 'POST' });
       const m = await loadFrame(frameId);
       isFrameMode = true;
       frameManifest = m;

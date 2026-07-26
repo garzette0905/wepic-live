@@ -21,7 +21,7 @@ binding = "SESSIONS"
 id = "df7d7aa4228a478db2fb2779d41d0cd2"
 
 [vars]
-BASE_URL = "https://wepic-live.garzette.workers.dev"
+BASE_URL = "https://wepic-live.wepiclab.workers.dev"
 SHARE_TTL_HOURS = "24"
 
 # 만료 공유 정리: 매시간

@@ -6,7 +6,7 @@
 - **설정**: 저장소 **루트**의 `wrangler.toml` (Cloudflare가 루트 설정을 기대하므로 루트에 둠)
 - **세션**: Workers KV(`SESSIONS`) · **공유 파일**: R2(`wepic-shares`) · **정적**: `web/public`(복사 없이 그대로 서빙) · **만료 정리**: Cron(매시간)
 
-도메인: `https://wepic-live.garzette.workers.dev`
+도메인: `https://wepic-live.wepiclab.workers.dev`
 
 ---
 
@@ -45,7 +45,7 @@
 Google Cloud Console → **웹 애플리케이션** OAuth 클라이언트 → 승인된 리디렉션 URI에 추가:
 
 ```
-https://wepic-live.garzette.workers.dev/auth/callback
+https://wepic-live.wepiclab.workers.dev/auth/callback
 ```
 
 ## 5. 배포
