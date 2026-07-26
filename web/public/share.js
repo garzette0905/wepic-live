@@ -23,10 +23,59 @@ function preload(url) {
   return new Promise((resolve) => { const im = new Image(); im.onload = resolve; im.onerror = resolve; im.src = url; });
 }
 
+// 동영상 재생을 멈추고 비디오 레이어를 숨긴다(사진으로 돌아갈 때).
+function stopVideo() {
+  const v = document.getElementById('video-layer');
+  v.classList.remove('active');
+  v.onended = null;
+  v.onerror = null;
+  try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* 무시 */ }
+  resumeMusicAfterVideo();
+}
+
+// 동영상 항목 재생. 끝나면 다음 항목으로 넘어간다(타이머 대신 재생 종료가 신호).
+// 실패 신호는 error 이벤트와 play() 거부 두 곳에서 올 수 있으므로, 한 항목당 한 번만
+// 다음으로 넘어가게 막는다(둘 다 처리하면 두 칸씩 건너뛰어 제자리를 맴돈다).
+function showVideo(p) {
+  const v = document.getElementById('video-layer');
+  document.getElementById('photo-a').classList.remove('active');
+  document.getElementById('photo-b').classList.remove('active');
+  if (timer) { clearInterval(timer); timer = null; } // 재생 중에는 자동 전환을 멈춘다
+  v.poster = p.fullUrl || '';
+  v.src = p.videoUrl;
+  v.classList.add('active');
+  // 소리는 배경음악 토글(▶)을 따른다: 소리가 켜져 있으면 동영상 소리를 내고 음악을 잠시 멈춘다.
+  if (soundOn) { v.muted = false; pauseMusicForVideo(); } else { v.muted = true; }
+
+  let done = false;
+  const goNext = (delay) => {
+    if (done) return;
+    done = true;
+    // 이미 다른 항목으로 넘어갔다면 아무것도 하지 않는다.
+    setTimeout(() => { if (photos[idx] === p && !slidePaused) advance(); }, delay);
+  };
+  v.onended = () => goNext(0);
+  // 코덱 미지원 등으로 재생이 안 되면 멈추지 않고 다음으로 넘어간다.
+  v.onerror = () => goNext(1500);
+  v.play().catch(() => {
+    // 소리 있는 자동재생이 막히면 음소거로 다시 시도한다(브라우저 정책).
+    v.muted = true;
+    resumeMusicAfterVideo();
+    v.play().catch(() => goNext(1500));
+  });
+}
+
 async function show() {
   if (!photos.length) return;
   const p = photos[idx];
   const req = idx;
+  if (p.type === 'video' && p.videoUrl) {
+    showVideo(p);
+    renderCaption();
+    updateProgress();
+    return;
+  }
+  stopVideo();
   const next = document.getElementById(activeLayer === 'a' ? 'photo-b' : 'photo-a');
   const prev = document.getElementById(activeLayer === 'a' ? 'photo-a' : 'photo-b');
   await preload(p.fullUrl);
@@ -37,6 +86,8 @@ async function show() {
   activeLayer = activeLayer === 'a' ? 'b' : 'a';
   renderCaption();
   updateProgress();
+  // 동영상 다음에 온 사진이면 멈춰 있던 자동 전환 타이머를 다시 걸어준다.
+  if (!timer) resetTimer();
 }
 
 // 캡션: 우측 하단에 날짜(시계 자리) + 그 아래 곡목(♪). 소리 여부와 무관하게 곡목을 표시한다.
@@ -60,11 +111,15 @@ function updateProgress() {
   fill.style.width = (photos.length ? ((idx + 1) / photos.length) * 100 : 0) + '%';
 }
 
+const isVideoItem = (p) => !!(p && p.type === 'video' && p.videoUrl);
+
 function advance() { if (photos.length) { idx = (idx + 1) % photos.length; show(); } }
 function resetTimer() {
   if (timer) clearInterval(timer);
   timer = null;
   if (slidePaused) return; // 멈춤 상태면 타이머를 다시 걸지 않는다
+  // 동영상은 재생이 끝날 때 넘어간다(타이머로 중간에 끊지 않는다).
+  if (isVideoItem(photos[idx])) return;
   timer = setInterval(advance, intervalMs);
 }
 
@@ -189,6 +244,18 @@ function updateMusicBtn() {
   b.style.opacity = soundOn ? '1' : '0.7';
   b.title = soundOn ? '소리 끄기' : '소리 켜기';
 }
+
+// 동영상 소리와 배경음악이 겹치지 않도록, 동영상 재생 중에는 음악을 잠시 멈춘다.
+let musicPausedForVideo = false;
+function pauseMusicForVideo() {
+  if (!ytPlayer || musicPausedForVideo) return;
+  try { ytPlayer.pauseVideo(); musicPausedForVideo = true; } catch { /* 무시 */ }
+}
+function resumeMusicAfterVideo() {
+  if (!ytPlayer || !musicPausedForVideo) return;
+  musicPausedForVideo = false;
+  try { ytPlayer.playVideo(); } catch { /* 무시 */ }
+}
 document.getElementById('btn-music').addEventListener('click', () => (soundOn ? muteSound() : playSound()));
 
 // ---- 홈으로 이동 ----
@@ -214,14 +281,16 @@ function dlName(p, i) {
   const stamp = Number.isNaN(d.getTime())
     ? String(i + 1).padStart(3, '0')
     : `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
-  const ext = /\.png($|\?)/i.test(p.fullUrl) ? 'png' : 'jpg';
-  return `wepic_${String(i + 1).padStart(3, '0')}_${stamp}.${ext}`;
+  // 동영상은 원본(mp4)을, 사진은 표시 중인 이미지를 저장한다.
+  const src = isVideoItem(p) ? p.videoUrl : p.fullUrl;
+  const ext = isVideoItem(p) ? 'mp4' : (/\.png($|\?)/i.test(p.fullUrl) ? 'png' : 'jpg');
+  return { filename: `wepic_${String(i + 1).padStart(3, '0')}_${stamp}.${ext}`, src };
 }
 function downloadPhoto(p, i) {
-  const filename = dlName(p, i);
-  const sep = p.fullUrl.includes('?') ? '&' : '?';
+  const { filename, src } = dlName(p, i);
+  const sep = src.includes('?') ? '&' : '?';
   const a = document.createElement('a');
-  a.href = `${p.fullUrl}${sep}dl=${encodeURIComponent(filename)}`;
+  a.href = `${src}${sep}dl=${encodeURIComponent(filename)}`;
   a.download = filename; // PC 브라우저용 힌트(실제 강제는 서버 헤더가 담당)
   document.body.appendChild(a);
   a.click();
@@ -244,8 +313,15 @@ function updateSlideBtn() {
 }
 function setSlidePaused(paused) {
   slidePaused = paused;
-  if (paused) { if (timer) clearInterval(timer); timer = null; }
-  else resetTimer();
+  const v = document.getElementById('video-layer');
+  if (paused) {
+    if (timer) clearInterval(timer);
+    timer = null;
+    if (isVideoItem(photos[idx])) { try { v.pause(); } catch { /* 무시 */ } }
+  } else {
+    if (isVideoItem(photos[idx])) { v.play().catch(() => {}); }
+    resetTimer();
+  }
   updateSlideBtn();
 }
 document.getElementById('btn-slide').addEventListener('click', () => setSlidePaused(!slidePaused));

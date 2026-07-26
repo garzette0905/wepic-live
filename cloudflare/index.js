@@ -11,6 +11,9 @@ const USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo';
 const PICKER_BASE = 'https://photospicker.googleapis.com/v1';
 const PHOTOS_SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
 const MAX_SHARE_ITEMS = 60;
+// 공유에 담을 동영상 1개의 최대 크기. 넘으면 그 동영상은 정지 이미지(포스터)로만 담긴다.
+// (저장공간·전송량 보호. 변수 MAX_SHARE_VIDEO_MB로 조절)
+const maxShareVideoBytes = (env) => Math.max(1, Number(env.MAX_SHARE_VIDEO_MB) || 100) * 1024 * 1024;
 
 // wepic 관리자: 이 이메일로 로그인한 사용자만 Admin 메뉴/API 사용 가능 (환경변수 ADMIN_EMAILS)
 const adminEmails = (env) => (env.ADMIN_EMAILS || 'garzette@gmail.com')
@@ -66,11 +69,10 @@ function ensureFrames(data) {
     if (!data.currentFrameId) data.currentFrameId = data.shareId;
   }
   delete data.shareId; // frames로 완전히 이전
+  // 이미 지워진 액자를 가리키고 있으면 선택을 해제한다. 남은 액자를 임의로 골라주지는
+  // 않는다 — 선택이 없는 상태는 "새 액자"를 뜻하고, 메인화면은 그 상태로 시작한다.
   if (data.currentFrameId && !data.frames.some((f) => f.id === data.currentFrameId)) {
-    data.currentFrameId = data.frames[0]?.id || null;
-  }
-  if (!data.currentFrameId && data.frames.length) {
-    data.currentFrameId = data.frames[0].id;
+    data.currentFrameId = null;
   }
 }
 function frameNameOf(data, id) {
@@ -85,6 +87,10 @@ async function frameInfo(env, data, f) {
     isCurrent: data.currentFrameId === f.id,
     hasContent: !!m,
     title: m?.title || '',
+    // 액자를 선택하면 그 액자에 저장된 음악·전환설정까지 메인화면에 그대로 복원한다.
+    musicUrl: m?.musicUrl || '',
+    intervalSec: m?.intervalSec || null,
+    effect: m?.effect || null,
     pin: m?.pin || null,
     count: m?.items?.length || 0,
     thumbUrl: m?.items?.[0]?.thumbUrl || null,
@@ -269,6 +275,16 @@ async function apiFramesRename(request, env, id) {
   await putSession(env, sid, data);
   return json({ ok: true, frame: await frameInfo(env, data, f) });
 }
+// 선택 해제 = "새 액자"로 시작. 다음 "실시간 공유 링크 만들기"가 새 액자를 만든다.
+async function apiFramesDeselect(request, env) {
+  const { sid, data } = await getSession(request, env);
+  if (!data) return json({ ok: true, currentFrameId: null });
+  ensureFrames(data);
+  data.currentFrameId = null;
+  await putSession(env, sid, data);
+  return json({ ok: true, currentFrameId: null });
+}
+
 async function apiFramesSelect(request, env, id) {
   const { sid, data } = await getSession(request, env);
   if (!data) return json({ error: '없는 액자입니다.' }, 404);
@@ -536,6 +552,21 @@ async function downloadImage(base, sz, token) {
   return new Uint8Array(await r.arrayBuffer());
 }
 
+// 동영상 원본(=dv)을 R2에 그대로 저장한다. 공유 화면은 로그인이 없어 구글 원본 URL
+// (/video 프록시)을 쓸 수 없으므로, 파일 자체를 저장해야 재생할 수 있다.
+// 응답 본문을 스트림으로 그대로 넘겨 메모리에 다 올리지 않는다(큰 파일 대비).
+async function putVideoToR2(env, base, token, key) {
+  const r = await fetch(`${base}=dv`, { headers: { Authorization: 'Bearer ' + token } });
+  if (!r.ok) throw new Error('video fetch ' + r.status);
+  const len = Number(r.headers.get('content-length') || 0);
+  const max = maxShareVideoBytes(env);
+  if (len > max) throw new Error('video too large');
+  // content-length가 없으면 크기를 미리 알 수 없다 → R2가 거부할 수 있으므로 그대로 시도한다.
+  await env.SHARES.put(key, r.body, {
+    httpMetadata: { contentType: r.headers.get('content-type') || 'video/mp4' },
+  });
+}
+
 // 로그인 사용자: 현재 고른 사진을 구글에서 받아 R2에 저장하고 공유 링크 생성
 async function shareCreate(request, env, token, sess) {
   const body = await request.json().catch(() => ({}));
@@ -555,59 +586,86 @@ async function shareCreate(request, env, token, sess) {
   const shareId = sess.data.currentFrameId;
   await putSession(env, sess.sid, sess.data);
 
-  // 관리자가 이 액자를 열어(/?frame=<id>) 기존 사진은 그대로 두고 몇 장만 추가/제외하는
-  // 경우, 넘어온 항목 중 "이미 이 액자에 저장된 파일"은 구글에서 다시 받지 않고 그대로
-  // 들고 온다(구글 base URL이 없어 재다운로드가 불가능하므로 지우기 전에 미리 읽어둔다).
-  const keepRe = new RegExp(`^/shares/${shareId}/photos/(\\d+)_full\\.(\\w+)$`);
-  const kept = new Map();
+  // 이미 이 액자에 저장된 파일(관리자가 액자를 열어 몇 장만 추가/제외한 경우)은 구글에서
+  // 다시 받을 수 없다(원본 URL이 없음). 그래서 **키를 바꾸지 않고 그대로 재사용**한다
+  // — 다시 쓰지도, 옮기지도 않으므로 큰 동영상도 안전하다. 새로 받는 항목만 남는 번호를 쓴다.
+  const ownRe = new RegExp(`^/shares/${shareId}/photos/(\\d+)_`);
+  let maxIdx = 0;
   for (const it of items) {
-    const m = keepRe.exec(it.fullUrl || '');
-    if (!m) continue;
-    try {
-      const fullObj = await env.SHARES.get(`${shareId}/photos/${m[1]}_full.${m[2]}`);
-      if (!fullObj) continue;
-      const full = new Uint8Array(await fullObj.arrayBuffer());
-      let thumb = null;
-      const thumbObj = await env.SHARES.get(`${shareId}/photos/${m[1]}_thumb.${m[2]}`);
-      if (thumbObj) thumb = new Uint8Array(await thumbObj.arrayBuffer());
-      kept.set(it.fullUrl, { full, thumb, ext: m[2] });
-    } catch { /* 읽기 실패하면 새로 받도록 건너뜀(아래에서 baseUrl이 없어 결국 제외됨) */ }
+    const m = ownRe.exec(it.fullUrl || '');
+    if (m) maxIdx = Math.max(maxIdx, parseInt(m[1], 10));
   }
-
-  await deleteShare(env, shareId);
+  const keepKeys = new Set([`${shareId}/photos.json`]); // 이번 저장 후에도 남겨둘 키
+  const keyOf = (url) => (ownRe.test(url || '') ? `${shareId}/photos/${url.slice(url.lastIndexOf('/') + 1)}` : null);
 
   const manifestItems = [];
-  for (let i = 0; i < items.length; i++) {
-    const it = items[i];
-    const n = String(i + 1).padStart(3, '0');
-    const carry = kept.get(it.fullUrl);
-    if (carry) {
-      await env.SHARES.put(`${shareId}/photos/${n}_full.${carry.ext}`, carry.full, { httpMetadata: { contentType: 'image/jpeg' } });
-      if (carry.thumb) await env.SHARES.put(`${shareId}/photos/${n}_thumb.${carry.ext}`, carry.thumb, { httpMetadata: { contentType: 'image/jpeg' } });
-      manifestItems.push({
+  for (const it of items) {
+    const isVideo = it.type === 'video';
+    // (1) 이미 이 액자에 있는 파일 → 그대로 유지
+    if (ownRe.test(it.fullUrl || '')) {
+      const fullKey = keyOf(it.fullUrl);
+      if (!fullKey || !(await env.SHARES.head(fullKey))) continue;
+      keepKeys.add(fullKey);
+      const keep = {
         id: it.id, createTime: it.createTime,
         width: it.width || null, height: it.height || null,
-        fullUrl: `/shares/${shareId}/photos/${n}_full.${carry.ext}`,
-        thumbUrl: carry.thumb ? `/shares/${shareId}/photos/${n}_thumb.${carry.ext}` : `/shares/${shareId}/photos/${n}_full.${carry.ext}`,
-      });
+        fullUrl: it.fullUrl,
+      };
+      const thumbKey = keyOf(it.thumbUrl);
+      if (thumbKey && (await env.SHARES.head(thumbKey))) {
+        keepKeys.add(thumbKey);
+        keep.thumbUrl = it.thumbUrl;
+      } else {
+        keep.thumbUrl = it.fullUrl;
+      }
+      const videoKey = keyOf(it.videoUrl);
+      if (isVideo && videoKey && (await env.SHARES.head(videoKey))) {
+        keepKeys.add(videoKey);
+        keep.type = 'video';
+        keep.videoUrl = it.videoUrl;
+      }
+      manifestItems.push(keep);
       continue;
     }
+    // (2) 새 항목 → 구글에서 내려받아 저장
     const base = baseUrlFromImgPath(it.fullUrl || '');
     if (!base) continue;
+    const n = String(++maxIdx).padStart(3, '0');
     try {
+      // 동영상도 정지 프레임(포스터)은 항상 저장한다 — 재생 전 표시 및 재생 실패 시 대체용.
       const full = await downloadImage(base, 'w1920-h1080', token);
       const thumb = await downloadImage(base, 'w300-h300-c', token);
       await env.SHARES.put(`${shareId}/photos/${n}_full.jpg`, full, { httpMetadata: { contentType: 'image/jpeg' } });
       await env.SHARES.put(`${shareId}/photos/${n}_thumb.jpg`, thumb, { httpMetadata: { contentType: 'image/jpeg' } });
-      manifestItems.push({
+      keepKeys.add(`${shareId}/photos/${n}_full.jpg`);
+      keepKeys.add(`${shareId}/photos/${n}_thumb.jpg`);
+      const entry = {
         id: it.id, createTime: it.createTime,
         width: it.width || null, height: it.height || null,
         fullUrl: `/shares/${shareId}/photos/${n}_full.jpg`,
         thumbUrl: `/shares/${shareId}/photos/${n}_thumb.jpg`,
-      });
+      };
+      if (isVideo) {
+        // 동영상 원본까지 저장되면 공유 화면에서 재생된다. 너무 크거나 실패하면
+        // 포스터만 남겨 사진으로 표시한다(공유가 통째로 실패하지 않도록).
+        try {
+          await putVideoToR2(env, base, token, `${shareId}/photos/${n}_video.mp4`);
+          keepKeys.add(`${shareId}/photos/${n}_video.mp4`);
+          entry.type = 'video';
+          entry.videoUrl = `/shares/${shareId}/photos/${n}_video.mp4`;
+        } catch (err) {
+          console.warn(`동영상 저장 실패(${it.id}): ${err.message} → 정지 이미지로 대체`);
+        }
+      }
+      manifestItems.push(entry);
     } catch { /* 개별 실패는 건너뜀 */ }
   }
   if (!manifestItems.length) return json({ error: '사진을 저장하지 못했습니다. 다시 시도해주세요.' }, 500);
+
+  // 이번에 쓰이지 않는 예전 파일 정리(제외된 사진·동영상)
+  const old = await env.SHARES.list({ prefix: `${shareId}/` });
+  const stale = (old.objects || []).map((o) => o.key).filter((k) => !keepKeys.has(k));
+  if (stale.length) await env.SHARES.delete(stale);
   manifestItems.sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
   // PIN: 클라이언트가 보낸 값이 유효하면 그것(=링크변경 반영 시 수정된 PIN), 없으면 기존 유지,
   // 그것도 없으면 새로 4자리 발급.
@@ -708,7 +766,29 @@ function guessType(key) {
   if (key.endsWith('.png')) return 'image/png';
   if (key.endsWith('.jpg') || key.endsWith('.jpeg')) return 'image/jpeg';
   if (key.endsWith('.json')) return 'application/json; charset=utf-8';
+  if (key.endsWith('.mp4') || key.endsWith('.m4v')) return 'video/mp4';
+  if (key.endsWith('.mov')) return 'video/quicktime';
+  if (key.endsWith('.webm')) return 'video/webm';
   return 'application/octet-stream';
+}
+// "bytes=시작-끝" 한 구간만 해석한다(동영상 재생·탐색에 필요한 형태).
+function parseRange(header, size) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec((header || '').trim());
+  if (!m) return null;
+  const [, s, e] = m;
+  if (s === '' && e === '') return null;
+  let start, end;
+  if (s === '') { // 마지막 N바이트
+    const suffix = Number(e);
+    if (!suffix) return null;
+    start = Math.max(0, size - suffix);
+    end = size - 1;
+  } else {
+    start = Number(s);
+    end = e === '' ? size - 1 : Math.min(Number(e), size - 1);
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= size) return null;
+  return { offset: start, length: end - start + 1, start, end };
 }
 async function shareAsset(request, env, pathname, url) {
   const key = pathname.replace(/^\/shares\//, '');
@@ -720,6 +800,29 @@ async function shareAsset(request, env, pathname, url) {
   const manifest = await readManifest(env, id);
   if (manifest && manifest.pin && !(await canViewShare(request, env, id, manifest))) {
     return json({ error: 'PIN 번호가 필요합니다.', pinRequired: true }, 401);
+  }
+
+  // 동영상 재생은 부분 요청(Range)에 의존한다. Range가 오면 206으로 그 구간만 돌려준다
+  // (없으면 iOS/사파리가 재생을 거부하고 탐색도 되지 않는다).
+  const rangeHeader = request.headers.get('Range');
+  if (rangeHeader) {
+    const head = await env.SHARES.head(key);
+    if (!head) return text('not found', 404);
+    const r = parseRange(rangeHeader, head.size);
+    if (!r) {
+      return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${head.size}` } });
+    }
+    const part = await env.SHARES.get(key, { range: { offset: r.offset, length: r.length } });
+    if (!part) return text('not found', 404);
+    const h = new Headers();
+    h.set('Content-Type', head.httpMetadata?.contentType || guessType(key));
+    h.set('X-Robots-Tag', 'noindex, nofollow');
+    h.set('Accept-Ranges', 'bytes');
+    h.set('Content-Range', `bytes ${r.start}-${r.end}/${head.size}`);
+    h.set('Content-Length', String(r.length));
+    h.set('Cache-Control', 'public, max-age=300');
+    setDownloadHeader(h, url && url.searchParams.get('dl'));
+    return new Response(part.body, { status: 206, headers: h });
   }
 
   const obj = await env.SHARES.get(key);
@@ -735,6 +838,7 @@ async function shareAsset(request, env, pathname, url) {
     return new Response(JSON.stringify(m), { status: 200, headers });
   }
   headers.set('Cache-Control', 'public, max-age=300');
+  headers.set('Accept-Ranges', 'bytes'); // 브라우저가 부분 요청을 쓸 수 있음을 알린다
   setDownloadHeader(headers, url && url.searchParams.get('dl')); // ?dl=<파일명> → 저장
   return new Response(obj.body, { status: 200, headers });
 }
@@ -771,6 +875,7 @@ export default {
       // 세션당 액자 목록(다중 액자)
       if (p === '/api/frames' && m === 'GET') return apiFramesGet(request, env);
       if (p === '/api/frames' && m === 'POST') return apiFramesCreate(request, env);
+      if (p === '/api/frames/deselect' && m === 'POST') return apiFramesDeselect(request, env);
       const mFrameSelect = p.match(/^\/api\/frames\/([\w-]{6,})\/select$/);
       if (mFrameSelect && m === 'POST') return apiFramesSelect(request, env, mFrameSelect[1]);
       const mFrame = p.match(/^\/api\/frames\/([\w-]{6,})$/);

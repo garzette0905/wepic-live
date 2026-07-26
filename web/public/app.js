@@ -568,7 +568,6 @@ async function loadBgMusic(url) {
   setTimeout(() => {
     try { musicTitle = ytPlayer.getVideoData()?.title || ''; titleEl.textContent = musicTitle; refreshCaption(); } catch {}
   }, 900);
-  try { localStorage.setItem('bgMusicUrl', url); } catch {}
 }
 
 // "▶ 재생하기" 버튼: 처음이거나 링크가 바뀌었으면 로드/재생, 이미 로드됐으면 재생↔일시정지 토글
@@ -618,6 +617,12 @@ let currentFrameId = null;
 function renderFrameSelect() {
   const sel = document.getElementById('frame-select');
   sel.innerHTML = '';
+  // 아직 어느 액자도 선택되지 않은 상태 = "새 액자"(첫 공유 시 자동 생성됨).
+  const newOpt = document.createElement('option');
+  newOpt.value = '';
+  newOpt.textContent = '새 액자 (아직 저장 안 됨)';
+  if (!currentFrameId) newOpt.selected = true;
+  sel.appendChild(newOpt);
   frames.forEach((f) => {
     const opt = document.createElement('option');
     opt.value = f.id;
@@ -627,7 +632,36 @@ function renderFrameSelect() {
   });
 }
 
-// 현재 선택된 액자의 공유 상태(URL·PIN·반영 버튼)를 화면에 반영한다.
+// 제목·배경음악을 관리자 Default 설정으로 리셋한다. 새 액자로 시작할 때, 방금 전까지
+// 다른 액자를 편집하며 입력해 둔 값이 그대로 남아있지 않도록 하기 위함이다.
+function resetTitleAndMusicToDefault() {
+  const title = globalSettings.title || '';
+  document.getElementById('title-input').value = title;
+  applyTitle(title);
+  document.getElementById('music-url').value = globalSettings.musicUrl || DEFAULT_MUSIC_URL;
+}
+
+// 액자 매니페스트(요약 정보 포함)에 저장된 제목·음악·전환설정을 화면에 그대로 반영한다.
+function applyFrameSettingsToUI(m) {
+  const title = m.title || '';
+  document.getElementById('title-input').value = title;
+  applyTitle(title);
+  if (m.musicUrl) document.getElementById('music-url').value = m.musicUrl;
+  if (m.intervalSec) {
+    const sec = Math.min(60, Math.max(3, Number(m.intervalSec)));
+    const sel = document.getElementById('interval-select');
+    if ([...sel.options].some((o) => o.value === String(sec))) sel.value = String(sec);
+    applyInterval(sec);
+  }
+  if (m.effect) {
+    const r = document.querySelector(`#effect-radios input[value="${m.effect}"]`);
+    if (r) { r.checked = true; applyEffect(m.effect); }
+  }
+}
+
+// 현재 선택된 액자에 맞춰 공유 상태(URL·PIN·반영 버튼)와 제목·음악·전환설정을 화면에 반영한다.
+// 기존 액자를 선택했으면 그 액자의 값을, 새 액자(선택 안 됨) 상태면 Default 값을 사용한다
+// (다른 액자를 편집하던 값이 이어지지 않도록).
 function applyCurrentFrameToShareUI() {
   const f = frames.find((x) => x.id === currentFrameId);
   const btnUpdate = document.getElementById('btn-update-share');
@@ -636,9 +670,12 @@ function applyCurrentFrameToShareUI() {
     document.getElementById('share-url').value = f.url || '';
     document.getElementById('btn-open-share').href = f.url || '#';
     if (f.pin) setSharePin(f.pin); else setSharePin('');
+    applyFrameSettingsToUI(f);
   } else {
     btnUpdate.classList.add('hidden');
     setSharePin('');
+    document.getElementById('share-url').value = '';
+    resetTitleAndMusicToDefault();
   }
 }
 
@@ -655,8 +692,12 @@ async function loadFrames() {
 document.getElementById('frame-select').addEventListener('change', async (e) => {
   const id = e.target.value;
   try {
-    await api(`/api/frames/${encodeURIComponent(id)}/select`, { method: 'POST' });
-    currentFrameId = id;
+    if (id) {
+      await api(`/api/frames/${encodeURIComponent(id)}/select`, { method: 'POST' });
+    } else {
+      await api('/api/frames/deselect', { method: 'POST' });
+    }
+    currentFrameId = id || null;
     applyCurrentFrameToShareUI();
   } catch (err) {
     showToast('액자 전환 실패: ' + err.message);
@@ -704,13 +745,17 @@ document.getElementById('btn-frame-rename').addEventListener('click', async () =
 // mode: 'create'(팝업으로 링크 안내) | 'update'(조용히 반영 후 토스트)
 async function pushShare(mode) {
   const btn = document.getElementById(mode === 'update' ? 'btn-update-share' : 'btn-make-share');
-  // 공유 링크는 사진만 지원한다(동영상은 서버가 정지 이미지로만 저장돼 오해 소지). 동영상은 제외.
-  const sharePhotos = allPhotos.filter((p) => p.type !== 'video');
+  // 사진과 동영상을 모두 공유한다. 다만 구글 포토 "공유"로 받은 사진(isSharedMode)은
+  // 브라우저가 든 파일을 올리는 방식이라 동영상을 지원하지 않아 그때만 제외한다.
+  const sharePhotos = isSharedMode ? allPhotos.filter((p) => p.type !== 'video') : allPhotos;
   const excludedVideos = allPhotos.length - sharePhotos.length;
   if (!sharePhotos.length) { showToast('공유할 사진이 없습니다. (동영상은 공유 링크에 포함되지 않습니다)'); return; }
+  const hasVideo = sharePhotos.some((p) => p.type === 'video');
   const orig = btn.innerHTML;
   btn.disabled = true;
-  btn.textContent = mode === 'update' ? '반영 중...' : '사진 저장 중... (사진이 많으면 시간이 걸립니다)';
+  btn.textContent = mode === 'update'
+    ? '반영 중...'
+    : (hasVideo ? '사진·동영상 저장 중... (동영상은 시간이 더 걸립니다)' : '사진 저장 중... (사진이 많으면 시간이 걸립니다)');
   try {
     const musicUrl = document.getElementById('music-url').value.trim();
     // 공유 시점의 제목·전환 간격·전환 효과를 함께 저장해 공유 화면에도 동일 적용.
@@ -738,8 +783,12 @@ async function pushShare(mode) {
       if (pin) form.append('pin', pin);
       r = await api('/api/share/blob', { method: 'POST', body: form });
     } else {
+      // type/videoUrl까지 보내면 서버가 동영상 원본을 함께 저장해 공유 화면에서도 재생된다.
       const items = sharePhotos.map((p) => ({
         id: p.id, createTime: p.createTime, width: p.width, height: p.height, fullUrl: p.fullUrl,
+        type: p.type === 'video' ? 'video' : 'photo',
+        ...(p.videoUrl ? { videoUrl: p.videoUrl } : {}),
+        ...(p.thumbUrl ? { thumbUrl: p.thumbUrl } : {}),
       }));
       r = await api('/api/share', {
         method: 'POST',
@@ -912,13 +961,14 @@ function applyEffect(effect) {
   photoPane.classList.add('fx-' + effect);
   lsSet('slideEffect', effect);
 }
+// 제목은 브라우저에 저장하지 않는다 — 새 화면은 관리자 Default 타이틀로 시작하고,
+// 기존 액자를 선택하면 그 액자에 저장된 제목을 쓴다(이전 화면의 입력값이 따라오지 않게).
 function applyTitle(text) {
   const ov = document.getElementById('title-overlay');
   ov.textContent = text;
   const has = !!text.trim();
   ov.classList.toggle('hidden', !has);
   document.body.classList.toggle('has-title', has);
-  lsSet('slideTitle', text);
 }
 
 // 배경음악을 "동영상 재생용"으로 잠시 정지 (재생 중일 때만). 나중에 복귀할 수 있게 표시.
@@ -1043,8 +1093,9 @@ function loadDisplaySettings() {
                    document.querySelector('#effect-radios input[value="fade"]');
   effRadio.checked = true;
   applyEffect(effRadio.value);
-  // 제목: 사용자가 직접 정한 값이 있으면 그것, 없으면 관리자 Default 타이틀
-  const title = lsGet('slideTitle', '') || globalSettings.title || '';
+  // 제목: 관리자 Default 타이틀로 시작한다(이전 화면에서 입력한 값을 이어받지 않는다).
+  // 기존 액자를 선택하면 applyCurrentFrameToShareUI가 그 액자의 제목으로 덮어쓴다.
+  const title = globalSettings.title || '';
   document.getElementById('title-input').value = title;
   applyTitle(title);
   const amb = lsGet('ambientOn', '1') !== '0';
@@ -1283,12 +1334,11 @@ function boot(photos) {
   if (allRadio) allRadio.checked = true;
   // 데모·공유 유입은 로그인 없이 보는 "게스트" 상태
   const guest = isDemoMode || isSharedMode;
-  // 배경음악: 관리자 Default 설정 > 이전에 직접 설정한 곡 > 앱 기본곡 순으로 채운다.
-  // (데모 데이터에 musicUrl이 있으면 startDemo가 이미 채워두므로 비어있을 때만 건드린다)
+  // 배경음악: 관리자 Default 설정 > 앱 기본곡. 이전에 듣던 곡을 브라우저에서 이어받지 않는다.
+  // (데모·액자 데이터에 musicUrl이 있으면 호출부가 이미 채워두므로 비어있을 때만 건드린다)
   const musicEl = document.getElementById('music-url');
   if (!musicEl.value.trim()) {
-    const saved = (() => { try { return localStorage.getItem('bgMusicUrl'); } catch { return null; } })();
-    musicEl.value = globalSettings.musicUrl || saved || DEFAULT_MUSIC_URL;
+    musicEl.value = globalSettings.musicUrl || DEFAULT_MUSIC_URL;
   }
   document.getElementById('demo-badge').classList.toggle('hidden', !isDemoMode);
   document.getElementById('account-links').classList.toggle('hidden', guest);
@@ -1425,10 +1475,15 @@ async function init() {
       isFrameMode = true;
       frameManifest = m;
       if (m.musicUrl) document.getElementById('music-url').value = m.musicUrl;
+      // 액자에 저장된 동영상은 type/videoUrl을 그대로 살려야 한다 — 그렇지 않으면
+      // "링크변경 반영"으로 다시 저장할 때 동영상이 사진으로 바뀌어 사라진다.
       boot((m.items || []).map((it) => ({
-        id: it.id, type: 'photo', createTime: it.createTime,
+        id: it.id,
+        type: it.type === 'video' ? 'video' : 'photo',
+        createTime: it.createTime,
         width: it.width || null, height: it.height || null,
         fullUrl: it.fullUrl, thumbUrl: it.thumbUrl || it.fullUrl,
+        ...(it.videoUrl ? { videoUrl: it.videoUrl } : {}),
       })));
       return;
     } catch (err) {
@@ -1447,6 +1502,9 @@ async function init() {
   }
 
   // 2) 로그인 상태 확인 → 홈의 로그인/사진 패널에 반영 (자동 진입 없음: 항상 홈부터)
+  //    이때 액자 선택도 해제해 메인화면이 항상 "새 액자"로 시작하게 한다(이전에 만든
+  //    액자를 실수로 덮어쓰지 않도록. 기존 액자를 이어서 쓰려면 목록에서 고르면 된다).
+  await api('/api/frames/deselect', { method: 'POST' }).catch(() => {});
   const status = await api('/api/status').catch(() => ({ loggedIn: false }));
   applyLoginState(status);
 

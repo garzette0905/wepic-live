@@ -15,6 +15,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const stream = require('stream');
 const crypto = require('crypto');
 const express = require('express');
 const session = require('express-session');
@@ -87,11 +88,10 @@ function ensureFrames(req) {
     if (!req.session.currentFrameId) req.session.currentFrameId = req.session.shareId;
   }
   delete req.session.shareId; // frames로 완전히 이전
+  // 이미 지워진 액자를 가리키고 있으면 선택을 해제한다. 남은 액자를 임의로 골라주지는
+  // 않는다 — 선택이 없는 상태는 "새 액자"를 뜻하고, 메인화면은 그 상태로 시작한다.
   if (req.session.currentFrameId && !req.session.frames.some((f) => f.id === req.session.currentFrameId)) {
-    req.session.currentFrameId = req.session.frames[0]?.id || null;
-  }
-  if (!req.session.currentFrameId && req.session.frames.length) {
-    req.session.currentFrameId = req.session.frames[0].id;
+    req.session.currentFrameId = null;
   }
 }
 function frameNameOf(req, id) {
@@ -106,6 +106,10 @@ function frameInfo(req, f) {
     isCurrent: req.session.currentFrameId === f.id,
     hasContent: !!m,
     title: m?.title || '',
+    // 액자를 선택하면 그 액자에 저장된 음악·전환설정까지 메인화면에 그대로 복원한다.
+    musicUrl: m?.musicUrl || '',
+    intervalSec: m?.intervalSec || null,
+    effect: m?.effect || null,
     pin: m?.pin || null,
     count: m?.items?.length || 0,
     thumbUrl: m?.items?.[0]?.thumbUrl || null,
@@ -310,6 +314,14 @@ app.put('/api/frames/:id', (req, res) => {
   if (!name) return res.status(400).json({ error: '이름을 입력하세요.' });
   f.name = name;
   res.json({ ok: true, frame: frameInfo(req, f) });
+});
+
+// 선택 해제 = "새 액자"로 시작. 다음 "실시간 공유 링크 만들기"가 새 액자를 만든다.
+// (메인화면 진입 시에도 이 상태로 시작한다 — 이전에 만든 액자를 실수로 덮어쓰지 않도록)
+app.post('/api/frames/deselect', (req, res) => {
+  ensureFrames(req);
+  req.session.currentFrameId = null;
+  res.json({ ok: true, currentFrameId: null });
 });
 
 app.post('/api/frames/:id/select', (req, res) => {
@@ -532,6 +544,9 @@ app.get(
 
 const SHARE_TTL_MS = Math.max(1, Number(process.env.SHARE_TTL_HOURS) || 24) * 60 * 60 * 1000;
 const MAX_SHARE_ITEMS = 60;
+// 공유에 담을 동영상 1개의 최대 크기. 넘으면 그 동영상은 정지 이미지(포스터)로만 담긴다.
+// (저장공간·전송량 보호. 환경변수 MAX_SHARE_VIDEO_MB로 조절)
+const MAX_SHARE_VIDEO_BYTES = Math.max(1, Number(process.env.MAX_SHARE_VIDEO_MB) || 100) * 1024 * 1024;
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024, files: MAX_SHARE_ITEMS },
@@ -552,6 +567,22 @@ async function downloadImage(baseUrl, sz, token) {
   const r = await fetch(`${baseUrl}=${sz}`, { headers: { Authorization: `Bearer ${token}` } });
   if (!r.ok) throw new Error(`image fetch ${r.status}`);
   return Buffer.from(await r.arrayBuffer());
+}
+
+// 동영상 원본(=dv)을 공유 폴더에 그대로 내려받는다. 공유 화면은 로그인이 없어 구글의
+// 원본 URL(/video 프록시)을 쓸 수 없으므로, 파일 자체를 저장해야 재생할 수 있다.
+// 큰 파일이 메모리에 다 올라가지 않도록 스트림으로 파일에 바로 쓴다.
+async function downloadVideoToFile(baseUrl, token, destPath) {
+  const r = await fetch(`${baseUrl}=dv`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!r.ok) throw new Error(`video fetch ${r.status}`);
+  const len = Number(r.headers.get('content-length') || 0);
+  if (len && len > MAX_SHARE_VIDEO_BYTES) throw new Error('video too large');
+  await stream.promises.pipeline(stream.Readable.fromWeb(r.body), fs.createWriteStream(destPath));
+  // content-length가 없던 경우를 대비해 저장 후 크기를 다시 확인한다.
+  if (fs.statSync(destPath).size > MAX_SHARE_VIDEO_BYTES) {
+    fs.rmSync(destPath, { force: true });
+    throw new Error('video too large');
+  }
 }
 
 function shareDir(id) {
@@ -619,58 +650,89 @@ app.post(
     }
     const shareId = req.session.currentFrameId;
     const dir = shareDir(shareId);
+    const photosDir = path.join(dir, 'photos');
+    fs.mkdirSync(photosDir, { recursive: true });
 
-    // 관리자가 이 액자를 열어(/?frame=<id>) 기존 사진은 그대로 두고 몇 장만 추가/제외하는
-    // 경우, 넘어온 항목 중 "이미 이 액자에 저장된 파일"은 구글에서 다시 받지 않고 그대로
-    // 들고 온다(구글 base URL이 없어 재다운로드가 불가능하므로 폴더를 지우기 전에 미리 읽어둔다).
-    const keepRe = new RegExp(`^/shares/${shareId}/photos/(\\d+)_(full)\\.(\\w+)$`);
-    const kept = new Map();
+    // 이미 이 액자에 저장된 파일(관리자가 액자를 열어 몇 장만 추가/제외한 경우)은 구글에서
+    // 다시 받을 수 없다(원본 URL이 없음). 그래서 **파일 이름을 바꾸지 않고 그대로 재사용**한다
+    // — 다시 쓰지도, 옮기지도 않으므로 큰 동영상도 안전하다. 새로 받는 항목만 남는 번호를 쓴다.
+    const ownRe = new RegExp(`^/shares/${shareId}/photos/(\\d+)_`);
+    let maxIdx = 0;
     for (const it of items) {
-      const m = keepRe.exec(it.fullUrl || '');
-      if (!m) continue;
-      try {
-        const full = fs.readFileSync(path.join(dir, 'photos', `${m[1]}_full.${m[3]}`));
-        let thumb = null;
-        try { thumb = fs.readFileSync(path.join(dir, 'photos', `${m[1]}_thumb.${m[3]}`)); } catch { /* 썸네일 없으면 원본으로 대체 */ }
-        kept.set(it.fullUrl, { full, thumb, ext: m[3] });
-      } catch { /* 파일이 이미 없으면 새로 받도록 건너뜀(아래에서 baseUrl이 없어 결국 제외됨) */ }
+      const m = ownRe.exec(it.fullUrl || '');
+      if (m) maxIdx = Math.max(maxIdx, parseInt(m[1], 10));
     }
-
-    fs.rmSync(dir, { recursive: true, force: true }); // 이전 내용 제거 후 최신본으로 교체
-    fs.mkdirSync(path.join(dir, 'photos'), { recursive: true });
+    const keepFiles = new Set(); // 이번 저장 후에도 남겨둘 파일 이름
+    const localName = (url) => {
+      const m = ownRe.exec(url || '');
+      return m ? url.slice(url.lastIndexOf('/') + 1) : null;
+    };
 
     const manifestItems = [];
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
-      const n = String(i + 1).padStart(3, '0');
-      const carry = kept.get(it.fullUrl);
-      if (carry) {
-        fs.writeFileSync(path.join(dir, 'photos', `${n}_full.${carry.ext}`), carry.full);
-        if (carry.thumb) fs.writeFileSync(path.join(dir, 'photos', `${n}_thumb.${carry.ext}`), carry.thumb);
-        manifestItems.push({
-          id: it.id, createTime: it.createTime,
-          width: it.width || null, height: it.height || null,
-          fullUrl: `/shares/${shareId}/photos/${n}_full.${carry.ext}`,
-          thumbUrl: carry.thumb ? `/shares/${shareId}/photos/${n}_thumb.${carry.ext}` : `/shares/${shareId}/photos/${n}_full.${carry.ext}`,
-        });
+    for (const it of items) {
+      const isVideo = it.type === 'video';
+      // (1) 이미 이 액자에 있는 파일 → 그대로 유지
+      if (ownRe.test(it.fullUrl || '')) {
+        const fullName = localName(it.fullUrl);
+        if (!fullName || !fs.existsSync(path.join(photosDir, fullName))) continue;
+        const keep = { id: it.id, createTime: it.createTime, width: it.width || null, height: it.height || null };
+        keepFiles.add(fullName);
+        keep.fullUrl = it.fullUrl;
+        const thumbName = localName(it.thumbUrl);
+        if (thumbName && fs.existsSync(path.join(photosDir, thumbName))) {
+          keepFiles.add(thumbName);
+          keep.thumbUrl = it.thumbUrl;
+        } else {
+          keep.thumbUrl = it.fullUrl;
+        }
+        const videoName = localName(it.videoUrl);
+        if (isVideo && videoName && fs.existsSync(path.join(photosDir, videoName))) {
+          keepFiles.add(videoName);
+          keep.type = 'video';
+          keep.videoUrl = it.videoUrl;
+        }
+        manifestItems.push(keep);
         continue;
       }
+      // (2) 새 항목 → 구글에서 내려받아 저장
       const base = baseUrlFromImgPath(it.fullUrl || '');
       if (!base) continue;
+      const n = String(++maxIdx).padStart(3, '0');
       try {
+        // 동영상도 정지 프레임(포스터)은 항상 저장한다 — 재생 전 표시 및 재생 실패 시 대체용.
         const full = await downloadImage(base, 'w1920-h1080', token);
         const thumb = await downloadImage(base, 'w300-h300-c', token);
-        fs.writeFileSync(path.join(dir, 'photos', `${n}_full.jpg`), full);
-        fs.writeFileSync(path.join(dir, 'photos', `${n}_thumb.jpg`), thumb);
-        manifestItems.push({
+        fs.writeFileSync(path.join(photosDir, `${n}_full.jpg`), full);
+        fs.writeFileSync(path.join(photosDir, `${n}_thumb.jpg`), thumb);
+        keepFiles.add(`${n}_full.jpg`);
+        keepFiles.add(`${n}_thumb.jpg`);
+        const entry = {
           id: it.id, createTime: it.createTime,
           width: it.width || null, height: it.height || null,
           fullUrl: `/shares/${shareId}/photos/${n}_full.jpg`,
           thumbUrl: `/shares/${shareId}/photos/${n}_thumb.jpg`,
-        });
+        };
+        if (isVideo) {
+          // 동영상 원본까지 저장되면 공유 화면에서 재생된다. 너무 크거나 실패하면
+          // 포스터만 남겨 사진으로 표시한다(공유가 통째로 실패하지 않도록).
+          try {
+            await downloadVideoToFile(base, token, path.join(photosDir, `${n}_video.mp4`));
+            keepFiles.add(`${n}_video.mp4`);
+            entry.type = 'video';
+            entry.videoUrl = `/shares/${shareId}/photos/${n}_video.mp4`;
+          } catch (err) {
+            console.warn(`동영상 저장 실패(${it.id}): ${err.message} → 정지 이미지로 대체`);
+          }
+        }
+        manifestItems.push(entry);
       } catch { /* 개별 실패는 건너뜀 */ }
     }
     if (!manifestItems.length) return res.status(500).json({ error: '사진을 저장하지 못했습니다. 다시 시도해주세요.' });
+
+    // 이번에 쓰이지 않는 예전 파일 정리(제외된 사진·동영상)
+    for (const f of fs.readdirSync(photosDir)) {
+      if (!keepFiles.has(f)) fs.rmSync(path.join(photosDir, f), { force: true });
+    }
 
     manifestItems.sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
     // PIN: 클라이언트가 보낸 값이 유효하면 그것(=링크변경 반영 시 수정된 PIN), 없으면
