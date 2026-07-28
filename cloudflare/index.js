@@ -1,7 +1,7 @@
 // Wepic Live — Cloudflare Worker 백엔드 (web/server.js 포팅)
 // 세션: Workers KV(SESSIONS) · 공유 파일: R2(SHARES) · 정적: ASSETS(web/public 복사본)
 // 시크릿: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET
-// 변수: BASE_URL, SHARE_TTL_HOURS
+// 변수: BASE_URL
 // (QR 코드는 CPU 제한 때문에 서버에서 만들지 않고 브라우저에서 생성한다 — pickerCreate 참고)
 
 const SCOPE = 'email profile https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
@@ -518,12 +518,15 @@ async function videoProxy(request, env, token, url) {
 }
 
 // ---------- 공유(R2) ----------
-const shareTtlMs = (env) => Math.max(1, Number(env.SHARE_TTL_HOURS) || 24) * 60 * 60 * 1000;
-const isExpired = (m) => !m || !m.expiresAt || Date.now() > new Date(m.expiresAt).getTime();
+// 자동 만료 삭제는 비활성화했다(2026-07, 사용자 요청 — 무료 저장 용량이 넉넉해 따로
+// 얘기하기 전까지는 어떤 공유도 자동으로 지우지 않는다). m이 없으면(파싱 실패 등) 여전히
+// "만료"로 취급해 그 요청만 404 처리한다(진짜 손상된 데이터 방어용이지 시간 만료가 아님).
+// 되살리려면 writeManifest에 expiresAt 계산을 되돌리고 아래를 시간 비교로 복원하면 된다.
+const isExpired = (m) => !m;
 
 async function writeManifest(env, id, data) {
   const body = JSON.stringify(
-    { ...data, updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + shareTtlMs(env)).toISOString() },
+    { ...data, updatedAt: new Date().toISOString(), expiresAt: null },
     null,
     2
   );
@@ -843,22 +846,8 @@ async function shareAsset(request, env, pathname, url) {
   return new Response(obj.body, { status: 200, headers });
 }
 
-// 만료 공유 정리 (cron)
-async function cleanupExpired(env) {
-  let cursor;
-  const seen = new Set();
-  do {
-    const list = await env.SHARES.list({ cursor, delimiter: '/' });
-    for (const pfx of list.delimitedPrefixes || []) {
-      const id = pfx.replace(/\/$/, '');
-      if (seen.has(id)) continue;
-      seen.add(id);
-      const m = await readManifest(env, id);
-      if (m && isExpired(m)) await deleteShare(env, id);
-    }
-    cursor = list.truncated ? list.cursor : null;
-  } while (cursor);
-}
+// 예전에는 크론이 매시간 만료된 공유를 정리했으나(cleanupExpired), 자동 만료를
+// 비활성화하면서 더 이상 호출하지 않는다(위 isExpired 참고).
 
 // ---------- 라우팅 ----------
 export default {
@@ -936,6 +925,6 @@ export default {
     }
   },
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(cleanupExpired(env));
+    // 자동 만료 정리 비활성화(위 isExpired 참고) — 크론은 등록돼 있지만 더 이상 지우지 않는다.
   },
 };

@@ -52,7 +52,7 @@ https://wepic-live.wepiclab.workers.dev/auth/callback
 
 `main`에 push하면 자동 배포. 확인:
 - `/` → Wepic Live 홈, 로그인 → 사진 선택 → 공유 링크 → `/f/<id>`
-- 공유 링크는 24시간 자동 만료(`SHARE_TTL_HOURS`로 조절)
+- 공유 링크 자동 만료는 비활성화되어 있다(따로 얘기하기 전까지 삭제하지 않음)
 
 > 📌 Cloudflare가 자동 생성한 `cloudflare/workers-autoconfig` 브랜치/PR은 **오래된 상태**(renderer 정적)라 **머지하지 말고 무시/삭제**하세요.
 

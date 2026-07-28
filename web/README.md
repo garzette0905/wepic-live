@@ -61,7 +61,7 @@ npm start
 | `SESSION_SECRET` | 세션·PIN 쿠키 서명 키 (아무 긴 랜덤 문자열) |
 | `ADMIN_EMAILS` | wepic 관리자 메뉴를 쓸 계정 (쉼표로 여러 개) |
 | `BASE_URL` | 공개 주소 (로컬은 생략 → `http://localhost:3000`) |
-| `SHARE_TTL_HOURS` | 공유 링크 자동 만료 시간 (기본 24) |
+| ~~`SHARE_TTL_HOURS`~~ | (사용 안 함) 공유 자동 만료를 비활성화해 더 이상 이 값을 읽지 않는다 |
 
 > ⚠️ **`.env`는 커밋하지 마세요.** `.gitignore`에 등록되어 있습니다(`.env.example`만 커밋됨).
 > 실제 시크릿이 GitHub에 올라가면 유출됩니다.

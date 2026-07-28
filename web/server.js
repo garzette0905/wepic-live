@@ -539,10 +539,9 @@ app.get(
 // 로그인 없이 볼 수 있는 공개 링크(/f/<id>)를 만든다. 같은 사용자는 같은 id를
 // 재사용하므로("실시간 공유링크"), 사진을 다시 골라 다시 만들면 같은 링크에 최신 사진이 반영된다.
 //
-// 링크는 생성 시점으로부터 SHARE_TTL_HOURS(기본 24시간) 뒤 자동 만료된다. 만료된 폴더는
-// /f/:id 접근 시 즉시 지워지고, 그 외에도 주기적으로(cleanupExpiredShares) 정리된다.
-
-const SHARE_TTL_MS = Math.max(1, Number(process.env.SHARE_TTL_HOURS) || 24) * 60 * 60 * 1000;
+// 자동 만료 삭제는 비활성화했다(2026-07, 사용자 요청 — 무료 저장 용량이 넉넉해 따로
+// 얘기하기 전까지는 어떤 공유도 자동으로 지우지 않는다). 되살리려면 writeShareManifest에
+// expiresAt 계산을 되돌리고 isShareExpired의 실제 비교 로직을 복원하면 된다.
 const MAX_SHARE_ITEMS = 60;
 // 공유에 담을 동영상 1개의 최대 크기. 넘으면 그 동영상은 정지 이미지(포스터)로만 담긴다.
 // (저장공간·전송량 보호. 환경변수 MAX_SHARE_VIDEO_MB로 조절)
@@ -593,7 +592,7 @@ function writeShareManifest(id, data) {
   fs.writeFileSync(
     path.join(shareDir(id), 'photos.json'),
     JSON.stringify(
-      { ...data, updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + SHARE_TTL_MS).toISOString() },
+      { ...data, updatedAt: new Date().toISOString(), expiresAt: null }, // 자동 만료 비활성화(위 설명 참고)
       null,
       2
     )
@@ -608,8 +607,10 @@ function readShareManifest(id) {
   }
 }
 
-function isShareExpired(manifest) {
-  return !manifest.expiresAt || Date.now() > new Date(manifest.expiresAt).getTime();
+// 자동 만료 비활성화(2026-07): 어떤 공유도 시간 경과로 지우지 않는다. 기존에 이미
+// expiresAt이 찍혀 있던(옛 코드로 만들어진) 공유도 이 값 자체를 무시하므로 함께 보존된다.
+function isShareExpired() {
+  return false;
 }
 
 function deleteShareDir(id) {
@@ -617,17 +618,8 @@ function deleteShareDir(id) {
   fs.rmSync(shareDir(id), { recursive: true, force: true });
 }
 
-// 서버 시작 시 + 매시간 만료된 공유 폴더를 정리한다 (링크를 다시 열어보지 않아도 정리됨).
-function cleanupExpiredShares() {
-  let ids;
-  try { ids = fs.readdirSync(SHARES_DIR); } catch { return; }
-  for (const id of ids) {
-    const manifest = readShareManifest(id);
-    if (manifest && isShareExpired(manifest)) deleteShareDir(id);
-  }
-}
-cleanupExpiredShares();
-setInterval(cleanupExpiredShares, 60 * 60 * 1000);
+// 예전에는 서버 시작 시 + 매시간 만료된 공유 폴더를 정리했으나(cleanupExpiredShares),
+// 자동 만료를 비활성화하면서 더 이상 호출하지 않는다(위 isShareExpired 참고).
 
 app.post(
   '/api/share',

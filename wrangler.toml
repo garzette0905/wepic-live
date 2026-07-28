@@ -22,9 +22,10 @@ id = "df7d7aa4228a478db2fb2779d41d0cd2"
 
 [vars]
 BASE_URL = "https://wepic-live.wepiclab.workers.dev"
-SHARE_TTL_HOURS = "24"
 
-# 만료 공유 정리: 매시간
+# 예전에는 여기서 매시간 만료된 공유를 정리했으나, 자동 만료 삭제를 비활성화하면서
+# (2026-07, 사용자 요청 — 따로 얘기하기 전까지 어떤 공유도 지우지 않음) 더 이상 아무 일도
+# 하지 않는다(cloudflare/index.js의 scheduled 핸들러 참고). 크론 자체는 남겨둬도 무해하다.
 [triggers]
 crons = ["0 * * * *"]
 
