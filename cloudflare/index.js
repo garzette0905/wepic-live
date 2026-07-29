@@ -400,10 +400,16 @@ async function authCallback(env, url, providerKey) {
   }
 }
 async function apiStatus(request, env) {
+  // 실제로 키가 설정된 로그인 제공자만 화면에 버튼으로 노출한다
+  // (설정 안 된 제공자를 눌러 오류 화면을 보는 일이 없도록).
+  const availableProviders = Object.keys(OIDC_PROVIDERS).filter((k) => !!OIDC_PROVIDERS[k].clientId(env));
+  const anon = {
+    loggedIn: false, email: null, name: null, provider: null,
+    canPickGooglePhotos: false, hasShare: false, sharePin: null, isAdmin: false,
+    availableProviders,
+  };
   const { sid, data } = await getSession(request, env);
-  if (!data) {
-    return json({ loggedIn: false, email: null, name: null, hasShare: false, sharePin: null, isAdmin: false });
-  }
+  if (!data) return json(anon);
   ensureFrames(data);
   // 로그인 판정은 "회원(D1)에 연결된 세션인가"로 한다. 옛 세션(userId 없음)은 재로그인 필요.
   // 권한·차단 상태는 매번 DB에서 다시 읽어, 관리자가 바꾸면 즉시 반영되게 한다.
@@ -426,6 +432,7 @@ async function apiStatus(request, env) {
     hasShare: !!manifest,
     sharePin: manifest ? manifest.pin || null : null, // 현재 공유의 PIN(메인화면 표시용)
     isAdmin: loggedIn && user.role === 'admin',       // Admin 메뉴 노출 여부
+    availableProviders,
   });
 }
 

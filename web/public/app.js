@@ -24,20 +24,28 @@ function showSlideshow() {
   slideshowEl.classList.remove('hidden');
 }
 
-// ---------- 홈 좌측 메뉴 / 우측 패널 ----------
+// ---------- 홈 상단 메뉴 / 관리자 좌측 메뉴 / 패널 ----------
 function selectPanel(name) {
   showHome();
-  document.querySelectorAll('#home-menu .menu-item').forEach((b) =>
+  const isAdminPanel = name.startsWith('admin-');
+  // 상단 메뉴: 관리자 패널을 보고 있으면 "관리자 화면" 항목을 켠 상태로 둔다.
+  document.querySelectorAll('#home-menu .menu-item').forEach((b) => {
+    const on = isAdminPanel ? b.id === 'menu-admin' : b.dataset.panel === name;
+    b.classList.toggle('active', on);
+  });
+  // 관리자 하위 메뉴(좌측): 관리자 패널일 때만 나타나고, 현재 항목을 표시한다.
+  document.getElementById('admin-side-menu').classList.toggle('hidden', !isAdminPanel);
+  document.querySelectorAll('#admin-side-menu .menu-item').forEach((b) =>
     b.classList.toggle('active', b.dataset.panel === name));
   document.querySelectorAll('.home-frame .panel').forEach((p) =>
     p.classList.toggle('hidden', p.id !== 'panel-' + name));
   // 관리자 패널을 보고 있을 때만 좌측 상단 ADMIN 배지 표시
-  document.getElementById('admin-badge').classList.toggle('hidden', !name.startsWith('admin-'));
+  document.getElementById('admin-badge').classList.toggle('hidden', !isAdminPanel);
   if (name === 'admin-screens') loadAdminShares('admin-shares-list');
   if (name === 'admin-pins') loadAdminShares('admin-pins-list');
   if (name === 'admin-defaults') fillDefaultsForm();
 }
-document.querySelectorAll('#home-menu .menu-item').forEach((b) =>
+document.querySelectorAll('#home-menu .menu-item, #admin-side-menu .menu-item').forEach((b) =>
   b.addEventListener('click', () => selectPanel(b.dataset.panel)));
 document.querySelectorAll('[data-goto]').forEach((el) =>
   el.addEventListener('click', (e) => { e.preventDefault(); selectPanel(el.dataset.goto); }));
@@ -1381,6 +1389,32 @@ function boot(photos) {
 let loggedInName = null;
 let isLoggedIn = false;
 
+// 로그인 제공자 버튼 정의. 서버(/api/status의 availableProviders)가 "키가 설정된" 제공자만
+// 알려주므로, 나머지는 눌러도 오류가 나지 않게 "준비중"으로 비활성 표시한다.
+const LOGIN_PROVIDERS = [
+  { key: 'google', label: 'Google로 계속하기', icon: 'G', href: '/auth/login' },
+  { key: 'kakao', label: '카카오로 계속하기', icon: 'K', href: '/auth/kakao/login' },
+  { key: 'naver', label: '네이버로 계속하기', icon: 'N', href: '/auth/naver/login' },
+];
+function renderLoginProviders(available) {
+  const box = document.getElementById('login-providers');
+  const ready = Array.isArray(available) ? available : [];
+  box.innerHTML = '';
+  LOGIN_PROVIDERS.forEach((p) => {
+    const on = ready.includes(p.key);
+    // 준비된 제공자는 링크(a), 아직 설정 안 된 것은 누를 수 없는 span으로 그린다.
+    const el = document.createElement(on ? 'a' : 'span');
+    el.className = `btn-provider prov-${on ? p.key : 'soon'}`;
+    if (on) el.href = p.href;
+    const icon = document.createElement('span');
+    icon.className = 'prov-icon';
+    icon.textContent = p.icon;
+    el.appendChild(icon);
+    el.appendChild(document.createTextNode(on ? p.label : `${p.label} (준비중)`));
+    box.appendChild(el);
+  });
+}
+
 // 로그인 상태를 홈의 로그인/사진 패널에 반영 (자동 진입은 하지 않음)
 function applyLoginState(status) {
   isLoggedIn = !!status.loggedIn;
@@ -1389,24 +1423,37 @@ function applyLoginState(status) {
     document.getElementById('btn-update-share').classList.remove('hidden');
     if (status.sharePin) setSharePin(status.sharePin); // 기존 공유의 PIN 표시
   }
-  // wepic 관리자 메뉴는 허용된 계정으로 로그인했을 때만 노출
-  document.getElementById('admin-menu-group').classList.toggle('hidden', !status.isAdmin);
+  // wepic 관리자 화면 진입 메뉴는 관리자(role='admin')로 로그인했을 때만 노출
+  document.getElementById('menu-admin').classList.toggle('hidden', !status.isAdmin);
   loggedInName = isLoggedIn ? (status.name || status.email || null) : null;
-  const btnLogin = document.getElementById('btn-login');
+  const providers = document.getElementById('login-providers');
   const loginActions = document.getElementById('login-actions');
   const loginStatus = document.getElementById('login-status');
   const photosNote = document.getElementById('photos-login-note');
+  renderLoginProviders(status.availableProviders);
   if (isLoggedIn) {
-    btnLogin.classList.add('hidden');
+    providers.classList.add('hidden');
     loginActions.classList.remove('hidden');
-    loginStatus.textContent = `✓ ${loggedInName || '내 계정'}으로 로그인됨`;
+    const via = status.provider ? ` (${status.provider})` : '';
+    loginStatus.textContent = `✓ ${loggedInName || '내 계정'}으로 로그인됨${via}`;
     loginStatus.classList.remove('hidden');
     photosNote.classList.add('hidden');
   } else {
-    btnLogin.classList.remove('hidden');
+    providers.classList.remove('hidden');
     loginActions.classList.add('hidden');
     loginStatus.classList.add('hidden');
     photosNote.classList.remove('hidden');
+  }
+  // 구글 외 제공자로 로그인하면 구글 포토 Picker를 쓸 수 없다는 것을 사진 패널에 알린다.
+  const pickerBtn = document.getElementById('btn-start-picker');
+  if (isLoggedIn && !status.canPickGooglePhotos) {
+    pickerBtn.disabled = true;
+    pickerBtn.title = '구글 계정으로 로그인한 경우에만 구글 포토에서 사진을 고를 수 있습니다.';
+    photosNote.textContent = '구글 포토에서 고르려면 Google 계정으로 로그인해야 합니다. (기기 갤러리에서 올리는 기능은 준비 중입니다)';
+    photosNote.classList.remove('hidden');
+  } else {
+    pickerBtn.disabled = false;
+    pickerBtn.title = '';
   }
 }
 

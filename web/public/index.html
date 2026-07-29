@@ -16,10 +16,22 @@
 
   <!-- ===== 홈(랜딩) ===== -->
   <div id="home-shell" class="home-shell">
+    <!-- 상단 가로 메뉴 (로고 위쪽) -->
+    <nav class="top-menu" id="home-menu">
+      <button class="menu-item active" data-panel="about">🏠 홈 · 소개</button>
+      <button class="menu-item" data-panel="login" id="menu-login">🔑 로그인</button>
+      <button class="menu-item" data-panel="photos">🖼️ 사진 선택</button>
+      <button class="menu-item" data-panel="demo">▶ 데모로 보기</button>
+      <button class="menu-item" data-panel="feedback">💬 Feedback</button>
+      <!-- wepic 관리자만 노출. 누르면 좌측에 관리자 하위 메뉴가 펼쳐진다 -->
+      <button class="menu-item menu-admin hidden" data-panel="admin-screens" id="menu-admin">🛠 관리자 화면</button>
+    </nav>
+
     <header class="hero">
       <div class="hero-scrim"></div>
       <!-- 관리자 메뉴를 보고 있을 때만 좌측 상단에 눈에 띄게 표시 -->
       <div id="admin-badge" class="admin-badge hidden">🛠 ADMIN</div>
+
       <div class="hero-inner">
         <div class="hero-brand">
           <img class="hero-logo" src="favicon.svg" alt="Wepic Live" />
@@ -31,21 +43,12 @@
     </header>
 
     <div class="home-body">
-      <nav class="home-menu" id="home-menu">
-        <button class="menu-item active" data-panel="about">🏠 홈 · 소개</button>
-        <button class="menu-item" data-panel="login">🔑 Google 로그인</button>
-        <button class="menu-item" data-panel="photos">🖼️ 사진 선택</button>
-        <button class="menu-item" data-panel="demo">▶ 데모로 보기</button>
-        <button class="menu-item" data-panel="register">✉️ 사용자 등록 신청</button>
-        <button class="menu-item" data-panel="feedback">💬 Feedback</button>
-
-        <!-- wepic 관리자: 허용된 계정으로 로그인한 경우에만 노출된다 -->
-        <div id="admin-menu-group" class="admin-menu-group hidden">
-          <div class="admin-menu-label">🛠 Admin</div>
-          <button class="menu-item admin-sub" data-panel="admin-screens">📁 화면관리</button>
-          <button class="menu-item admin-sub" data-panel="admin-pins">🔢 PIN번호관리</button>
-          <button class="menu-item admin-sub" data-panel="admin-defaults">⚙️ Default 정보관리</button>
-        </div>
+      <!-- 관리자 화면을 보고 있을 때만 좌측에 나타나는 하위 메뉴 -->
+      <nav class="admin-side-menu hidden" id="admin-side-menu">
+        <div class="admin-menu-label">🛠 Admin</div>
+        <button class="menu-item admin-sub" data-panel="admin-screens">📁 화면관리</button>
+        <button class="menu-item admin-sub" data-panel="admin-pins">🔢 PIN번호관리</button>
+        <button class="menu-item admin-sub" data-panel="admin-defaults">⚙️ Default 정보관리</button>
       </nav>
 
       <section class="home-frame">
@@ -59,15 +62,20 @@
             <li>실시간 공유 링크 — 로그인 없이 열람</li>
             <li>동영상 재생 · 폰에서 "공유"로 바로 보내기(PWA 설치)</li>
           </ul>
-          <p class="panel-muted">왼쪽 메뉴에서 <b>Google 로그인</b> 또는 <b>데모로 보기</b>로 시작하세요.</p>
+          <p class="panel-muted">위쪽 메뉴에서 <b>로그인</b> 또는 <b>데모로 보기</b>로 시작하세요.</p>
         </div>
 
-        <!-- 구글 로그인 -->
+        <!-- 로그인 · 회원가입 (OIDC: 구글 / 카카오 / 네이버) -->
         <div class="panel hidden" id="panel-login">
-          <h2>구글 계정 연동</h2>
-          <p>Google 계정으로 로그인하면 구글 포토에서 사진을 선택해 액자로 볼 수 있습니다.</p>
+          <h2>로그인 · 회원가입</h2>
+          <p>아래 계정으로 로그인하면 <b>자동으로 회원가입</b>됩니다. 따로 승인을 기다리지 않아도 됩니다.</p>
           <p id="login-status" class="account-notice hidden"></p>
-          <a id="btn-login" class="btn-primary" href="/auth/login">Google 계정으로 로그인</a>
+          <!-- 실제로 설정된 제공자만 app.js가 여기에 버튼으로 그린다 -->
+          <div id="login-providers" class="login-providers"></div>
+          <p class="hint" style="margin:10px 0 0;">
+            <b>Google</b>로 로그인하면 구글 포토에서 사진을 골라올 수 있습니다.<br />
+            <b>카카오·네이버</b>는 기기(갤러리)에 있는 사진을 직접 올리는 방식으로 이용합니다.
+          </p>
           <div id="login-actions" class="hidden">
             <button class="btn-primary" data-goto="photos">사진 선택하러 가기</button>
             <p style="margin:8px 0 0;"><a href="#" id="btn-logout-home" class="text-link small">로그아웃</a></p>
@@ -78,7 +86,7 @@
         <!-- 사진 선택 -->
         <div class="panel hidden" id="panel-photos">
           <h2>표시할 사진 선택</h2>
-          <p id="photos-login-note" class="account-notice hidden">먼저 왼쪽 <b>Google 로그인</b>이 필요합니다.</p>
+          <p id="photos-login-note" class="account-notice hidden">먼저 위쪽 메뉴에서 <b>로그인</b>이 필요합니다.</p>
           <ol class="steps">
             <li>“사진 선택 시작” 클릭 또는 QR 스캔</li>
             <li><b>로그인된 계정으로</b> 선택하세요 (폰에 여러 계정이 있으면 다른 계정을 고르면 선택이 완료되지 않습니다)</li>
@@ -93,15 +101,6 @@
           <h2>데모로 보기</h2>
           <p>계정 연결 없이 샘플 사진으로 앱을 먼저 둘러볼 수 있습니다.</p>
           <button id="btn-demo" class="btn-primary">데모 슬라이드쇼 시작</button>
-        </div>
-
-        <!-- 등록 신청 -->
-        <div class="panel hidden" id="panel-register">
-          <h2>사용자 등록 신청 · Registration</h2>
-          <p class="modal-block">"Wepic Live" 앱 사용을 위해서는 최초 1회 등록이 필요합니다.<br />
-            관리자에게 지메일 계정을 보내주세요 (관리자 이메일: <b>garzette@paran.com</b>)</p>
-          <p class="modal-block modal-en">To use "Wepic Live", a one-time initial registration is required.<br />
-            Please send your Gmail address to the administrator. (Admin Email: <b>garzette@paran.com</b>)</p>
         </div>
 
         <!-- 피드백 -->
