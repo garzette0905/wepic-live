@@ -919,8 +919,11 @@ async function shareBlob(request, env) {
   }
   const shareId = sdata.currentFrameId;
   await putSession(env, ssid, sdata);
-  await deleteShare(env, shareId);
 
+  // 기존 공유를 먼저 지우지 않고 새 파일부터 저장한다. 재업로드한 파일이 전부
+  // 걸러지거나(이미지가 아님) 저장에 실패해도 기존 공유가 지워지지 않도록 하기 위함 —
+  // 유효한 새 파일이 실제로 저장된 뒤에만 이전 파일을 정리한다.
+  const keepKeys = new Set([`${shareId}/photos.json`]);
   const manifestItems = [];
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
@@ -928,8 +931,10 @@ async function shareBlob(request, env) {
     const m = meta[i] || {};
     const n = String(i + 1).padStart(3, '0');
     const ext = f.type === 'image/png' ? 'png' : 'jpg';
+    const key = `${shareId}/photos/${n}_full.${ext}`;
     const bytes = new Uint8Array(await f.arrayBuffer());
-    await env.SHARES.put(`${shareId}/photos/${n}_full.${ext}`, bytes, { httpMetadata: { contentType: f.type || 'image/jpeg' } });
+    await env.SHARES.put(key, bytes, { httpMetadata: { contentType: f.type || 'image/jpeg' } });
+    keepKeys.add(key);
     manifestItems.push({
       id: `blob-${i}`, createTime: m.createTime || new Date().toISOString(),
       width: m.width || null, height: m.height || null,
@@ -939,6 +944,12 @@ async function shareBlob(request, env) {
   }
   if (!manifestItems.length) return json({ error: '사진을 저장하지 못했습니다. (동영상은 공유 링크에 포함되지 않습니다)' }, 500);
   manifestItems.sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
+
+  // 이번에 쓰이지 않는 예전 파일 정리(제외된 사진·이전 확장자 등)
+  const old = await env.SHARES.list({ prefix: `${shareId}/` });
+  const stale = (old.objects || []).map((o) => o.key).filter((k) => !keepKeys.has(k));
+  if (stale.length) await env.SHARES.delete(stale);
+
   const prev = await readManifest(env, shareId);
   const pin = normalizePin(form.get('pin')) || (prev && prev.pin) || genPin();
   const owner = sdata.email || sdata.name || '(게스트)';
