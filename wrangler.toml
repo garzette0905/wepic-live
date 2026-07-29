@@ -26,7 +26,7 @@ id = "df7d7aa4228a478db2fb2779d41d0cd2"
 [[d1_databases]]
 binding = "DB"
 database_name = "wepic-db"
-database_id = "PASTE_DATABASE_ID_HERE"
+database_id = "e464e97e-36a6-4459-850a-200981bbab3f"
 
 [vars]
 BASE_URL = "https://wepic-live.wepiclab.workers.dev"
