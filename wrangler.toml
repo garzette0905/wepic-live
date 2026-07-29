@@ -20,6 +20,14 @@ bucket_name = "wepic-shares"
 binding = "SESSIONS"
 id = "df7d7aa4228a478db2fb2779d41d0cd2"
 
+# 회원 정보 저장용 D1 (SQL). 스키마는 저장소 루트의 schema.sql 참고.
+#   생성:      npx wrangler d1 create wepic-db   → 출력된 database_id를 아래에 붙여넣기
+#   스키마적용: npx wrangler d1 execute wepic-db --remote --file=./schema.sql
+[[d1_databases]]
+binding = "DB"
+database_name = "wepic-db"
+database_id = "PASTE_DATABASE_ID_HERE"
+
 [vars]
 BASE_URL = "https://wepic-live.wepiclab.workers.dev"
 

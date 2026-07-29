@@ -1,6 +1,7 @@
 # Wepic Live — Cloudflare Workers 배포
 
-`web/server.js`(Express) 백엔드를 Cloudflare Worker로 포팅한 버전입니다.
+Wepic Live의 **유일한 백엔드**입니다. (예전에는 `web/server.js`의 Express 백엔드를 Render에
+함께 배포했지만, Render를 쓰지 않기로 하면서 2026-07에 제거하고 Worker 단일 구성이 되었습니다.)
 
 - **Worker 코드**: `cloudflare/index.js`
 - **설정**: 저장소 **루트**의 `wrangler.toml` (Cloudflare가 루트 설정을 기대하므로 루트에 둠)

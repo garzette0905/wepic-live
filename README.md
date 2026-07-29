@@ -9,11 +9,25 @@
 
 | 폴더 | 내용 |
 |---|---|
-| `web/` | 웹앱 — 프론트엔드(`web/public`) + Node/Express 백엔드(`web/server.js`). Render 등 Node 호스트에서 실행 |
-| `cloudflare/` | 같은 앱의 Cloudflare Workers 백엔드 포팅(세션=KV, 공유=R2). `web/public`을 정적 자산으로 재사용 |
+| `web/public/` | 프론트엔드 (HTML·CSS·JS·아이콘·데모 사진) — Worker의 정적 자산으로 그대로 서빙 |
+| `cloudflare/` | 백엔드 Worker (`index.js`) — 세션=KV, 공유 사진=R2, 회원=D1 |
+| `schema.sql` | 회원 테이블(D1) 스키마 |
 | `docs/` | 로드맵·기획 노트 |
 
-프론트엔드(`web/public`)는 두 배포 방식이 **공유**합니다. 백엔드만 Express(Node) / Worker 두 갈래입니다.
+**Cloudflare Workers 단일 백엔드**입니다. 예전에는 Node/Express(`web/server.js`)를 Render에
+함께 배포했지만, Render를 쓰지 않기로 하면서 제거했습니다(2026-07).
+
+## 로컬 실행
+
+```bash
+npm install
+cp .dev.vars.example .dev.vars   # 실제 시크릿 값을 채운다
+npm run db:local                 # 로컬 D1에 회원 테이블 생성 (최초 1회)
+npm run dev                      # wrangler dev — 기본 http://localhost:8787
+```
+
+> 로컬에서 구글·카카오 로그인을 테스트하려면 각 개발자 콘솔의 **승인된 리디렉션 URI**에
+> `http://localhost:8787/auth/callback`(구글) 등 로컬 주소도 등록해야 합니다.
 
 ## 주요 기능
 
@@ -24,8 +38,8 @@
 
 ## 배포
 
-- **Cloudflare Workers**: [cloudflare/README.md](cloudflare/README.md)의 설정 절차 참고 (R2·KV·시크릿·OAuth 리디렉션)
-- **Node(Render 등)**: [web/README.md](web/README.md) 참고
+**Cloudflare Workers** — 설정 절차(R2·KV·D1·시크릿·OAuth 리디렉션)는
+[cloudflare/README.md](cloudflare/README.md) 참고. `main`에 push하면 자동 배포됩니다.
 
 ## Google Cloud 설정(공통)
 

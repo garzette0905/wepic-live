@@ -1,28 +1,24 @@
-# Wepic Live 로컬 실행용 환경변수 예시
+# Wepic Live — wrangler 로컬 개발용 시크릿 예시
 # ─────────────────────────────────────────────────────────────
-# 사용법: 이 파일을 복사해 web/.env 를 만들고 실제 값을 채운 뒤 `npm start`
-#   cp .env.example .env
+# 사용법: 이 파일을 복사해 저장소 루트에 .dev.vars 를 만들고 실제 값을 채운 뒤 `npm run dev`
+#   cp .dev.vars.example .dev.vars
 #
-# ⚠️ .env 는 절대 커밋하지 마세요(.gitignore에 등록되어 있습니다).
-#    실제 시크릿이 GitHub에 올라가면 유출됩니다.
-# ⚠️ 배포 환경(Render / Cloudflare)에서는 이 파일이 아니라
-#    각 대시보드의 환경변수·Secrets에 등록합니다.
+# ⚠️ .dev.vars 는 절대 커밋하지 마세요(.gitignore에 등록되어 있습니다).
+# ⚠️ 운영(배포) 환경에서는 이 파일이 아니라 Cloudflare 대시보드의
+#    Settings → Variables and secrets 에 Encrypt로 등록합니다.
 # ─────────────────────────────────────────────────────────────
 
 # Google Cloud Console > 사용자 인증 정보 > OAuth 클라이언트(웹 애플리케이션)
 GOOGLE_CLIENT_ID=여기에-클라이언트-ID.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=여기에-클라이언트-시크릿
 
+# 카카오 개발자센터 > 내 애플리케이션 > 앱 키 (REST API 키) / 보안 (client secret)
+KAKAO_CLIENT_ID=여기에-카카오-REST-API-키
+KAKAO_CLIENT_SECRET=여기에-카카오-client-secret
+
 # 세션·PIN 쿠키 서명 키. 아무 긴 랜덤 문자열.
 # ★ 값을 바꾸면 기존 로그인 세션과 PIN 열람 쿠키가 모두 무효화되므로 고정해서 쓰세요.
 SESSION_SECRET=긴-랜덤-문자열로-바꾸세요
 
-# wepic 관리자 메뉴를 쓸 계정(쉼표로 여러 개 가능)
-ADMIN_EMAILS=본인계정@gmail.com
-
-# 이 서버의 공개 주소. 로컬은 비워두면 http://localhost:3000 이 됩니다.
-# BASE_URL=http://localhost:3000
-
-
-# 포트 (기본 3000)
-# PORT=3000
+# Wepic 관리자 계정(쉼표로 여러 개 가능). 최초 관리자 시딩에만 쓰입니다.
+ADMIN_EMAILS=garzette@gmail.com

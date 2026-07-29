@@ -1,5 +1,8 @@
 node_modules/
 dist/
+
+# 예전 Express 백엔드가 로컬에 만들던 파일들. 백엔드는 Cloudflare Worker 전용으로
+# 바뀌었지만(2026-07), 이미 로컬에 남아 있는 파일이 git에 잡히지 않도록 유지한다.
 web/sessions/
 web/public/shares/
 
@@ -14,10 +17,11 @@ Gemini_Generated_Image_*.png
 .dev.vars
 node_modules/
 
-# 런타임 생성 설정 파일 (Default 정보관리)
+# 예전 Express 백엔드가 만들던 런타임 설정 파일 (지금은 KV에 저장)
 web/settings.json
 
-# 로컬 환경변수 (시크릿 포함) — 절대 커밋 금지. 예시는 web/.env.example 참고
+# 로컬 환경변수 (시크릿 포함) — 절대 커밋 금지. 예시는 .dev.vars.example 참고
+# (wrangler는 .dev.vars 를 읽는다. 위쪽에서 이미 무시 처리됨)
 .env
 *.env
 !.env.example

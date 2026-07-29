@@ -3,6 +3,12 @@
   "private": true,
   "type": "module",
   "description": "Wepic Live — Cloudflare Worker 백엔드",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 execute wepic-db --local --file=./schema.sql",
+    "db:remote": "wrangler d1 execute wepic-db --remote --file=./schema.sql"
+  },
   "devDependencies": {
     "wrangler": "^3.90.0"
   }
