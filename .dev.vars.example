@@ -20,5 +20,12 @@ KAKAO_CLIENT_SECRET=여기에-카카오-client-secret
 # ★ 값을 바꾸면 기존 로그인 세션과 PIN 열람 쿠키가 모두 무효화되므로 고정해서 쓰세요.
 SESSION_SECRET=긴-랜덤-문자열로-바꾸세요
 
-# Wepic 관리자 계정(쉼표로 여러 개 가능). 최초 관리자 시딩에만 쓰입니다.
-ADMIN_EMAILS=garzette@gmail.com
+# 로컬에서 실제 로그인까지 테스트할 때만 주석을 해제하세요.
+# 이 값이 OAuth redirect_uri의 기준이 되므로, 비워두면 운영 주소로 되돌아가 버려
+# 로컬에서 로그인 콜백을 받을 수 없습니다. 각 제공자 콘솔의 "승인된 리디렉션 URI"에도
+# http://localhost:8787/auth/callback (구글) / .../auth/kakao/callback (카카오)를 등록해야 합니다.
+# BASE_URL=http://localhost:8787
+
+# 참고: Wepic 관리자는 환경변수가 아니라 D1의 users.role='admin'으로 지정합니다.
+#   npx wrangler d1 execute wepic-db --remote \
+#     --command "UPDATE users SET role='admin' WHERE email='garzette@gmail.com';"

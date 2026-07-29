@@ -1,13 +1,9 @@
-// Wepic Live — Cloudflare Worker 백엔드 (web/server.js 포팅)
-// 세션: Workers KV(SESSIONS) · 공유 파일: R2(SHARES) · 정적: ASSETS(web/public 복사본)
-// 시크릿: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET
+// Wepic Live — Cloudflare Worker 백엔드 (유일한 백엔드)
+// 세션: Workers KV(SESSIONS) · 회원: D1(DB) · 공유 파일: R2(SHARES) · 정적: ASSETS(web/public)
+// 시크릿: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, KAKAO_CLIENT_ID, KAKAO_CLIENT_SECRET, SESSION_SECRET
 // 변수: BASE_URL
 // (QR 코드는 CPU 제한 때문에 서버에서 만들지 않고 브라우저에서 생성한다 — pickerCreate 참고)
 
-const SCOPE = 'email profile https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
-const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
-const TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo';
 const PICKER_BASE = 'https://photospicker.googleapis.com/v1';
 const PHOTOS_SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
 const MAX_SHARE_ITEMS = 60;
@@ -15,10 +11,43 @@ const MAX_SHARE_ITEMS = 60;
 // (저장공간·전송량 보호. 변수 MAX_SHARE_VIDEO_MB로 조절)
 const maxShareVideoBytes = (env) => Math.max(1, Number(env.MAX_SHARE_VIDEO_MB) || 100) * 1024 * 1024;
 
-// wepic 관리자: 이 이메일로 로그인한 사용자만 Admin 메뉴/API 사용 가능 (환경변수 ADMIN_EMAILS)
-const adminEmails = (env) => (env.ADMIN_EMAILS || 'garzette@gmail.com')
-  .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-const isAdminEmail = (env, email) => !!email && adminEmails(env).includes(String(email).toLowerCase());
+// ---------- OIDC 로그인 제공자 ----------
+// 회원가입·로그인은 OIDC(id_token을 JWKS로 검증)로 처리한다. 우리 DB(D1)에는 신원을 알아볼
+// 최소 정보만 두고(schema.sql 참고), 비밀번호는 아예 받지 않는다.
+//
+// 구글만 사진 접근(Photos Picker) 권한까지 함께 받는다 — 다른 제공자로 가입한 사용자는
+// 구글 포토를 쓸 수 없으므로 "기기 갤러리에서 직접 올리기"를 사용한다.
+const OIDC_PROVIDERS = {
+  google: {
+    label: 'Google',
+    authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenUrl: 'https://oauth2.googleapis.com/token',
+    jwksUrl: 'https://www.googleapis.com/oauth2/v3/certs',
+    // 구글은 iss를 두 형태 중 하나로 보낸다(둘 다 정상).
+    issuers: ['https://accounts.google.com', 'accounts.google.com'],
+    scope: `openid email profile ${PHOTOS_SCOPE}`,
+    // 리프레시 토큰을 받아 사진 API를 계속 쓰기 위한 추가 파라미터
+    extraAuthParams: { access_type: 'offline', prompt: 'select_account consent' },
+    clientId: (env) => env.GOOGLE_CLIENT_ID,
+    clientSecret: (env) => env.GOOGLE_CLIENT_SECRET,
+    // 사진 권한까지 확보되는 제공자인지 (Picker 사용 가능 여부)
+    grantsPhotos: true,
+  },
+  kakao: {
+    label: '카카오',
+    authUrl: 'https://kauth.kakao.com/oauth/authorize',
+    tokenUrl: 'https://kauth.kakao.com/oauth/token',
+    jwksUrl: 'https://kauth.kakao.com/.well-known/jwks.json',
+    issuers: ['https://kauth.kakao.com'],
+    // 이메일은 선택 동의라 동의하지 않으면 id_token에 없을 수 있다(스키마도 NULL 허용).
+    scope: 'openid account_email profile_nickname',
+    extraAuthParams: {},
+    clientId: (env) => env.KAKAO_CLIENT_ID,
+    clientSecret: (env) => env.KAKAO_CLIENT_SECRET,
+    grantsPhotos: false,
+  },
+};
+const isProvider = (p) => Object.prototype.hasOwnProperty.call(OIDC_PROVIDERS, p);
 
 // Default 정보관리(전역 설정) — KV에 JSON 하나로 저장(DB 불필요)
 const SETTINGS_KEY = 'settings:global';
@@ -131,6 +160,15 @@ function b64url(bytes) {
   for (const b of bytes) s += String.fromCharCode(b);
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
+// base64url → 바이트. JWT(id_token)의 헤더·페이로드·서명을 읽는 데 쓴다.
+function b64urlToBytes(s) {
+  const t = String(s).replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(t + '='.repeat((4 - (t.length % 4)) % 4));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+const b64urlToJson = (s) => JSON.parse(new TextDecoder().decode(b64urlToBytes(s)));
 function randomId(bytes = 18) {
   const a = new Uint8Array(bytes);
   crypto.getRandomValues(a);
@@ -147,13 +185,25 @@ const putSession = (env, sid, data) =>
 const delSession = (env, sid) => (sid ? env.SESSIONS.delete('sess:' + sid) : Promise.resolve());
 
 // ---------- 토큰 ----------
-async function tokenRequest(env, params) {
-  const body = new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, ...params });
-  const r = await fetch(TOKEN_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+// 제공자별 토큰 엔드포인트로 교환/갱신 요청. 기본은 구글(사진 API 토큰 갱신에 쓰임).
+async function tokenRequest(env, params, providerKey = 'google') {
+  const p = OIDC_PROVIDERS[providerKey];
+  const body = new URLSearchParams({
+    client_id: p.clientId(env),
+    client_secret: p.clientSecret(env),
+    ...params,
+  });
+  const r = await fetch(p.tokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
   if (!r.ok) throw new Error(`토큰 요청 실패 (${r.status}): ${await r.text()}`);
   return r.json();
 }
 // 세션에서 유효한 access token 확보(만료 임박 시 갱신 후 KV에 다시 저장). 실패 시 NOT_LOGGED_IN.
+// 사진 API용이므로 항상 구글 기준이다 — 카카오 등으로 로그인한 회원은 refreshToken이 없어
+// NOT_LOGGED_IN이 되고, 사진 선택 대신 "기기 갤러리에서 올리기"를 쓰게 된다.
 async function getAccessToken(env, sid, data) {
   if (!data || !data.refreshToken) throw new Error('NOT_LOGGED_IN');
   if (Date.now() < data.expiresAt - 60000) return data.accessToken;
@@ -162,6 +212,81 @@ async function getAccessToken(env, sid, data) {
   data.expiresAt = Date.now() + d.expires_in * 1000;
   await putSession(env, sid, data);
   return data.accessToken;
+}
+
+// ---------- OIDC id_token 검증 ----------
+// 제공자의 공개키(JWKS)로 서명을 검증하고 iss·aud·exp·nonce까지 확인한다.
+// 이렇게 하면 프로필 조회 API를 따로 호출하지 않고도 신원을 신뢰할 수 있다.
+async function verifyIdToken(env, providerKey, idToken, expectedNonce) {
+  const p = OIDC_PROVIDERS[providerKey];
+  const parts = String(idToken || '').split('.');
+  if (parts.length !== 3) throw new Error('id_token 형식이 올바르지 않습니다.');
+  const header = b64urlToJson(parts[0]);
+  const payload = b64urlToJson(parts[1]);
+  if (header.alg !== 'RS256') throw new Error(`지원하지 않는 서명 알고리즘입니다: ${header.alg}`);
+
+  const jwks = await fetch(p.jwksUrl).then((r) => (r.ok ? r.json() : null));
+  if (!jwks) throw new Error('공개키(JWKS)를 가져오지 못했습니다.');
+  const jwk = (jwks.keys || []).find((k) => k.kid === header.kid);
+  if (!jwk) throw new Error('id_token에 해당하는 공개키를 찾을 수 없습니다.');
+
+  const key = await crypto.subtle.importKey(
+    'jwk',
+    { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: 'RS256', ext: true },
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['verify']
+  );
+  const ok = await crypto.subtle.verify(
+    'RSASSA-PKCS1-v1_5',
+    key,
+    b64urlToBytes(parts[2]),
+    new TextEncoder().encode(`${parts[0]}.${parts[1]}`)
+  );
+  if (!ok) throw new Error('id_token 서명 검증에 실패했습니다.');
+
+  if (!p.issuers.includes(payload.iss)) throw new Error('id_token 발급자(iss)가 올바르지 않습니다.');
+  const aud = p.clientId(env);
+  const audOk = Array.isArray(payload.aud) ? payload.aud.includes(aud) : payload.aud === aud;
+  if (!audOk) throw new Error('id_token 대상(aud)이 올바르지 않습니다.');
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.exp && now >= payload.exp) throw new Error('id_token이 만료되었습니다.');
+  // nonce: 로그인 시작 때 우리가 만든 값과 같아야 한다(재사용 공격 방지).
+  if (expectedNonce && payload.nonce !== expectedNonce) throw new Error('id_token nonce가 일치하지 않습니다.');
+  return payload;
+}
+
+// ---------- 회원(D1) ----------
+// 로그인할 때마다 upsert. (provider, provider_sub)가 회원 식별 키다 — 이메일은 바뀔 수 있어
+// 키로 쓰지 않는다. 신규 가입은 자동 승인(status='active')이고 권한은 기본 'user'다.
+// 관리자(role='admin')는 DB에서 직접 지정한다(환경변수로 자동 부여하지 않음).
+async function upsertUser(env, { provider, sub, email, name }) {
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO users (provider, provider_sub, email, name, created_at, last_login_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+     ON CONFLICT (provider, provider_sub) DO UPDATE SET
+       email = COALESCE(excluded.email, users.email),
+       name = COALESCE(excluded.name, users.name),
+       last_login_at = excluded.last_login_at`
+  )
+    .bind(provider, sub, email || null, name || null, now)
+    .run();
+  return env.DB.prepare(
+    `SELECT id, provider, provider_sub, email, name, role, status FROM users
+     WHERE provider = ?1 AND provider_sub = ?2`
+  )
+    .bind(provider, sub)
+    .first();
+}
+// 세션이 가리키는 회원의 현재 상태를 DB에서 다시 읽는다(권한·차단이 바뀌면 바로 반영되도록).
+async function getUserById(env, id) {
+  if (!id) return null;
+  return env.DB.prepare(
+    `SELECT id, provider, provider_sub, email, name, role, status FROM users WHERE id = ?1`
+  )
+    .bind(id)
+    .first();
 }
 // 로그인 필요한 핸들러 래퍼
 async function requireLogin(request, env, handler) {
@@ -176,36 +301,96 @@ async function requireLogin(request, env, handler) {
   return handler(request, env, token, sess);
 }
 
-// ---------- OAuth ----------
-function authLogin(env) {
-  const u = new URL(AUTH_URL);
-  u.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
-  u.searchParams.set('redirect_uri', env.BASE_URL + '/auth/callback');
+// ---------- OIDC 로그인 / 회원가입 ----------
+// 구글은 예전부터 쓰던 /auth/callback 을 그대로 유지한다(구글 콘솔에 이미 등록된 주소).
+// 다른 제공자는 /auth/<provider>/callback 을 쓴다.
+const oidcRedirectUri = (env, providerKey) =>
+  providerKey === 'google'
+    ? `${env.BASE_URL}/auth/callback`
+    : `${env.BASE_URL}/auth/${providerKey}/callback`;
+
+// 로그인 시작: state(CSRF 방지)와 nonce(id_token 재사용 방지)를 만들어 KV에 10분간 보관하고
+// 제공자의 동의 화면으로 보낸다.
+async function authLogin(env, providerKey) {
+  const p = OIDC_PROVIDERS[providerKey];
+  if (!p.clientId(env)) {
+    return redirect('/?auth_error=' + encodeURIComponent(`${p.label} 로그인이 아직 설정되지 않았습니다.`));
+  }
+  const state = randomId();
+  const nonce = randomId();
+  await env.SESSIONS.put(
+    'oauth:' + state,
+    JSON.stringify({ provider: providerKey, nonce }),
+    { expirationTtl: 600 }
+  );
+
+  const u = new URL(p.authUrl);
+  u.searchParams.set('client_id', p.clientId(env));
+  u.searchParams.set('redirect_uri', oidcRedirectUri(env, providerKey));
   u.searchParams.set('response_type', 'code');
-  u.searchParams.set('scope', SCOPE);
-  u.searchParams.set('access_type', 'offline');
-  u.searchParams.set('prompt', 'select_account consent');
+  u.searchParams.set('scope', p.scope);
+  u.searchParams.set('state', state);
+  u.searchParams.set('nonce', nonce);
+  for (const [k, v] of Object.entries(p.extraAuthParams)) u.searchParams.set(k, v);
   return redirect(u.toString());
 }
-async function authCallback(env, url) {
+
+async function authCallback(env, url, providerKey) {
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
+  const state = url.searchParams.get('state');
   if (error) return redirect('/?auth_error=' + encodeURIComponent(error));
   if (!code) return redirect('/?auth_error=no_code');
+
   try {
-    const d = await tokenRequest(env, { code, grant_type: 'authorization_code', redirect_uri: env.BASE_URL + '/auth/callback' });
-    const granted = (d.scope || '').split(' ');
-    if (!granted.includes(PHOTOS_SCOPE)) return redirect('/?auth_error=missing_photos_scope');
-    const profile = await fetch(USERINFO_URL, { headers: { Authorization: 'Bearer ' + d.access_token } })
-      .then((r) => (r.ok ? r.json() : null))
-      .catch(() => null);
+    // state 검증: 우리가 만든 로그인 시도인지 확인하고, 짝이 되는 nonce를 꺼낸다.
+    const rawState = state ? await env.SESSIONS.get('oauth:' + state) : null;
+    if (!rawState) return redirect('/?auth_error=' + encodeURIComponent('로그인 요청이 만료되었습니다. 다시 시도해주세요.'));
+    await env.SESSIONS.delete('oauth:' + state); // 1회용
+    const { provider: statedProvider, nonce } = JSON.parse(rawState);
+    if (statedProvider !== providerKey) {
+      return redirect('/?auth_error=' + encodeURIComponent('로그인 제공자가 일치하지 않습니다.'));
+    }
+
+    const p = OIDC_PROVIDERS[providerKey];
+    const d = await tokenRequest(
+      env,
+      { code, grant_type: 'authorization_code', redirect_uri: oidcRedirectUri(env, providerKey) },
+      providerKey
+    );
+
+    // 신원은 id_token(JWKS 검증)에서 얻는다 — 프로필 조회 API를 따로 부르지 않는다.
+    if (!d.id_token) return redirect('/?auth_error=' + encodeURIComponent('id_token을 받지 못했습니다. (OpenID Connect 설정 확인)'));
+    const claims = await verifyIdToken(env, providerKey, d.id_token, nonce);
+
+    // 구글은 사진 권한까지 함께 받아야 Picker를 쓸 수 있다.
+    if (p.grantsPhotos && !(d.scope || '').split(' ').includes(PHOTOS_SCOPE)) {
+      return redirect('/?auth_error=missing_photos_scope');
+    }
+
+    const name = claims.name || claims.nickname || null;
+    const user = await upsertUser(env, {
+      provider: providerKey,
+      sub: String(claims.sub),
+      email: claims.email || null,
+      name,
+    });
+    if (!user) return redirect('/?auth_error=' + encodeURIComponent('회원 정보를 저장하지 못했습니다.'));
+    if (user.status === 'blocked') {
+      return redirect('/?auth_error=' + encodeURIComponent('이 계정은 사용이 중지되었습니다. 관리자에게 문의해주세요.'));
+    }
+
     const sid = randomId();
     await putSession(env, sid, {
-      accessToken: d.access_token,
+      provider: providerKey,
+      userId: user.id,
+      role: user.role,
+      email: user.email,
+      name: user.name,
+      // 사진 API용 토큰(구글만 존재). 다른 제공자는 null이라 Picker를 쓸 수 없다.
+      accessToken: d.access_token || null,
       refreshToken: d.refresh_token || null,
-      expiresAt: Date.now() + d.expires_in * 1000,
-      email: profile?.email || null,
-      name: profile?.name || null,
+      expiresAt: d.expires_in ? Date.now() + d.expires_in * 1000 : 0,
       frames: [],
       currentFrameId: null,
     });
@@ -220,18 +405,27 @@ async function apiStatus(request, env) {
     return json({ loggedIn: false, email: null, name: null, hasShare: false, sharePin: null, isAdmin: false });
   }
   ensureFrames(data);
+  // 로그인 판정은 "회원(D1)에 연결된 세션인가"로 한다. 옛 세션(userId 없음)은 재로그인 필요.
+  // 권한·차단 상태는 매번 DB에서 다시 읽어, 관리자가 바꾸면 즉시 반영되게 한다.
+  const user = await getUserById(env, data.userId);
+  const loggedIn = !!user && user.status !== 'blocked';
+  if (user && (data.role !== user.role || data.email !== user.email)) {
+    data.role = user.role;          // 세션 캐시를 DB 기준으로 맞춘다
+    data.email = user.email;
+  }
   await putSession(env, sid, data);
-  const loggedIn = !!(data && data.refreshToken);
   // 이미 만들어 둔 공유 링크가 있으면 "링크변경 반영" 버튼을 바로 노출하기 위한 힌트
   const manifest = data.currentFrameId ? await readManifest(env, data.currentFrameId) : null;
-  const email = loggedIn ? data.email || null : null;
   return json({
     loggedIn,
-    email,
-    name: loggedIn ? data.name || null : null,
+    email: loggedIn ? user.email || null : null,
+    name: loggedIn ? user.name || null : null,
+    provider: loggedIn ? data.provider || null : null,
+    // 구글로 로그인한 회원만 구글 포토 Picker를 쓸 수 있다(그 외는 기기 갤러리 업로드).
+    canPickGooglePhotos: loggedIn && !!data.refreshToken,
     hasShare: !!manifest,
     sharePin: manifest ? manifest.pin || null : null, // 현재 공유의 PIN(메인화면 표시용)
-    isAdmin: loggedIn && isAdminEmail(env, email),    // Admin 메뉴 노출 여부
+    isAdmin: loggedIn && user.role === 'admin',       // Admin 메뉴 노출 여부
   });
 }
 
@@ -293,7 +487,7 @@ async function apiFramesSelect(request, env, id) {
   if (!f) {
     // 관리자는 다른 세션이 만든 액자도 wepic 메인화면에서 그대로 이어서 관리할 수 있도록,
     // "wepic 메인화면 열기" 진입 시 자기 액자 목록에 편입시킨 뒤 선택한다.
-    if (!isAdminEmail(env, data.email)) return json({ error: '없는 액자입니다.' }, 404);
+    if (data.role !== 'admin') return json({ error: '없는 액자입니다.' }, 404);
     const m = await readManifest(env, id);
     if (!m) return json({ error: '없는 액자입니다.' }, 404);
     f = { id, name: m.frameName || m.title || '관리자로 연 액자' };
@@ -322,13 +516,26 @@ async function apiLogout(request, env) {
   return json({ ok: true }, 200, { 'Set-Cookie': clearCookie() });
 }
 
-// 관리자 전용 가드
+// 관리자 전용 가드. 권한은 세션 캐시가 아니라 D1에서 다시 읽어 판정한다
+// (관리자를 DB에서 내리면 즉시 막히도록).
 async function requireAdmin(request, env, handler) {
   const sess = await getSession(request, env);
-  const loggedIn = !!(sess.data && sess.data.refreshToken);
-  if (!loggedIn) return json({ error: '로그인이 필요합니다.' }, 401);
-  if (!isAdminEmail(env, sess.data.email)) return json({ error: '관리자만 사용할 수 있습니다.' }, 403);
-  return handler(request, env, sess);
+  const user = await getUserById(env, sess.data?.userId);
+  if (!user || user.status === 'blocked') return json({ error: '로그인이 필요합니다.' }, 401);
+  if (user.role !== 'admin') return json({ error: '관리자만 사용할 수 있습니다.' }, 403);
+  return handler(request, env, sess, user);
+}
+
+// 로그인한 Wepic 사용자(또는 관리자)만 통과하는 가드. 사진 업로드·공유 생성에 쓴다.
+// 구글 사진 API 토큰이 필요한 곳은 requireLogin(위)을 쓰고, "회원이면 되는" 곳은 이걸 쓴다.
+async function requireMember(request, env, handler) {
+  const sess = await getSession(request, env);
+  const user = await getUserById(env, sess.data?.userId);
+  if (!user) return json({ error: '로그인이 필요합니다.', loginRequired: true }, 401);
+  if (user.status === 'blocked') {
+    return json({ error: '이 계정은 사용이 중지되었습니다.', loginRequired: true }, 403);
+  }
+  return handler(request, env, sess, user);
 }
 
 // 화면관리: 공유(폴더) 목록 — R2 프리픽스를 훑어 매니페스트를 읽는다(별도 DB 불필요)
@@ -393,7 +600,7 @@ async function verifyPin(request, env, id) {
 async function canViewShare(request, env, id, manifest) {
   if (!manifest || !manifest.pin) return true;                 // 하위 호환
   const sess = await getSession(request, env);
-  if (isAdminEmail(env, sess.data?.email)) return true;         // 관리자 통과
+  if (sess.data?.role === 'admin') return true;                 // 관리자 통과
   if ((sess.data?.frames || []).some((f) => f.id === id)) return true; // 만든 본인(다중 액자)
   if (sess.data?.shareId === id) return true;                   // 구버전 세션 안전망
   const want = await pinToken(env, id, manifest.pin);
@@ -856,8 +1063,19 @@ export default {
     const p = url.pathname;
     const m = request.method;
     try {
-      if (p === '/auth/login' && m === 'GET') return authLogin(env);
-      if (p === '/auth/callback' && m === 'GET') return authCallback(env, url);
+      // 로그인/회원가입 (OIDC). 구글은 예전 주소를 그대로 유지한다.
+      if (p === '/auth/login' && m === 'GET') return authLogin(env, 'google');
+      if (p === '/auth/callback' && m === 'GET') return authCallback(env, url, 'google');
+      const mAuthLogin = p.match(/^\/auth\/([a-z]+)\/login$/);
+      if (mAuthLogin && m === 'GET') {
+        if (!isProvider(mAuthLogin[1])) return text('지원하지 않는 로그인 제공자입니다.', 404);
+        return authLogin(env, mAuthLogin[1]);
+      }
+      const mAuthCb = p.match(/^\/auth\/([a-z]+)\/callback$/);
+      if (mAuthCb && m === 'GET') {
+        if (!isProvider(mAuthCb[1])) return text('지원하지 않는 로그인 제공자입니다.', 404);
+        return authCallback(env, url, mAuthCb[1]);
+      }
       if (p === '/api/status' && m === 'GET') return apiStatus(request, env);
       if (p === '/api/logout' && m === 'POST') return apiLogout(request, env);
 
