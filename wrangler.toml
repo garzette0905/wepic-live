@@ -38,4 +38,8 @@ BASE_URL = "https://wepic-live.wepiclab.workers.dev"
 crons = ["0 * * * *"]
 
 # 시크릿은 대시보드(Settings → Variables and secrets, Encrypt)로 등록:
-#   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET
+#   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, KAKAO_CLIENT_ID, KAKAO_CLIENT_SECRET, SESSION_SECRET
+# 카카오 값은 카카오 개발자센터(https://developers.kakao.com) > 내 애플리케이션 > 앱 키의
+# "REST API 키"(=KAKAO_CLIENT_ID)와 제품 설정 > 카카오 로그인 > 보안의 Client Secret
+# (=KAKAO_CLIENT_SECRET)에서 발급받는다. 카카오 로그인 > Redirect URI에는
+# https://<BASE_URL>/auth/kakao/callback 을 등록해야 한다.
