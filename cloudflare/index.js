@@ -39,8 +39,11 @@ const OIDC_PROVIDERS = {
     tokenUrl: 'https://kauth.kakao.com/oauth/token',
     jwksUrl: 'https://kauth.kakao.com/.well-known/jwks.json',
     issuers: ['https://kauth.kakao.com'],
-    // 이메일은 선택 동의라 동의하지 않으면 id_token에 없을 수 있다(스키마도 NULL 허용).
-    scope: 'openid account_email profile_nickname',
+    // 이메일(account_email)은 카카오가 앱마다 별도 "개인정보 동의항목" 심사를 요구해
+    // 신청 전에는 요청 자체가 KOE205(invalid_scope)로 거부된다. 심사 없이도 로그인은
+    // 가능해야 하므로 우선 닉네임만 받는다 — 이메일은 NULL로 저장되고(스키마도 허용),
+    // 나중에 심사를 통과하면 이 scope에 'account_email'을 다시 추가하면 된다.
+    scope: 'openid profile_nickname',
     extraAuthParams: {},
     clientId: (env) => env.KAKAO_CLIENT_ID,
     clientSecret: (env) => env.KAKAO_CLIENT_SECRET,
