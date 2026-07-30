@@ -21,6 +21,8 @@
       <button class="menu-item active" data-panel="about">🏠 홈 · 소개</button>
       <button class="menu-item" data-panel="login" id="menu-login">🔑 로그인</button>
       <button class="menu-item" data-panel="photos">🖼️ 사진 선택</button>
+      <!-- 로그인한 Wepic 사용자에게만 노출. 누르면 좌측에 My사진관리 하위 메뉴가 펼쳐진다 -->
+      <button class="menu-item hidden" data-panel="my-screens" id="menu-my">📂 My사진관리</button>
       <button class="menu-item" data-panel="demo">▶ 데모로 보기</button>
       <button class="menu-item" data-panel="feedback">💬 Feedback</button>
       <!-- wepic 관리자만 노출. 누르면 좌측에 관리자 하위 메뉴가 펼쳐진다 -->
@@ -49,6 +51,13 @@
         <button class="menu-item admin-sub" data-panel="admin-screens">📁 화면관리</button>
         <button class="menu-item admin-sub" data-panel="admin-pins">🔢 PIN번호관리</button>
         <button class="menu-item admin-sub" data-panel="admin-defaults">⚙️ Default 정보관리</button>
+      </nav>
+
+      <!-- My사진관리 화면을 보고 있을 때만 좌측에 나타나는 하위 메뉴 (관리자 메뉴와 동일한 구조) -->
+      <nav class="admin-side-menu hidden" id="my-side-menu">
+        <div class="admin-menu-label">📂 My사진관리</div>
+        <button class="menu-item admin-sub" data-panel="my-screens">📁 화면관리</button>
+        <button class="menu-item admin-sub" data-panel="my-pins">🔢 PIN번호관리</button>
       </nav>
 
       <section class="home-frame">
@@ -170,6 +179,28 @@
           </div>
           <button id="def-save" class="btn-primary">저장</button>
           <p id="def-saved" class="share-copied hidden">저장되었습니다.</p>
+        </div>
+
+        <!-- ===== My사진관리: 화면관리 (내가 만든 액자만) ===== -->
+        <div class="panel panel-wide hidden" id="panel-my-screens">
+          <h2>My 화면관리</h2>
+          <p class="panel-muted">내가 만든 액자만 보여줍니다(이름이 아니라 로그인 계정 고유값으로 구분합니다).
+            폴더를 삭제하면 해당 공유 링크는 즉시 열리지 않습니다.</p>
+          <div class="admin-toolbar">
+            <button id="my-shares-reload" class="secondary slim">새로 고침</button>
+            <span id="my-shares-count" class="panel-muted"></span>
+          </div>
+          <div id="my-shares-list" class="admin-list">불러오는 중...</div>
+        </div>
+
+        <!-- ===== My사진관리: PIN번호관리 (내가 만든 액자만) ===== -->
+        <div class="panel panel-wide hidden" id="panel-my-pins">
+          <h2>My PIN번호관리</h2>
+          <p class="panel-muted">내가 만든 액자의 PIN(4자리 숫자)을 확인·수정할 수 있습니다.</p>
+          <div class="admin-toolbar">
+            <button id="my-pins-reload" class="secondary slim">새로 고침</button>
+          </div>
+          <div id="my-pins-list" class="admin-list">불러오는 중...</div>
         </div>
       </section>
     </div>

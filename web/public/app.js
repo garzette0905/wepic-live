@@ -24,28 +24,35 @@ function showSlideshow() {
   slideshowEl.classList.remove('hidden');
 }
 
-// ---------- 홈 상단 메뉴 / 관리자 좌측 메뉴 / 패널 ----------
+// ---------- 홈 상단 메뉴 / 관리자·My사진관리 좌측 메뉴 / 패널 ----------
 function selectPanel(name) {
   showHome();
   const isAdminPanel = name.startsWith('admin-');
-  // 상단 메뉴: 관리자 패널을 보고 있으면 "관리자 화면" 항목을 켠 상태로 둔다.
+  const isMyPanel = name.startsWith('my-');
+  // 상단 메뉴: 관리자/My사진관리 패널을 보고 있으면 그 상위 메뉴 항목을 켠 상태로 둔다.
   document.querySelectorAll('#home-menu .menu-item').forEach((b) => {
-    const on = isAdminPanel ? b.id === 'menu-admin' : b.dataset.panel === name;
+    let on;
+    if (isAdminPanel) on = b.id === 'menu-admin';
+    else if (isMyPanel) on = b.id === 'menu-my';
+    else on = b.dataset.panel === name;
     b.classList.toggle('active', on);
   });
-  // 관리자 하위 메뉴(좌측): 관리자 패널일 때만 나타나고, 현재 항목을 표시한다.
+  // 좌측 하위 메뉴: 각각 자기 패널 그룹일 때만 나타나고, 현재 항목을 표시한다.
   document.getElementById('admin-side-menu').classList.toggle('hidden', !isAdminPanel);
-  document.querySelectorAll('#admin-side-menu .menu-item').forEach((b) =>
+  document.getElementById('my-side-menu').classList.toggle('hidden', !isMyPanel);
+  document.querySelectorAll('#admin-side-menu .menu-item, #my-side-menu .menu-item').forEach((b) =>
     b.classList.toggle('active', b.dataset.panel === name));
   document.querySelectorAll('.home-frame .panel').forEach((p) =>
     p.classList.toggle('hidden', p.id !== 'panel-' + name));
   // 관리자 패널을 보고 있을 때만 좌측 상단 ADMIN 배지 표시
   document.getElementById('admin-badge').classList.toggle('hidden', !isAdminPanel);
-  if (name === 'admin-screens') loadAdminShares('admin-shares-list');
-  if (name === 'admin-pins') loadAdminShares('admin-pins-list');
+  if (name === 'admin-screens') loadShareList('admin-shares-list', 'admin');
+  if (name === 'admin-pins') loadShareList('admin-pins-list', 'admin');
   if (name === 'admin-defaults') fillDefaultsForm();
+  if (name === 'my-screens') loadShareList('my-shares-list', 'my');
+  if (name === 'my-pins') loadShareList('my-pins-list', 'my');
 }
-document.querySelectorAll('#home-menu .menu-item, #admin-side-menu .menu-item').forEach((b) =>
+document.querySelectorAll('#home-menu .menu-item, #admin-side-menu .menu-item, #my-side-menu .menu-item').forEach((b) =>
   b.addEventListener('click', () => selectPanel(b.dataset.panel)));
 document.querySelectorAll('[data-goto]').forEach((el) =>
   el.addEventListener('click', (e) => { e.preventDefault(); selectPanel(el.dataset.goto); }));
@@ -1191,12 +1198,16 @@ function fmtDateTime(iso) {
     : new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(d);
 }
 
-async function loadAdminShares(targetId) {
+// 관리자 화면관리(전체)와 My사진관리(본인 소유만)가 이 렌더링 로직을 함께 쓴다.
+// scope: 'admin' | 'my' — API 엔드포인트만 다르고 화면 구성은 동일하다.
+const shareApiBase = (scope) => (scope === 'my' ? '/api/my/shares' : '/api/admin/shares');
+
+async function loadShareList(targetId, scope) {
   const box = document.getElementById(targetId);
   box.textContent = '불러오는 중...';
   let shares = [];
   try {
-    ({ shares } = await api('/api/admin/shares'));
+    ({ shares } = await api(shareApiBase(scope)));
   } catch (err) {
     box.innerHTML = '';
     const p = document.createElement('div');
@@ -1205,23 +1216,24 @@ async function loadAdminShares(targetId) {
     box.appendChild(p);
     return;
   }
-  const countEl = document.getElementById('admin-shares-count');
+  const countEl = document.getElementById(scope === 'my' ? 'my-shares-count' : 'admin-shares-count');
   if (countEl) countEl.textContent = `총 ${shares.length}개`;
 
   box.innerHTML = '';
   if (!shares.length) {
     const p = document.createElement('div');
     p.className = 'admin-empty';
-    p.textContent = '아직 만들어진 공유가 없습니다.';
+    p.textContent = scope === 'my' ? '아직 내가 만든 액자가 없습니다.' : '아직 만들어진 공유가 없습니다.';
     box.appendChild(p);
     return;
   }
-  const pinMode = targetId === 'admin-pins-list';
-  shares.forEach((s) => box.appendChild(pinMode ? adminPinRow(s) : adminShareRow(s)));
+  const pinMode = targetId.endsWith('pins-list');
+  shares.forEach((s) => box.appendChild(shareRow(s, scope, pinMode)));
 }
 
-// 화면관리 행: 썸네일 · 날짜 · PIN · 만든사람 · 삭제
-function adminShareRow(s) {
+// 화면관리/PIN번호관리 공용 행. pinMode=false면 삭제·열기 버튼, true면 PIN 입력+저장.
+function shareRow(s, scope, pinMode) {
+  const base = shareApiBase(scope);
   const row = document.createElement('div');
   row.className = 'admin-row' + (s.expired ? ' expired' : '');
 
@@ -1241,96 +1253,76 @@ function adminShareRow(s) {
   line1.appendChild(document.createTextNode(`  ·  사진 ${s.count}장`));
   const line2 = document.createElement('div');
   line2.className = 'dim';
-  line2.textContent = `날짜 ${fmtDateTime(s.updatedAt)}  ·  PIN ${s.pin || '없음'}  ·  만든사람 ${s.owner || '-'}`;
-  const line3 = document.createElement('div');
-  line3.className = 'dim';
-  line3.textContent = `만료 ${fmtDateTime(s.expiresAt)}${s.expired ? ' (만료됨)' : ''}  ·  ${s.id}`;
-  meta.append(line1, line2, line3);
+  line2.textContent = pinMode
+    ? `${fmtDateTime(s.updatedAt)}  ·  만든사람 ${s.owner || '-'}  ·  ${s.id}`
+    : `날짜 ${fmtDateTime(s.updatedAt)}  ·  PIN ${s.pin || '없음'}  ·  만든사람 ${s.owner || '-'}`;
+  meta.append(line1, line2);
+  if (!pinMode) {
+    const line3 = document.createElement('div');
+    line3.className = 'dim';
+    line3.textContent = `만료 ${fmtDateTime(s.expiresAt)}${s.expired ? ' (만료됨)' : ''}  ·  ${s.id}`;
+    meta.appendChild(line3);
+  }
   row.appendChild(meta);
 
   const actions = document.createElement('div');
   actions.className = 'admin-actions';
-  // 액자마다 두 가지로 열 수 있다: 관리용 메인화면(사진 추가/제외·PIN·설정 편집 가능) / 가족이 보는 공유화면
-  const openMain = document.createElement('a');
-  openMain.className = 'text-link small';
-  openMain.href = `/?frame=${encodeURIComponent(s.id)}`;
-  openMain.target = '_blank';
-  openMain.title = '이 액자를 wepic 메인화면에서 열어 사진 추가/제외·PIN·설정을 바로 편집합니다';
-  openMain.textContent = 'wepic 메인화면 열기';
-  const openShare = document.createElement('a');
-  openShare.className = 'text-link small';
-  openShare.href = s.url; openShare.target = '_blank';
-  openShare.textContent = 'wepic 공유화면 열기';
-  const del = document.createElement('button');
-  del.className = 'btn-danger';
-  del.textContent = '삭제';
-  del.addEventListener('click', async () => {
-    if (!confirm(`이 공유 폴더를 삭제할까요?\n\n제목: ${s.title || '(없음)'}\n사진 ${s.count}장\n\n삭제하면 이 링크는 즉시 열리지 않습니다.`)) return;
-    try {
-      await api(`/api/admin/shares/${s.id}`, { method: 'DELETE' });
-      loadAdminShares('admin-shares-list');
-    } catch (err) { alert('삭제 실패: ' + err.message); }
-  });
-  actions.append(openMain, openShare, del);
+
+  if (pinMode) {
+    const input = document.createElement('input');
+    input.className = 'pin-input';
+    input.type = 'text';
+    input.maxLength = 4;
+    input.inputMode = 'numeric';
+    input.value = s.pin || '';
+    input.placeholder = '----';
+    const save = document.createElement('button');
+    save.className = 'secondary slim';
+    save.textContent = '저장';
+    save.addEventListener('click', async () => {
+      const pin = input.value.trim();
+      if (!/^\d{4}$/.test(pin)) { alert('PIN은 4자리 숫자여야 합니다.'); return; }
+      try {
+        await api(`${base}/${s.id}/pin`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin }),
+        });
+        save.textContent = '저장됨';
+        setTimeout(() => { save.textContent = '저장'; }, 1500);
+      } catch (err) { alert('저장 실패: ' + err.message); }
+    });
+    actions.append(input, save);
+  } else {
+    // 액자마다 두 가지로 열 수 있다: 관리용 메인화면(사진 추가/제외·PIN·설정 편집 가능) / 가족이 보는 공유화면
+    const openMain = document.createElement('a');
+    openMain.className = 'text-link small';
+    openMain.href = `/?frame=${encodeURIComponent(s.id)}`;
+    openMain.target = '_blank';
+    openMain.title = '이 액자를 wepic 메인화면에서 열어 사진 추가/제외·PIN·설정을 바로 편집합니다';
+    openMain.textContent = 'wepic 메인화면 열기';
+    const openShare = document.createElement('a');
+    openShare.className = 'text-link small';
+    openShare.href = s.url; openShare.target = '_blank';
+    openShare.textContent = 'wepic 공유화면 열기';
+    const del = document.createElement('button');
+    del.className = 'btn-danger';
+    del.textContent = '삭제';
+    del.addEventListener('click', async () => {
+      if (!confirm(`이 공유 폴더를 삭제할까요?\n\n제목: ${s.title || '(없음)'}\n사진 ${s.count}장\n\n삭제하면 이 링크는 즉시 열리지 않습니다.`)) return;
+      try {
+        await api(`${base}/${s.id}`, { method: 'DELETE' });
+        loadShareList(scope === 'my' ? 'my-shares-list' : 'admin-shares-list', scope);
+      } catch (err) { alert('삭제 실패: ' + err.message); }
+    });
+    actions.append(openMain, openShare, del);
+  }
   row.appendChild(actions);
   return row;
 }
 
-// PIN번호관리 행: PIN 확인·수정
-function adminPinRow(s) {
-  const row = document.createElement('div');
-  row.className = 'admin-row' + (s.expired ? ' expired' : '');
-
-  const img = document.createElement('img');
-  img.className = 'admin-thumb';
-  img.alt = '';
-  if (s.thumbUrl) img.src = s.thumbUrl;
-  row.appendChild(img);
-
-  const meta = document.createElement('div');
-  meta.className = 'admin-meta';
-  const l1 = document.createElement('div');
-  const b = document.createElement('b');
-  b.textContent = s.title || '(제목 없음)';
-  l1.appendChild(b);
-  if (s.frameName) l1.appendChild(document.createTextNode(`  [${s.frameName}]`));
-  l1.appendChild(document.createTextNode(`  ·  사진 ${s.count}장`));
-  const l2 = document.createElement('div');
-  l2.className = 'dim';
-  l2.textContent = `${fmtDateTime(s.updatedAt)}  ·  만든사람 ${s.owner || '-'}  ·  ${s.id}`;
-  meta.append(l1, l2);
-  row.appendChild(meta);
-
-  const actions = document.createElement('div');
-  actions.className = 'admin-actions';
-  const input = document.createElement('input');
-  input.className = 'pin-input';
-  input.type = 'text';
-  input.maxLength = 4;
-  input.inputMode = 'numeric';
-  input.value = s.pin || '';
-  input.placeholder = '----';
-  const save = document.createElement('button');
-  save.className = 'secondary slim';
-  save.textContent = '저장';
-  save.addEventListener('click', async () => {
-    const pin = input.value.trim();
-    if (!/^\d{4}$/.test(pin)) { alert('PIN은 4자리 숫자여야 합니다.'); return; }
-    try {
-      await api(`/api/admin/shares/${s.id}/pin`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin }),
-      });
-      save.textContent = '저장됨';
-      setTimeout(() => { save.textContent = '저장'; }, 1500);
-    } catch (err) { alert('저장 실패: ' + err.message); }
-  });
-  actions.append(input, save);
-  row.appendChild(actions);
-  return row;
-}
-
-document.getElementById('admin-shares-reload').addEventListener('click', () => loadAdminShares('admin-shares-list'));
-document.getElementById('admin-pins-reload').addEventListener('click', () => loadAdminShares('admin-pins-list'));
+document.getElementById('admin-shares-reload').addEventListener('click', () => loadShareList('admin-shares-list', 'admin'));
+document.getElementById('admin-pins-reload').addEventListener('click', () => loadShareList('admin-pins-list', 'admin'));
+document.getElementById('my-shares-reload').addEventListener('click', () => loadShareList('my-shares-list', 'my'));
+document.getElementById('my-pins-reload').addEventListener('click', () => loadShareList('my-pins-list', 'my'));
 
 // ---------- 부팅 ----------
 function boot(photos) {
@@ -1426,6 +1418,8 @@ function applyLoginState(status) {
   }
   // wepic 관리자 화면 진입 메뉴는 관리자(role='admin')로 로그인했을 때만 노출
   document.getElementById('menu-admin').classList.toggle('hidden', !status.isAdmin);
+  // My사진관리는 로그인한 Wepic 사용자(관리자 포함)라면 누구나 노출
+  document.getElementById('menu-my').classList.toggle('hidden', !status.loggedIn);
   loggedInName = isLoggedIn ? (status.name || status.email || null) : null;
   const providers = document.getElementById('login-providers');
   const loginActions = document.getElementById('login-actions');

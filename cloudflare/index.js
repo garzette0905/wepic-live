@@ -491,12 +491,14 @@ async function apiFramesSelect(request, env, sess, id) {
   ensureFrames(data);
   let f = data.frames.find((x) => x.id === id);
   if (!f) {
-    // 관리자는 다른 세션이 만든 액자도 wepic 메인화면에서 그대로 이어서 관리할 수 있도록,
-    // "wepic 메인화면 열기" 진입 시 자기 액자 목록에 편입시킨 뒤 선택한다.
-    if (data.role !== 'admin') return json({ error: '없는 액자입니다.' }, 404);
+    // 지금 세션의 액자 목록엔 없지만, 다른 기기/세션에서 만든 "내 소유" 액자이거나
+    // 관리자가 "wepic 메인화면 열기"로 여는 경우엔 자기 목록에 편입시킨 뒤 선택한다
+    // (My사진관리·관리자 화면관리의 "wepic 메인화면 열기"가 이 경로를 탄다).
     const m = await readManifest(env, id);
     if (!m) return json({ error: '없는 액자입니다.' }, 404);
-    f = { id, name: m.frameName || m.title || '관리자로 연 액자' };
+    const isOwner = !!m.ownerUserId && m.ownerUserId === data.userId;
+    if (data.role !== 'admin' && !isOwner) return json({ error: '없는 액자입니다.' }, 404);
+    f = { id, name: m.frameName || m.title || (isOwner ? '내 액자' : '관리자로 연 액자') };
     data.frames.push(f);
   }
   data.currentFrameId = f.id;
@@ -543,8 +545,10 @@ async function requireMember(request, env, handler) {
   return handler(request, env, sess, user);
 }
 
-// 화면관리: 공유(폴더) 목록 — R2 프리픽스를 훑어 매니페스트를 읽는다(별도 DB 불필요)
-async function adminShares(env) {
+// 공유(폴더) 목록 — R2 프리픽스를 훑어 매니페스트를 읽는다(별도 DB 불필요).
+// filterFn이 있으면 통과한 것만 담는다 — 관리자 화면관리(전체)와 "My사진관리"(본인
+// 소유만, ownerUserId로 판별)가 이 함수를 함께 쓴다.
+async function listShares(env, filterFn) {
   const shares = [];
   let cursor;
   do {
@@ -553,6 +557,7 @@ async function adminShares(env) {
       const id = pfx.replace(/\/$/, '');
       const m = await readManifest(env, id);
       if (!m) continue;
+      if (filterFn && !filterFn(m)) continue;
       shares.push({
         id,
         title: m.title || '',
@@ -570,7 +575,15 @@ async function adminShares(env) {
     cursor = list.truncated ? list.cursor : null;
   } while (cursor);
   shares.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
-  return json({ shares });
+  return shares;
+}
+async function adminShares(env) {
+  return json({ shares: await listShares(env, null) });
+}
+// My사진관리: 화면관리. 이름·이메일이 아니라 D1 회원 id(ownerUserId)로 본인 소유만 걸러낸다
+// — 이메일이 없거나(카카오 등) 나중에 바뀌어도 정확히 본인 것만 보이게 하기 위함이다.
+async function myShares(env, userId) {
+  return json({ shares: await listShares(env, (m) => m.ownerUserId === userId) });
 }
 
 // PIN 수정 (만료시각은 유지하고 pin만 교체)
@@ -584,6 +597,29 @@ async function adminSetPin(request, env, id) {
   await env.SHARES.put(`${id}/photos.json`, JSON.stringify({ ...m, pin }, null, 2),
     { httpMetadata: { contentType: 'application/json; charset=utf-8' } });
   return json({ ok: true, pin });
+}
+
+// My사진관리: PIN 수정. 본인 소유(ownerUserId 일치) 액자만 바꿀 수 있다.
+async function mySetPin(request, env, userId, id) {
+  if (!/^[\w-]{6,}$/.test(id)) return json({ error: '잘못된 id' }, 400);
+  const m = await readManifest(env, id);
+  if (!m) return json({ error: '없는 공유입니다.' }, 404);
+  if (m.ownerUserId !== userId) return json({ error: '권한이 없습니다.' }, 403);
+  const body = await request.json().catch(() => ({}));
+  const pin = normalizePin(body.pin);
+  if (!pin) return json({ error: 'PIN은 4자리 숫자여야 합니다.' }, 400);
+  await env.SHARES.put(`${id}/photos.json`, JSON.stringify({ ...m, pin }, null, 2),
+    { httpMetadata: { contentType: 'application/json; charset=utf-8' } });
+  return json({ ok: true, pin });
+}
+// My사진관리: 삭제. 본인 소유(ownerUserId 일치) 액자만 지울 수 있다.
+async function myDeleteShare(env, userId, id) {
+  if (!/^[\w-]{6,}$/.test(id)) return json({ error: '잘못된 id' }, 400);
+  const m = await readManifest(env, id);
+  if (!m) return json({ error: '없는 공유입니다.' }, 404);
+  if (m.ownerUserId !== userId) return json({ error: '권한이 없습니다.' }, 403);
+  await deleteShare(env, id);
+  return json({ ok: true });
 }
 
 // PIN 입력 → 맞으면 열람 쿠키 발급(24시간)
@@ -888,7 +924,11 @@ async function shareCreate(request, env, token, sess) {
   const pin = normalizePin(body.pin) || (prev && prev.pin) || genPin();
   const owner = sess.data?.email || sess.data?.name || null;
   const curFrameName = frameNameOf(sess.data, shareId);
-  await writeManifest(env, shareId, { musicUrl, title, intervalSec, effect, pin, owner, frameName: curFrameName, items: manifestItems });
+  await writeManifest(env, shareId, {
+    musicUrl, title, intervalSec, effect, pin, owner,
+    ownerUserId: sess.data?.userId || null, // "My사진관리"에서 본인 소유만 걸러낼 고유 키(D1 회원 id)
+    frameName: curFrameName, items: manifestItems,
+  });
   return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, frameId: shareId, frameName: curFrameName });
 }
 
@@ -949,7 +989,11 @@ async function shareBlob(request, env, sess, user) {
   const pin = normalizePin(form.get('pin')) || (prev && prev.pin) || genPin();
   const owner = user.email || user.name || null;
   const curFrameName = frameNameOf(sdata, shareId);
-  await writeManifest(env, shareId, { musicUrl, title, intervalSec, effect, pin, owner, frameName: curFrameName, items: manifestItems });
+  await writeManifest(env, shareId, {
+    musicUrl, title, intervalSec, effect, pin, owner,
+    ownerUserId: user.id, // "My사진관리"에서 본인 소유만 걸러낼 고유 키(D1 회원 id)
+    frameName: curFrameName, items: manifestItems,
+  });
   return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, frameId: shareId, frameName: curFrameName });
 }
 
@@ -1154,6 +1198,19 @@ export default {
       const mAdminPin = p.match(/^\/api\/admin\/shares\/([\w-]{6,})\/pin$/);
       if (mAdminPin && m === 'PUT') {
         return requireAdmin(request, env, (rq, en) => adminSetPin(rq, en, mAdminPin[1]));
+      }
+
+      // My사진관리: 로그인한 회원 본인이 만든 액자만 보임(ownerUserId로 필터)
+      if (p === '/api/my/shares' && m === 'GET') {
+        return requireMember(request, env, (rq, en, sess, user) => myShares(en, user.id));
+      }
+      const mMyShare = p.match(/^\/api\/my\/shares\/([\w-]{6,})$/);
+      if (mMyShare && m === 'DELETE') {
+        return requireMember(request, env, (rq, en, sess, user) => myDeleteShare(en, user.id, mMyShare[1]));
+      }
+      const mMyPin = p.match(/^\/api\/my\/shares\/([\w-]{6,})\/pin$/);
+      if (mMyPin && m === 'PUT') {
+        return requireMember(request, env, (rq, en, sess, user) => mySetPin(rq, en, user.id, mMyPin[1]));
       }
 
       const mF = p.match(/^\/f\/([\w-]{6,})$/);
