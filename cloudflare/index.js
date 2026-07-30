@@ -444,11 +444,10 @@ async function apiFramesGet(request, env) {
   await putSession(env, sid, data);
   return json({ frames: await framesInfoList(env, data), currentFrameId: data.currentFrameId || null });
 }
-async function apiFramesCreate(request, env) {
-  let { sid, data } = await getSession(request, env);
-  let setCookie = null;
-  if (!data) data = { frames: [], currentFrameId: null };
-  if (!sid) { sid = randomId(); setCookie = sidCookie(sid); }
+// 아래 액자 쓰기 API(생성·이름변경·선택·선택해제·삭제)는 모두 requireMember로 감싸서 호출되므로
+// sess.data는 항상 로그인된 회원의 세션(userId 포함)이다 — 게스트 세션 생성 분기가 필요 없다.
+async function apiFramesCreate(request, env, sess) {
+  const { sid, data } = sess;
   ensureFrames(data);
   const body = await request.json().catch(() => ({}));
   const name = (typeof body.name === 'string' && body.name.trim().slice(0, 30))
@@ -461,11 +460,10 @@ async function apiFramesCreate(request, env) {
     frame: await frameInfo(env, data, { id, name }),
     frames: await framesInfoList(env, data),
     currentFrameId: id,
-  }, 200, setCookie ? { 'Set-Cookie': setCookie } : {});
+  });
 }
-async function apiFramesRename(request, env, id) {
-  const { sid, data } = await getSession(request, env);
-  if (!data) return json({ error: '없는 액자입니다.' }, 404);
+async function apiFramesRename(request, env, sess, id) {
+  const { sid, data } = sess;
   ensureFrames(data);
   const f = data.frames.find((x) => x.id === id);
   if (!f) return json({ error: '없는 액자입니다.' }, 404);
@@ -477,18 +475,16 @@ async function apiFramesRename(request, env, id) {
   return json({ ok: true, frame: await frameInfo(env, data, f) });
 }
 // 선택 해제 = "새 액자"로 시작. 다음 "실시간 공유 링크 만들기"가 새 액자를 만든다.
-async function apiFramesDeselect(request, env) {
-  const { sid, data } = await getSession(request, env);
-  if (!data) return json({ ok: true, currentFrameId: null });
+async function apiFramesDeselect(request, env, sess) {
+  const { sid, data } = sess;
   ensureFrames(data);
   data.currentFrameId = null;
   await putSession(env, sid, data);
   return json({ ok: true, currentFrameId: null });
 }
 
-async function apiFramesSelect(request, env, id) {
-  const { sid, data } = await getSession(request, env);
-  if (!data) return json({ error: '없는 액자입니다.' }, 404);
+async function apiFramesSelect(request, env, sess, id) {
+  const { sid, data } = sess;
   ensureFrames(data);
   let f = data.frames.find((x) => x.id === id);
   if (!f) {
@@ -505,9 +501,8 @@ async function apiFramesSelect(request, env, id) {
   return json({ ok: true, currentFrameId: f.id });
 }
 // 액자 삭제: R2의 폴더(사진·매니페스트)까지 완전히 지우고 목록에서도 제거한다.
-async function apiFramesDelete(request, env, id) {
-  const { sid, data } = await getSession(request, env);
-  if (!data) return json({ error: '없는 액자입니다.' }, 404);
+async function apiFramesDelete(request, env, sess, id) {
+  const { sid, data } = sess;
   ensureFrames(data);
   const idx = data.frames.findIndex((x) => x.id === id);
   if (idx === -1) return json({ error: '없는 액자입니다.' }, 404);
@@ -894,9 +889,9 @@ async function shareCreate(request, env, token, sess) {
   return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, frameId: shareId, frameName: curFrameName });
 }
 
-// 로그인 없이(구글 포토 "공유"로 받은 사진 등): 브라우저가 가진 파일(blob)을 그대로 올려 공유 링크 생성
-async function shareBlob(request, env) {
-  const { sid, data } = await getSession(request, env);
+// 구글 포토 "공유"로 받은 사진 등: 브라우저가 가진 파일(blob)을 그대로 올려 공유 링크 생성.
+// requireMember로 감싸 호출되므로 로그인한 Wepic 회원만 쓸 수 있다(게스트는 401).
+async function shareBlob(request, env, sess, user) {
   const form = await request.formData();
   const files = form.getAll('files').filter((f) => f && typeof f.size === 'number' && f.size > 0);
   if (!files.length) return json({ error: '공유할 사진이 없습니다.' }, 400);
@@ -907,10 +902,7 @@ async function shareBlob(request, env) {
   const intervalSec = Math.min(60, Math.max(3, Number(form.get('intervalSec')) || 10));
   const effect = ['fade', 'slide', 'kenburns'].includes(form.get('effect')) ? form.get('effect') : 'fade';
 
-  // 게스트도 액자 목록 유지를 위해 세션을 발급/재사용
-  let ssid = sid, sdata = data, setCookie = null;
-  if (!sdata) sdata = { frames: [], currentFrameId: null };
-  if (!ssid) { ssid = randomId(); setCookie = sidCookie(ssid); }
+  const { sid: ssid, data: sdata } = sess;
   ensureFrames(sdata);
   if (!sdata.currentFrameId) {
     const newId = randomId(9);
@@ -952,16 +944,15 @@ async function shareBlob(request, env) {
 
   const prev = await readManifest(env, shareId);
   const pin = normalizePin(form.get('pin')) || (prev && prev.pin) || genPin();
-  const owner = sdata.email || sdata.name || '(게스트)';
+  const owner = user.email || user.name || null;
   const curFrameName = frameNameOf(sdata, shareId);
   await writeManifest(env, shareId, { musicUrl, title, intervalSec, effect, pin, owner, frameName: curFrameName, items: manifestItems });
-  return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, frameId: shareId, frameName: curFrameName }, 200, setCookie ? { 'Set-Cookie': setCookie } : {});
+  return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, frameId: shareId, frameName: curFrameName });
 }
 
 // 공유 링크 즉시 폐기: "현재 액자"를 목록에서 완전히 제거한다.
-async function shareDelete(request, env) {
-  const { sid, data } = await getSession(request, env);
-  if (!data) return json({ ok: true, currentFrameId: null, frames: [] });
+async function shareDelete(request, env, sess) {
+  const { sid, data } = sess;
   ensureFrames(data);
   const id = data.currentFrameId;
   if (id) {
@@ -970,7 +961,7 @@ async function shareDelete(request, env) {
     if (idx !== -1) data.frames.splice(idx, 1);
     data.currentFrameId = data.frames[0]?.id || null;
   }
-  if (sid) await putSession(env, sid, data);
+  await putSession(env, sid, data);
   return json({ ok: true, currentFrameId: data.currentFrameId, frames: await framesInfoList(env, data) });
 }
 
@@ -1097,15 +1088,26 @@ export default {
       if (p === '/api/status' && m === 'GET') return apiStatus(request, env);
       if (p === '/api/logout' && m === 'POST') return apiLogout(request, env);
 
-      // 세션당 액자 목록(다중 액자)
+      // 세션당 액자 목록(다중 액자). 조회(GET)는 게스트도 허용하지만(자기 세션 조회일 뿐),
+      // 생성·이름변경·선택·선택해제·삭제는 모두 KV/R2 쓰기 작업이라 requireMember로 막는다.
       if (p === '/api/frames' && m === 'GET') return apiFramesGet(request, env);
-      if (p === '/api/frames' && m === 'POST') return apiFramesCreate(request, env);
-      if (p === '/api/frames/deselect' && m === 'POST') return apiFramesDeselect(request, env);
+      if (p === '/api/frames' && m === 'POST') {
+        return requireMember(request, env, (rq, en, sess) => apiFramesCreate(rq, en, sess));
+      }
+      if (p === '/api/frames/deselect' && m === 'POST') {
+        return requireMember(request, env, (rq, en, sess) => apiFramesDeselect(rq, en, sess));
+      }
       const mFrameSelect = p.match(/^\/api\/frames\/([\w-]{6,})\/select$/);
-      if (mFrameSelect && m === 'POST') return apiFramesSelect(request, env, mFrameSelect[1]);
+      if (mFrameSelect && m === 'POST') {
+        return requireMember(request, env, (rq, en, sess) => apiFramesSelect(rq, en, sess, mFrameSelect[1]));
+      }
       const mFrame = p.match(/^\/api\/frames\/([\w-]{6,})$/);
-      if (mFrame && m === 'PUT') return apiFramesRename(request, env, mFrame[1]);
-      if (mFrame && m === 'DELETE') return apiFramesDelete(request, env, mFrame[1]);
+      if (mFrame && m === 'PUT') {
+        return requireMember(request, env, (rq, en, sess) => apiFramesRename(rq, en, sess, mFrame[1]));
+      }
+      if (mFrame && m === 'DELETE') {
+        return requireMember(request, env, (rq, en, sess) => apiFramesDelete(rq, en, sess, mFrame[1]));
+      }
 
       if (p === '/api/picker/session' && m === 'POST') return requireLogin(request, env, (rq, en, tok) => pickerCreate(rq, en, tok));
       const mSess = p.match(/^\/api\/picker\/session\/([^/]+)$/);
@@ -1117,8 +1119,12 @@ export default {
       if (p === '/video' && m === 'GET') return requireLogin(request, env, (rq, en, tok) => videoProxy(rq, en, tok, url));
 
       if (p === '/api/share' && m === 'POST') return requireLogin(request, env, (rq, en, tok, sess) => shareCreate(rq, en, tok, sess));
-      if (p === '/api/share' && m === 'DELETE') return shareDelete(request, env);
-      if (p === '/api/share/blob' && m === 'POST') return shareBlob(request, env);
+      if (p === '/api/share' && m === 'DELETE') {
+        return requireMember(request, env, (rq, en, sess) => shareDelete(rq, en, sess));
+      }
+      if (p === '/api/share/blob' && m === 'POST') {
+        return requireMember(request, env, (rq, en, sess, user) => shareBlob(rq, en, sess, user));
+      }
       if (p === '/share-target' && m === 'POST') return redirect('/'); // 보통 서비스워커가 가로챔
 
       // PIN 검증 (공유화면이 재생 전에 호출)

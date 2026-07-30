@@ -1340,8 +1340,9 @@ function boot(photos) {
   orientationMode = 'all';
   const allRadio = document.querySelector('#orientation-radios input[value="all"]');
   if (allRadio) allRadio.checked = true;
-  // 데모·공유 유입은 로그인 없이 보는 "게스트" 상태
-  const guest = isDemoMode || isSharedMode;
+  // 데모는 항상 게스트 취급. 공유(shared) 유입은 실제로 로그인하지 않은 경우만 게스트다 —
+  // 로그인한 회원이 공유로 받은 사진을 여는 경우도 있어(그때는 업로드 가능).
+  const guest = isDemoMode || (isSharedMode && !isLoggedIn);
   // 배경음악: 관리자 Default 설정 > 앱 기본곡. 이전에 듣던 곡을 브라우저에서 이어받지 않는다.
   // (데모·액자 데이터에 musicUrl이 있으면 호출부가 이미 채워두므로 비어있을 때만 건드린다)
   const musicEl = document.getElementById('music-url');
@@ -1351,10 +1352,10 @@ function boot(photos) {
   document.getElementById('demo-badge').classList.toggle('hidden', !isDemoMode);
   document.getElementById('account-links').classList.toggle('hidden', guest);
   document.getElementById('demo-links').classList.toggle('hidden', !guest);
-  // 사진 재선택 등은 로그인 사용자만 가능(게스트는 토큰이 없어 불가)하지만, 실시간 공유
-  // 링크는 구글 포토 "공유"로 받은 사진(isSharedMode)의 경우 브라우저가 이미 파일을 들고
-  // 있어 로그인 없이도 만들 수 있다(/api/share/blob). 샘플 데모 사진만 제외.
-  document.getElementById('share-block').classList.toggle('hidden', isDemoMode);
+  // 사진 업로드·공유 링크 생성은 로그인한 Wepic 회원만 가능하다(서버가 requireMember로 막음).
+  // 구글 포토 "공유"로 받은 사진(isSharedMode)도 예외 없이 로그인이 필요하므로, 데모와
+  // 마찬가지로 게스트 상태에서는 공유 블록을 숨기고 위 demo-links의 로그인 유도만 보여준다.
+  document.getElementById('share-block').classList.toggle('hidden', guest);
   // 세션당 액자 목록: 데모가 아니면 불러온다. 관리자가 액자를 열었을 때(isFrameMode)도
   // 서버가 이미 그 액자를 currentFrameId로 선택해 두었으므로 그대로 반영된다.
   if (!isDemoMode) {
@@ -1544,14 +1545,26 @@ async function init() {
     history.replaceState(null, '', '/');
     let shared = null;
     try { shared = await loadSharedMedia(); } catch { /* 무시 */ }
-    if (shared && shared.length) { isSharedMode = true; boot(shared); return; }
+    if (shared && shared.length) {
+      isSharedMode = true;
+      // 실제 로그인한 회원이 공유로 받은 사진을 올릴 수도 있으므로(업로드는 로그인 필요),
+      // isLoggedIn을 먼저 정확히 반영해둔다 — boot()의 guest 판정이 이 값을 쓴다.
+      const status = await api('/api/status').catch(() => ({ loggedIn: false }));
+      applyLoginState(status);
+      boot(shared);
+      return;
+    }
     if (params.get('shared') === 'empty') alert('공유된 사진을 찾지 못했습니다.');
   }
 
   // 2) 로그인 상태 확인 → 홈의 로그인/사진 패널에 반영 (자동 진입 없음: 항상 홈부터)
   //    이때 액자 선택도 해제해 메인화면이 항상 "새 액자"로 시작하게 한다(이전에 만든
   //    액자를 실수로 덮어쓰지 않도록. 기존 액자를 이어서 쓰려면 목록에서 고르면 된다).
-  await api('/api/frames/deselect', { method: 'POST' }).catch(() => {});
+  //    이 호출은 로그인 여부와 무관하게 홈에 들어올 때마다 조용히 시도되므로, 로그인
+  //    회원 전용 API(requireMember → 게스트는 401)라도 api()를 쓰지 않는다 — api()는 401을
+  //    받으면 곧바로 로그인 패널로 이동시키는데, 그러면 게스트가 홈만 열어도 매번 로그인
+  //    화면으로 튕기게 된다. 여기서는 결과가 필요 없으니 그냥 무시한다.
+  await fetch('/api/frames/deselect', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
   const status = await api('/api/status').catch(() => ({ loggedIn: false }));
   applyLoginState(status);
 
