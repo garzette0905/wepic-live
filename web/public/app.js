@@ -1571,13 +1571,13 @@ function applyLoginState(status) {
 // 제공자 코드를 사람이 읽는 이름으로
 const PROVIDER_LABELS = { google: 'Google', kakao: '카카오', naver: '네이버' };
 
-// 회원정보 패널: 이름은 수정 가능, 나머지는 읽기 전용으로 표시
+// 회원정보 패널: 이름·이메일은 수정 가능, 나머지는 읽기 전용으로 표시
 function fillMeForm(me, provider) {
   if (!me) return;
   document.getElementById('me-name').value = me.name || '';
+  document.getElementById('me-email').value = me.email || '';
   document.getElementById('me-provider').textContent =
     PROVIDER_LABELS[me.provider || provider] || me.provider || provider || '-';
-  document.getElementById('me-email').textContent = me.email || '(제공 안 됨)';
   document.getElementById('me-role').textContent =
     me.role === 'admin' ? 'Wepic 관리자' : 'Wepic 사용자';
   document.getElementById('me-created').textContent = fmtDateTime(me.createdAt);
@@ -1586,16 +1586,25 @@ function fillMeForm(me, provider) {
 
 document.getElementById('me-save').addEventListener('click', async () => {
   const name = document.getElementById('me-name').value.trim();
+  const email = document.getElementById('me-email').value.trim();
   if (!name) { alert('이름을 입력하세요.'); return; }
+  // 서버도 검사하지만, 저장을 누르고 나서야 알게 되는 것보다 여기서 먼저 알려준다.
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+    alert('이메일 형식이 올바르지 않습니다. (비워두셔도 됩니다)');
+    return;
+  }
   const btn = document.getElementById('me-save');
   btn.disabled = true;
   try {
     const r = await api('/api/me', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email }),
     });
-    // 저장된 이름을 상단 메뉴에도 즉시 반영
+    // 저장된 값을 화면에 다시 반영(상단 메뉴 이름 포함)
     loggedInName = r.me?.name || name;
     document.getElementById('menu-me').textContent = `👤 ${loggedInName}`;
+    if (r.me) fillMeForm(r.me, r.me.provider);
     const ok = document.getElementById('me-saved');
     ok.classList.remove('hidden');
     setTimeout(() => ok.classList.add('hidden'), 2000);

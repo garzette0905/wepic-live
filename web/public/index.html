@@ -129,20 +129,26 @@
         <!-- 내 회원정보 -->
         <div class="panel hidden" id="panel-me">
           <h2>내 회원정보</h2>
-          <p class="panel-muted">로그인에 사용한 계정 정보입니다. <b>이름</b>만 바꿀 수 있고,
-            제공자·이메일은 로그인 서비스(구글·카카오)에서 가져온 값이라 이 화면에서는 바꿀 수 없습니다.</p>
+          <p class="panel-muted">로그인에 사용한 계정 정보입니다. <b>이름과 이메일</b>을 바꿀 수 있습니다.
+            로그인 방식·권한·가입일은 바꿀 수 없습니다.</p>
           <div class="setting-row">
             <span class="setting-label">이름</span>
             <input type="text" id="me-name" class="title-input" maxlength="30" placeholder="표시할 이름" />
           </div>
+          <div class="setting-row">
+            <span class="setting-label">이메일</span>
+            <input type="email" id="me-email" class="title-input" maxlength="120"
+                   placeholder="예: hong@example.com (비워둘 수 있음)" />
+          </div>
+          <p class="hint" style="margin:2px 0 0;">이메일은 연락·표시용입니다. 이 값을 바꿔도
+            로그인 계정이나 권한은 바뀌지 않습니다.</p>
           <div class="me-info">
             <div><span class="me-key">로그인 방식</span><span id="me-provider" class="me-val">-</span></div>
-            <div><span class="me-key">이메일</span><span id="me-email" class="me-val">-</span></div>
             <div><span class="me-key">권한</span><span id="me-role" class="me-val">-</span></div>
             <div><span class="me-key">가입일</span><span id="me-created" class="me-val">-</span></div>
             <div><span class="me-key">최근 로그인</span><span id="me-last" class="me-val">-</span></div>
           </div>
-          <button id="me-save" class="btn-primary">이름 저장</button>
+          <button id="me-save" class="btn-primary">저장</button>
           <p id="me-saved" class="share-copied hidden">저장되었습니다.</p>
           <p style="margin:12px 0 0;"><a href="#" id="btn-logout-me" class="text-link small">로그아웃</a></p>
         </div>

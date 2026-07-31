@@ -204,11 +204,17 @@ async function tokenRequest(env, params, providerKey = 'google') {
   if (!r.ok) throw new Error(`토큰 요청 실패 (${r.status}): ${await r.text()}`);
   return r.json();
 }
+// 이 세션이 구글 포토(Picker·/img·/video)를 쓸 수 있는가.
+// ⚠️ "refreshToken이 있으면 구글"이라고 판단하면 안 된다 — 카카오도 refresh_token을 준다.
+// 반드시 제공자가 사진 권한까지 받는 곳(grantsPhotos)인지 함께 확인해야 한다.
+const canUseGooglePhotos = (data) =>
+  !!(data && OIDC_PROVIDERS[data.provider]?.grantsPhotos && data.refreshToken);
+
 // 세션에서 유효한 access token 확보(만료 임박 시 갱신 후 KV에 다시 저장). 실패 시 NOT_LOGGED_IN.
-// 사진 API용이므로 항상 구글 기준이다 — 카카오 등으로 로그인한 회원은 refreshToken이 없어
-// NOT_LOGGED_IN이 되고, 사진 선택 대신 "기기 갤러리에서 올리기"를 쓰게 된다.
+// 사진 API용이므로 구글 로그인 세션만 통과한다 — 카카오 토큰을 구글 토큰 엔드포인트로 보내면
+// 엉뚱한 오류가 나므로(예전에 카카오 로그인 후 "사진 선택"에서 에러가 났던 원인) 아예 막는다.
 async function getAccessToken(env, sid, data) {
-  if (!data || !data.refreshToken) throw new Error('NOT_LOGGED_IN');
+  if (!canUseGooglePhotos(data)) throw new Error('NOT_LOGGED_IN');
   if (Date.now() < data.expiresAt - 60000) return data.accessToken;
   const d = await tokenRequest(env, { refresh_token: data.refreshToken, grant_type: 'refresh_token' });
   data.accessToken = d.access_token;
@@ -269,8 +275,11 @@ async function upsertUser(env, { provider, sub, email, name }) {
     `INSERT INTO users (provider, provider_sub, email, name, created_at, last_login_at)
      VALUES (?1, ?2, ?3, ?4, ?5, ?5)
      ON CONFLICT (provider, provider_sub) DO UPDATE SET
-       email = COALESCE(excluded.email, users.email),
-       name = COALESCE(excluded.name, users.name),
+       -- 이미 값이 있으면 그것을 유지한다(users.X 우선). 회원이 회원정보 화면에서 직접
+       -- 고친 이름·이메일이 다음 로그인 때 제공자 값으로 되돌아가지 않게 하기 위함이다.
+       -- 비어 있을 때만 제공자가 준 값으로 채운다(예: 카카오 이메일 동의를 나중에 한 경우).
+       email = COALESCE(users.email, excluded.email),
+       name = COALESCE(users.name, excluded.name),
        last_login_at = excluded.last_login_at`
   )
     .bind(provider, sub, email || null, name || null, now)
@@ -294,8 +303,12 @@ async function getUserById(env, id) {
 }
 
 // ---------- 내 회원정보 ----------
-// 제공자(구글·카카오)가 준 값은 우리가 바꿀 수 없으므로, 화면에서 고칠 수 있는 것은
-// 표시 이름뿐이다. 이메일·제공자·가입일은 읽기 전용으로 보여준다.
+// 회원이 직접 고칠 수 있는 것은 **이름과 이메일**이다. 제공자·권한·가입일은 읽기 전용.
+// 여기서 고친 값은 다음 로그인 때 제공자 값으로 덮이지 않는다(upsertUser의 COALESCE 참고).
+//
+// 참고: 이메일은 "연락용 표시값"일 뿐이고 로그인·권한 판정에는 쓰이지 않는다
+// (로그인은 provider+provider_sub, 관리자 판정은 users.role). 그래서 이메일을 바꿔도
+// 남의 계정이 되거나 권한이 올라가지 않는다.
 function meInfo(user, provider) {
   return {
     id: user.id,
@@ -308,13 +321,28 @@ function meInfo(user, provider) {
     lastLoginAt: user.last_login_at || null,
   };
 }
+// 아주 느슨한 형식 검사(로컬@도메인.tld). 실제 도달 여부는 확인하지 않는다.
+const isEmailLike = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s);
+
 async function apiMeUpdate(request, env, sess, user) {
   const body = await request.json().catch(() => ({}));
   const name = typeof body.name === 'string' ? body.name.trim().slice(0, 30) : '';
   if (!name) return json({ error: '이름을 입력하세요.' }, 400);
-  await env.DB.prepare('UPDATE users SET name = ?1 WHERE id = ?2').bind(name, user.id).run();
+
+  // 이메일은 비워두는 것도 허용한다(카카오처럼 제공자가 안 주는 경우가 있으므로).
+  // 값이 있으면 형식만 확인한다.
+  const rawEmail = typeof body.email === 'string' ? body.email.trim().slice(0, 120) : '';
+  if (rawEmail && !isEmailLike(rawEmail)) {
+    return json({ error: '이메일 형식이 올바르지 않습니다.' }, 400);
+  }
+  const email = rawEmail || null;
+
+  await env.DB.prepare('UPDATE users SET name = ?1, email = ?2 WHERE id = ?3')
+    .bind(name, email, user.id)
+    .run();
   // 세션 캐시(화면 상단 이름 표시용)도 함께 맞춘다.
   sess.data.name = name;
+  sess.data.email = email;
   await putSession(env, sess.sid, sess.data);
   const fresh = await getUserById(env, user.id);
   return json({ ok: true, me: meInfo(fresh, sess.data.provider) });
@@ -459,7 +487,8 @@ async function apiStatus(request, env) {
     name: loggedIn ? user.name || null : null,
     provider: loggedIn ? data.provider || null : null,
     // 구글로 로그인한 회원만 구글 포토 Picker를 쓸 수 있다(그 외는 기기 갤러리 업로드).
-    canPickGooglePhotos: loggedIn && !!data.refreshToken,
+    // refreshToken 유무만으로 판단하면 안 된다 — 카카오도 refresh_token을 준다.
+    canPickGooglePhotos: loggedIn && canUseGooglePhotos(data),
     hasShare: !!manifest,
     sharePin: manifest ? manifest.pin || null : null, // 현재 공유의 PIN(메인화면 표시용)
     isAdmin: loggedIn && user.role === 'admin',       // Admin 메뉴 노출 여부
