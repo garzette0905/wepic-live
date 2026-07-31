@@ -18,15 +18,21 @@
   <div id="home-shell" class="home-shell">
     <!-- 상단 가로 메뉴 (로고 위쪽) -->
     <nav class="top-menu" id="home-menu">
-      <button class="menu-item active" data-panel="about">🏠 홈 · 소개</button>
-      <!-- 로그인 전에는 "로그인", 로그인 후에는 이름이 보이고 누르면 회원정보로 간다 -->
-      <button class="menu-item" data-panel="login" id="menu-login">🔑 로그인</button>
-      <button class="menu-item hidden" data-panel="me" id="menu-me"></button>
+      <!-- 홈(소개)으로 가는 아이콘 버튼 — 예전 "🏠 홈 · 소개" 자리를 대신한다 -->
+      <button class="menu-home" data-panel="about" id="menu-home" title="홈 · 소개" aria-label="홈 · 소개">
+        <img src="favicon.svg" alt="" />
+      </button>
       <button class="menu-item" data-panel="photos">🖼️ 사진 선택</button>
+      <button class="menu-item" data-panel="demo">▶ Demo</button>
+      <!-- 로그인했을 때만 -->
+      <button class="menu-item hidden" data-panel="me" id="menu-me">⚙️ 정보수정</button>
+      <!-- 로그인 전에는 "로그인" 버튼, 로그인 후에는 "Google 이름"처럼 상태만 표시(누를 수 없음) -->
+      <button class="menu-item" data-panel="login" id="menu-login">🔑 로그인</button>
+      <span class="menu-item menu-status hidden" id="menu-whoami"></span>
+      <!-- 로그인 후에는 가입할 이유가 없어 숨긴다 -->
+      <button class="menu-item" data-panel="signup" id="menu-signup">✍️ 회원가입</button>
       <!-- 로그인한 Wepic 사용자에게만 노출. 누르면 좌측에 My사진관리 하위 메뉴가 펼쳐진다 -->
       <button class="menu-item hidden" data-panel="my-screens" id="menu-my">📂 My사진관리</button>
-      <button class="menu-item" data-panel="demo">▶ 데모로 보기</button>
-      <button class="menu-item" data-panel="feedback">💬 Feedback</button>
       <!-- wepic 관리자만 노출. 누르면 좌측에 관리자 하위 메뉴가 펼쳐진다 -->
       <button class="menu-item menu-admin hidden" data-panel="admin-screens" id="menu-admin">🛠 관리자 화면</button>
     </nav>
@@ -76,10 +82,10 @@
           <p class="panel-muted">위쪽 메뉴에서 <b>로그인</b> 또는 <b>데모로 보기</b>로 시작하세요.</p>
         </div>
 
-        <!-- 로그인 · 회원가입 (OIDC: 구글 / 카카오 / 네이버) -->
+        <!-- 로그인 (OIDC: 구글 / 카카오 / 네이버) -->
         <div class="panel hidden" id="panel-login">
-          <h2>로그인 · 회원가입</h2>
-          <p>아래 계정으로 로그인하면 <b>자동으로 회원가입</b>됩니다. 따로 승인을 기다리지 않아도 됩니다.</p>
+          <h2>로그인</h2>
+          <p>가입할 때 쓰신 계정으로 로그인하세요. 처음이시면 <a href="#" data-goto="signup" class="text-link">회원가입</a>을 눌러주세요.</p>
           <p id="login-status" class="account-notice hidden"></p>
           <!-- 실제로 설정된 제공자만 app.js가 여기에 버튼으로 그린다 -->
           <div id="login-providers" class="login-providers"></div>
@@ -92,6 +98,51 @@
             <p style="margin:8px 0 0;"><a href="#" id="btn-logout-home" class="text-link small">로그아웃</a></p>
           </div>
           <p id="login-error" class="error hidden"></p>
+        </div>
+
+        <!-- 회원가입 — 이용안내 + 개인정보 수집·이용 동의를 받은 뒤 제공자 버튼을 활성화한다 -->
+        <div class="panel hidden" id="panel-signup">
+          <h2>회원가입</h2>
+          <p>별도의 아이디·비밀번호를 만들지 않습니다. 가지고 계신 <b>Google 또는 카카오 계정</b>으로
+            바로 시작하며, 아래 버튼을 누르면 그 즉시 가입이 완료됩니다(승인 대기 없음).</p>
+
+          <div class="terms-box">
+            <h3>이용안내</h3>
+            <ul class="panel-list">
+              <li>Wepic Live는 고른 사진을 슬라이드쇼로 보여주고, <b>링크 하나로 가족과 공유</b>하는 서비스입니다.</li>
+              <li>공유 링크는 <b>로그인 없이</b> 열람할 수 있으므로, 링크를 받은 사람은 누구나 볼 수 있습니다.
+                원치 않으시면 <b>PIN(4자리)</b>을 걸어두세요(기본으로 자동 발급됩니다).</li>
+              <li>사진 업로드·공유 링크 만들기는 <b>로그인한 회원만</b> 할 수 있습니다.</li>
+              <li>공유한 사진은 <b>따로 지우실 때까지 보관</b>됩니다(자동 삭제 없음).
+                직접 지우려면 <b>My사진관리</b>에서 삭제하시면 즉시 링크가 닫힙니다.</li>
+              <li>개인이 만든 서비스로 무료 제공되며, 장애·중단에 대한 보상은 어렵습니다.</li>
+            </ul>
+
+            <h3>개인정보 수집·이용 안내</h3>
+            <ul class="panel-list">
+              <li><b>수집 항목</b>: 로그인 제공자가 알려주는 <b>계정 고유번호</b>, <b>이름(닉네임)</b>,
+                <b>이메일</b>(제공자가 주는 경우에만 — 카카오는 주지 않을 수 있습니다).</li>
+              <li><b>비밀번호는 받지도, 저장하지도 않습니다.</b> 로그인은 Google·카카오가 처리합니다.</li>
+              <li><b>이용 목적</b>: 회원 식별(내가 만든 액자를 나에게만 보여주기), 서비스 운영·문의 대응.</li>
+              <li><b>사진·동영상</b>: 공유 링크를 만들 때 서버(Cloudflare R2)에 저장되며, 링크를 아는
+                사람(또는 PIN을 아는 사람)이 볼 수 있습니다.</li>
+              <li><b>보관 기간</b>: 회원 정보는 탈퇴 요청 시까지, 사진은 직접 삭제할 때까지.</li>
+              <li><b>제3자 제공 없음.</b> 광고·마케팅에 쓰지 않습니다.</li>
+              <li>문의·삭제 요청: <b>garzette@paran.com</b></li>
+            </ul>
+          </div>
+
+          <label class="check-row" style="margin-top:12px;">
+            <input type="checkbox" id="agree-terms" /> <span>이용안내를 확인했습니다. <b>(필수)</b></span>
+          </label>
+          <label class="check-row" style="margin-top:6px;">
+            <input type="checkbox" id="agree-privacy" /> <span>개인정보 수집·이용에 동의합니다. <b>(필수)</b></span>
+          </label>
+
+          <p id="signup-gate-note" class="hint" style="margin:10px 0 0;">두 항목에 모두 동의하시면 아래 가입 버튼이 활성화됩니다.</p>
+          <!-- app.js가 여기에도 제공자 버튼을 그린다(동의 전에는 비활성) -->
+          <div id="signup-providers" class="login-providers"></div>
+          <p class="hint" style="margin:10px 0 0;">이미 가입하셨다면 <a href="#" data-goto="login" class="text-link">로그인</a>으로 가세요.</p>
         </div>
 
         <!-- 사진 선택 — 로그인 제공자에 따라 아래 두 블록 중 하나만 보인다 -->
@@ -160,7 +211,8 @@
           <button id="btn-demo" class="btn-primary">데모 슬라이드쇼 시작</button>
         </div>
 
-        <!-- 피드백 -->
+        <!-- 피드백 — 상단 메뉴에서는 감췄다(요청). 패널은 남겨두었으니 다시 노출하려면
+             상단 메뉴에 data-panel="feedback" 버튼만 되살리면 된다. -->
         <div class="panel hidden" id="panel-feedback">
           <h2>Feedback</h2>
           <p class="modal-block">필요한 기능을 요청하거나, 오류·불편한 점을 남겨주세요.</p>
@@ -456,7 +508,11 @@
         <span id="demo-links" class="account-links hidden">
           <a href="#" id="btn-demo-home" class="text-link small">홈페이지로 가기</a>
           <span class="dot">·</span>
-          <a href="/auth/login" id="btn-demo-login" class="text-link small">Google 계정으로 로그인하고 내 사진으로 보기</a>
+          <!-- 예전에는 구글 로그인으로 바로 보냈지만, 이제 제공자가 여러 개라 로그인/회원가입
+               화면으로 보내 사용자가 고르게 한다. -->
+          <a href="#" id="btn-demo-login" class="text-link small">로그인</a>
+          <span class="dot">·</span>
+          <a href="#" id="btn-demo-signup" class="text-link small">회원가입</a>
         </span>
       </div>
     </div>

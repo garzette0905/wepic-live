@@ -30,7 +30,10 @@ function selectPanel(name) {
   const isAdminPanel = name.startsWith('admin-');
   const isMyPanel = name.startsWith('my-');
   // 상단 메뉴: 관리자/My사진관리 패널을 보고 있으면 그 상위 메뉴 항목을 켠 상태로 둔다.
-  document.querySelectorAll('#home-menu .menu-item').forEach((b) => {
+  // 홈 아이콘(.menu-home)도 함께 다룬다. 로그인 상태 표시(.menu-status)는 누를 수 없는
+  // 항목이라 active 대상에서 제외한다.
+  document.querySelectorAll('#home-menu .menu-item, #home-menu .menu-home').forEach((b) => {
+    if (b.classList.contains('menu-status')) return;
     let on;
     if (isAdminPanel) on = b.id === 'menu-admin';
     else if (isMyPanel) on = b.id === 'menu-my';
@@ -51,9 +54,13 @@ function selectPanel(name) {
   if (name === 'admin-defaults') fillDefaultsForm();
   if (name === 'my-screens') loadShareList('my-shares-list', 'my');
   if (name === 'my-pins') loadShareList('my-pins-list', 'my');
+  if (name === 'signup') refreshSignupGate(); // 동의 상태에 맞춰 가입 버튼 활성/비활성
 }
-document.querySelectorAll('#home-menu .menu-item, #admin-side-menu .menu-item, #my-side-menu .menu-item').forEach((b) =>
-  b.addEventListener('click', () => selectPanel(b.dataset.panel)));
+// data-panel이 있는 항목만 클릭으로 이동한다(로그인 상태 표시는 data-panel이 없어 제외됨).
+document.querySelectorAll(
+  '#home-menu .menu-item[data-panel], #home-menu .menu-home[data-panel],'
+  + ' #admin-side-menu .menu-item, #my-side-menu .menu-item'
+).forEach((b) => b.addEventListener('click', () => selectPanel(b.dataset.panel)));
 document.querySelectorAll('[data-goto]').forEach((el) =>
   el.addEventListener('click', (e) => { e.preventDefault(); selectPanel(el.dataset.goto); }));
 
@@ -1055,6 +1062,18 @@ document.getElementById('btn-demo-home').addEventListener('click', (e) => {
   e.preventDefault();
   location.href = '/';
 });
+// 데모를 보다가 로그인/회원가입으로 — 예전에는 구글로 바로 보냈지만, 제공자가 여러 개라
+// 해당 화면으로 데려가 사용자가 고르게 한다. 재생·음악은 멈추고 홈으로 전환한다.
+document.getElementById('btn-demo-login').addEventListener('click', (e) => {
+  e.preventDefault();
+  stopEverythingAndGoHome();
+  selectPanel('login');
+});
+document.getElementById('btn-demo-signup').addEventListener('click', (e) => {
+  e.preventDefault();
+  stopEverythingAndGoHome();
+  selectPanel('signup');
+});
 
 // ---------- 재생/표시 설정 ----------
 function lsGet(key, fallback) { try { const v = localStorage.getItem(key); return v === null ? fallback : v; } catch { return fallback; } }
@@ -1484,13 +1503,17 @@ let canUseGooglePhotos = false;
 
 // 로그인 제공자 버튼 정의. 서버(/api/status의 availableProviders)가 "키가 설정된" 제공자만
 // 알려주므로, 나머지는 눌러도 오류가 나지 않게 "준비중"으로 비활성 표시한다.
+// name은 "Google로", "카카오로"처럼 조사까지 붙인 형태로 둔다(버튼 문구 조립용).
 const LOGIN_PROVIDERS = [
-  { key: 'google', label: 'Google로 계속하기', icon: 'G', href: '/auth/login' },
-  { key: 'kakao', label: '카카오로 계속하기', icon: 'K', href: '/auth/kakao/login' },
-  { key: 'naver', label: '네이버로 계속하기', icon: 'N', href: '/auth/naver/login' },
+  { key: 'google', name: 'Google로', icon: 'G', href: '/auth/login' },
+  { key: 'kakao', name: '카카오로', icon: 'K', href: '/auth/kakao/login' },
+  { key: 'naver', name: '네이버로', icon: 'N', href: '/auth/naver/login' },
 ];
-function renderLoginProviders(available) {
-  const box = document.getElementById('login-providers');
+// 로그인 화면과 회원가입 화면이 같은 버튼을 쓰므로 대상 컨테이너를 인자로 받는다.
+// verb: 버튼에 쓸 동작 이름("계속하기" / "가입하기")
+function renderLoginProviders(available, boxId = 'login-providers', verb = '계속하기') {
+  const box = document.getElementById(boxId);
+  if (!box) return;
   const ready = Array.isArray(available) ? available : [];
   box.innerHTML = '';
   LOGIN_PROVIDERS.forEach((p) => {
@@ -1503,10 +1526,21 @@ function renderLoginProviders(available) {
     icon.className = 'prov-icon';
     icon.textContent = p.icon;
     el.appendChild(icon);
-    el.appendChild(document.createTextNode(on ? p.label : `${p.label} (준비중)`));
+    const label = `${p.name} ${verb}`;
+    el.appendChild(document.createTextNode(on ? label : `${label} (준비중)`));
     box.appendChild(el);
   });
 }
+
+// 회원가입: 필수 동의 2개를 모두 체크해야 가입 버튼이 눌린다.
+function refreshSignupGate() {
+  const ok = document.getElementById('agree-terms').checked
+    && document.getElementById('agree-privacy').checked;
+  document.getElementById('signup-providers').classList.toggle('gated', !ok);
+  document.getElementById('signup-gate-note').classList.toggle('hidden', ok);
+}
+['agree-terms', 'agree-privacy'].forEach((id) =>
+  document.getElementById(id).addEventListener('change', refreshSignupGate));
 
 // 로그인 상태를 홈의 로그인/사진 패널에 반영 (자동 진입은 하지 않음)
 function applyLoginState(status) {
@@ -1525,18 +1559,29 @@ function applyLoginState(status) {
   // (예전에는 이 구분이 없어 카카오 로그인인데도 구글 포토 인증을 시도해 오류가 났다)
   canUseGooglePhotos = !!(isLoggedIn && status.canPickGooglePhotos);
 
-  // 상단 메뉴: 로그인 전 "로그인" / 로그인 후 이름(누르면 회원정보)
+  // 상단 메뉴 — 로그인 전: [로그인] [회원가입]
+  //             로그인 후: [정보수정] ["Google 홍길동"(표시만)]  ※ 회원가입은 숨김
   const menuLogin = document.getElementById('menu-login');
+  const menuSignup = document.getElementById('menu-signup');
   const menuMe = document.getElementById('menu-me');
+  const menuWhoami = document.getElementById('menu-whoami');
   menuLogin.classList.toggle('hidden', isLoggedIn);
+  menuSignup.classList.toggle('hidden', isLoggedIn); // 이미 회원이면 가입할 이유가 없다
   menuMe.classList.toggle('hidden', !isLoggedIn);
-  if (isLoggedIn) menuMe.textContent = `👤 ${loggedInName || '내 정보'}`;
+  menuWhoami.classList.toggle('hidden', !isLoggedIn);
+  if (isLoggedIn) {
+    // "Google 홍길동" / "카카오 홍길동" 처럼 어느 계정으로 들어왔는지 함께 보여준다.
+    const via = PROVIDER_LABELS[status.provider] || status.provider || '';
+    menuWhoami.textContent = `👤 ${via ? via + ' ' : ''}${loggedInName || '사용자'}`;
+  }
 
   const providers = document.getElementById('login-providers');
   const loginActions = document.getElementById('login-actions');
   const loginStatus = document.getElementById('login-status');
   const photosNote = document.getElementById('photos-login-note');
-  renderLoginProviders(status.availableProviders);
+  renderLoginProviders(status.availableProviders, 'login-providers', '계속하기');
+  renderLoginProviders(status.availableProviders, 'signup-providers', '가입하기');
+  refreshSignupGate();
   if (isLoggedIn) {
     providers.classList.add('hidden');
     loginActions.classList.remove('hidden');

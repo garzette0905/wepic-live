@@ -430,6 +430,26 @@ body.ts-large { --title-size: 28px; }
 .menu-item.active { background: rgba(91,141,239,0.42); border-color: rgba(138,180,255,0.8); color: #fff; font-weight: 700; }
 /* 상단 바 안에서는 조금 작고 촘촘하게 */
 .top-menu .menu-item { padding: 9px 13px; font-size: 13.5px; white-space: nowrap; }
+
+/* 홈(소개)으로 가는 아이콘 버튼 — 글자 대신 wepic 아이콘만 보여준다 */
+.menu-home {
+  flex: none; display: grid; place-items: center;
+  width: 38px; height: 38px; padding: 0;
+  background: rgba(255, 255, 255, 0.10); border: 1px solid transparent; border-radius: 10px;
+  cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease;
+}
+.menu-home:hover { background: rgba(255, 255, 255, 0.20); filter: none; }
+.menu-home.active { background: rgba(91, 141, 239, 0.42); border-color: rgba(138, 180, 255, 0.8); }
+.menu-home img { width: 24px; height: 24px; border-radius: 6px; display: block; }
+
+/* 로그인 상태만 알려주는 항목(예: "Google 홍길동") — 누를 수 없다.
+   정보수정은 별도 메뉴로 있으므로 여기서는 클릭 동작을 주지 않는다. */
+.menu-status {
+  cursor: default; background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.88); font-weight: 600;
+  display: inline-flex; align-items: center;
+}
+.menu-status:hover { background: rgba(255, 255, 255, 0.04); }
 /* 관리자 화면 진입 버튼은 구분되게 */
 .top-menu .menu-admin { background: rgba(224, 50, 47, 0.28); border-color: rgba(224, 50, 47, 0.55); }
 .top-menu .menu-admin:hover { background: rgba(224, 50, 47, 0.42); }
@@ -510,6 +530,21 @@ body.ts-large { --title-size: 28px; }
 /* 아직 설정되지 않은 제공자: 눌러도 오류가 나므로 비활성 표시 */
 .btn-provider.prov-soon { background: rgba(255,255,255,0.10); color: rgba(255,255,255,0.55); border-color: rgba(255,255,255,0.18); cursor: not-allowed; }
 .btn-provider.prov-soon:hover { filter: none; }
+
+/* 회원가입: 이용안내·개인정보 안내 박스 (길어서 스크롤 가능하게) */
+.terms-box {
+  margin-top: 14px; padding: 14px 16px;
+  background: rgba(0, 0, 0, 0.22); border: 1px solid var(--border); border-radius: 10px;
+  max-height: 300px; overflow-y: auto;
+}
+.terms-box h3 {
+  margin: 0 0 6px; font-size: 13.5px; color: var(--accent);
+  letter-spacing: 0.2px;
+}
+.terms-box h3:not(:first-child) { margin-top: 16px; }
+.terms-box .panel-list { margin: 0; font-size: 12.5px; line-height: 1.75; }
+/* 동의 전에는 가입 버튼을 눌러도 되지 않도록 흐리게 + 클릭 차단 */
+.login-providers.gated { opacity: 0.45; pointer-events: none; }
 
 /* 내 회원정보: 읽기 전용 항목 목록 */
 .me-info { margin: 14px 0 16px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
