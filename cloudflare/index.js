@@ -286,10 +286,38 @@ async function upsertUser(env, { provider, sub, email, name }) {
 async function getUserById(env, id) {
   if (!id) return null;
   return env.DB.prepare(
-    `SELECT id, provider, provider_sub, email, name, role, status FROM users WHERE id = ?1`
+    `SELECT id, provider, provider_sub, email, name, role, status, created_at, last_login_at
+     FROM users WHERE id = ?1`
   )
     .bind(id)
     .first();
+}
+
+// ---------- 내 회원정보 ----------
+// 제공자(구글·카카오)가 준 값은 우리가 바꿀 수 없으므로, 화면에서 고칠 수 있는 것은
+// 표시 이름뿐이다. 이메일·제공자·가입일은 읽기 전용으로 보여준다.
+function meInfo(user, provider) {
+  return {
+    id: user.id,
+    provider: provider || user.provider,
+    email: user.email || null,
+    name: user.name || null,
+    role: user.role,
+    status: user.status,
+    createdAt: user.created_at || null,
+    lastLoginAt: user.last_login_at || null,
+  };
+}
+async function apiMeUpdate(request, env, sess, user) {
+  const body = await request.json().catch(() => ({}));
+  const name = typeof body.name === 'string' ? body.name.trim().slice(0, 30) : '';
+  if (!name) return json({ error: '이름을 입력하세요.' }, 400);
+  await env.DB.prepare('UPDATE users SET name = ?1 WHERE id = ?2').bind(name, user.id).run();
+  // 세션 캐시(화면 상단 이름 표시용)도 함께 맞춘다.
+  sess.data.name = name;
+  await putSession(env, sess.sid, sess.data);
+  const fresh = await getUserById(env, user.id);
+  return json({ ok: true, me: meInfo(fresh, sess.data.provider) });
 }
 // 로그인 필요한 핸들러 래퍼
 async function requireLogin(request, env, handler) {
@@ -435,6 +463,8 @@ async function apiStatus(request, env) {
     hasShare: !!manifest,
     sharePin: manifest ? manifest.pin || null : null, // 현재 공유의 PIN(메인화면 표시용)
     isAdmin: loggedIn && user.role === 'admin',       // Admin 메뉴 노출 여부
+    // 회원정보 화면에서 쓸 값(가입일·최근 로그인). 로그인 안 했으면 null.
+    me: loggedIn ? meInfo(user, data.provider) : null,
     availableProviders,
   });
 }
@@ -1198,6 +1228,11 @@ export default {
       const mAdminPin = p.match(/^\/api\/admin\/shares\/([\w-]{6,})\/pin$/);
       if (mAdminPin && m === 'PUT') {
         return requireAdmin(request, env, (rq, en) => adminSetPin(rq, en, mAdminPin[1]));
+      }
+
+      // 내 회원정보: 표시 이름만 수정 가능(제공자·이메일·가입일은 읽기 전용)
+      if (p === '/api/me' && m === 'PUT') {
+        return requireMember(request, env, (rq, en, sess, user) => apiMeUpdate(rq, en, sess, user));
       }
 
       // My사진관리: 로그인한 회원 본인이 만든 액자만 보임(ownerUserId로 필터)

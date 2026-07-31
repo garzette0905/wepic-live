@@ -70,6 +70,11 @@
   .share-view .icon-btn { width: 44px; height: 44px; opacity: 0.7; }
   .share-actions { position: absolute; left: 16px; bottom: 16px; z-index: 6; display: flex; gap: 8px; }
   .share-actions .fullscreen-btn { position: static; }
+  /* 사진 저장은 PC에서만 노출한다(폰·태블릿 인앱 브라우저는 다운로드가 막히는 경우가 많음).
+     전체화면·재생 버튼은 그대로 두고 다운로드 버튼만 숨긴다. */
+  @media (hover: none), (pointer: coarse) {
+    #btn-download { display: none; }
+  }
 </style>
 </head>
 <body>

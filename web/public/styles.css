@@ -133,6 +133,11 @@ video.photo-layer { background: #000; }
 }
 .icon-btn:hover { opacity: 1; background: rgba(0,0,0,0.7); filter: none; }
 .photo-actions { position: absolute; left: 16px; bottom: 16px; display: flex; gap: 8px; z-index: 5; }
+/* 사진 저장(다운로드)은 PC에서만 노출한다. 폰·태블릿의 인앱 브라우저는 다운로드가 막히거나
+   불안정한 경우가 많아 오해를 부르므로, 마우스가 있는 기기(hover+정밀 포인터)에서만 보인다. */
+@media (hover: none), (pointer: coarse) {
+  .photo-actions { display: none; }
+}
 
 /* 저장할 수 없을 때(동영상 등) 다운로드 아이콘 비활성 표시 */
 .icon-btn:disabled { opacity: 0.25; cursor: not-allowed; }
@@ -505,6 +510,12 @@ body.ts-large { --title-size: 28px; }
 /* 아직 설정되지 않은 제공자: 눌러도 오류가 나므로 비활성 표시 */
 .btn-provider.prov-soon { background: rgba(255,255,255,0.10); color: rgba(255,255,255,0.55); border-color: rgba(255,255,255,0.18); cursor: not-allowed; }
 .btn-provider.prov-soon:hover { filter: none; }
+
+/* 내 회원정보: 읽기 전용 항목 목록 */
+.me-info { margin: 14px 0 16px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.me-info > div { display: flex; gap: 10px; align-items: baseline; }
+.me-key { flex: 0 0 96px; color: var(--text-muted); }
+.me-val { color: var(--text-main); word-break: break-all; }
 .btn-provider.prov-soon .prov-icon { background: rgba(255,255,255,0.18); color: rgba(255,255,255,0.7); }
 .panel.panel-wide { max-width: 900px; }
 .admin-toolbar { display: flex; align-items: center; gap: 10px; margin: 10px 0 12px; }

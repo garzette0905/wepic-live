@@ -82,6 +82,14 @@ let pickerSessionId = null;
 let pickerPollTimer = null;
 
 async function startPickerFlow() {
+  // 구글 포토 Picker는 구글 계정 권한이 필요하다. 카카오·네이버로 로그인한 상태에서
+  // 여기까지 들어오면 구글 인증 오류가 나므로, 아예 시작하지 않고 사진 선택 패널로
+  // 되돌려 "기기 갤러리에서 올리기" UI를 쓰게 한다.
+  if (!canUseGooglePhotos) {
+    selectPanel('photos');
+    showToast('구글 계정으로 로그인한 경우에만 구글 포토에서 고를 수 있습니다. 기기 갤러리에서 선택해주세요.');
+    return;
+  }
   showPicker('source');
   const qrEl = document.getElementById('source-qr');
   const statusEl = document.getElementById('source-status-text');
@@ -524,6 +532,14 @@ let musicLoaded = false;
 let musicPlaying = false;
 let musicTitle = '';
 
+// 유튜브 곡 제목은 매우 길 때가 많아(가수·앨범·태그까지 붙음) 화면을 밀어낸다.
+// 20자까지만 보여주고 넘치면 …로 줄인다.
+const MUSIC_TITLE_MAX = 20;
+function shortMusicTitle(t) {
+  const s = String(t || '').trim();
+  return s.length > MUSIC_TITLE_MAX ? s.slice(0, MUSIC_TITLE_MAX) + '…' : s;
+}
+
 function loadYouTubeApi() {
   if (ytReady) return ytReady;
   ytReady = new Promise((resolve) => {
@@ -581,7 +597,11 @@ async function loadBgMusic(url) {
   musicTitle = '';
   playBtn.textContent = '⏸';
   setTimeout(() => {
-    try { musicTitle = ytPlayer.getVideoData()?.title || ''; titleEl.textContent = musicTitle; refreshCaption(); } catch {}
+    try {
+      musicTitle = shortMusicTitle(ytPlayer.getVideoData()?.title || '');
+      titleEl.textContent = musicTitle;
+      refreshCaption();
+    } catch {}
   }, 900);
 }
 
@@ -779,9 +799,10 @@ async function pushShare(mode) {
     // 화면에 표시/수정된 PIN을 함께 보낸다(비어 있으면 서버가 기존 유지 또는 새로 발급).
     const pin = getSharePin();
     let r;
-    if (isSharedMode) {
-      // 구글 포토 "공유"로 받은 사진은 구글 서버 baseUrl이 없고, 이 브라우저가 이미
-      // 파일(blob)을 들고 있다. 구글에서 다시 받아오는 대신 그 파일을 그대로 올린다.
+    if (isSharedMode || isLocalMode) {
+      // 구글 포토 "공유"로 받은 사진(isSharedMode)이나 기기 갤러리에서 고른 사진
+      // (isLocalMode)은 구글 서버 baseUrl이 없고, 이 브라우저가 이미 파일(blob)을
+      // 들고 있다. 구글에서 다시 받아오는 대신 그 파일을 그대로 올린다.
       const form = new FormData();
       const meta = [];
       for (const p of sharePhotos) {
@@ -879,11 +900,43 @@ document.getElementById('btn-add').addEventListener('click', (e) => {
   if (intervalHandle) clearInterval(intervalHandle);
   startPickerFlow();
 });
+// 구글 포토를 쓸 수 없는 로그인(카카오·네이버)에서 쓰는 "갤러리에서 다시 선택"
+document.getElementById('btn-local-reselect').addEventListener('click', (e) => {
+  e.preventDefault();
+  if (intervalHandle) clearInterval(intervalHandle);
+  document.getElementById('local-file-input').click();
+});
+// 재생·음악을 모두 멈추고 홈페이지로 돌아간다.
+document.getElementById('btn-home').addEventListener('click', (e) => {
+  e.preventDefault();
+  stopEverythingAndGoHome();
+});
 document.getElementById('btn-logout').addEventListener('click', async (e) => {
   e.preventDefault();
   await api('/api/logout', { method: 'POST' }).catch(() => {});
   location.href = '/';
 });
+
+// 슬라이드쇼(사진 전환·동영상·배경음악)를 전부 멈추고 홈 화면으로 되돌린다.
+// 홈으로만 이동하고 음악을 끄지 않으면 보이지 않는 곳에서 계속 재생돼 혼란스럽다.
+function stopEverythingAndGoHome() {
+  if (intervalHandle) { clearInterval(intervalHandle); intervalHandle = null; }
+  // 재생 중인 동영상 정지
+  const v = document.getElementById('video-layer');
+  try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* 무시 */ }
+  v.classList.remove('active');
+  // 배경음악 정지
+  try { ytPlayer?.pauseVideo?.(); } catch { /* 무시 */ }
+  musicPlaying = false;
+  const playBtn = document.getElementById('btn-music-load');
+  if (playBtn) playBtn.textContent = '▶';
+  exitFullscreenIfAny();
+  selectPanel('about');
+}
+// 전체화면 상태로 홈에 가면 화면이 갇힌 것처럼 보이므로 함께 해제한다.
+function exitFullscreenIfAny() {
+  try { if (document.fullscreenElement) document.exitFullscreen(); } catch { /* 무시 */ }
+}
 
 // ---------- 사진 제외 (체크박스 선택 삭제) ----------
 function setExcludeMode(on) {
@@ -934,6 +987,50 @@ async function startDemo() {
   }
 }
 document.getElementById('btn-demo').addEventListener('click', startDemo);
+
+// ---------- 기기 갤러리에서 사진 직접 올리기 ----------
+// 구글 포토 Picker를 쓸 수 없는 로그인(카카오·네이버)의 사진 업로드 경로.
+// <input type="file">은 웹 표준이라 iOS 사파리·안드로이드 크롬 모두 기기 사진 선택 화면을
+// 그대로 띄운다. 고른 파일은 그대로 슬라이드쇼로 띄우고, "공유 링크 만들기"를 누르면
+// 기존 blob 업로드 경로(/api/share/blob)로 올라간다.
+let isLocalMode = false; // 기기 갤러리에서 고른 사진으로 보는 중
+document.getElementById('btn-pick-local').addEventListener('click', () => {
+  if (!isLoggedIn) { selectPanel('login'); return; } // 업로드는 로그인 필수
+  document.getElementById('local-file-input').click();
+});
+document.getElementById('local-file-input').addEventListener('change', async (e) => {
+  const files = [...(e.target.files || [])].filter((f) => /^image\//.test(f.type || ''));
+  e.target.value = ''; // 같은 파일을 다시 골라도 change가 뜨도록 초기화
+  const statusEl = document.getElementById('local-pick-status');
+  if (!files.length) {
+    statusEl.textContent = '사진을 선택하지 않았습니다. (동영상은 지원하지 않습니다)';
+    statusEl.classList.remove('hidden');
+    return;
+  }
+  statusEl.textContent = `사진 ${files.length}장 준비 중...`;
+  statusEl.classList.remove('hidden');
+  try {
+    const items = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const objUrl = URL.createObjectURL(f);
+      items.push({
+        id: `local-${Date.now()}-${i}`,
+        type: 'photo',
+        // 업로드 시각이 아니라 EXIF 촬영일시를 쓴다(없으면 파일 시각).
+        createTime: await bestPhotoTime(f, f.lastModified),
+        width: null, height: null,
+        fullUrl: objUrl, thumbUrl: objUrl,
+      });
+    }
+    items.sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
+    isLocalMode = true;
+    statusEl.classList.add('hidden');
+    boot(items);
+  } catch (err) {
+    statusEl.textContent = '사진을 읽지 못했습니다: ' + err.message;
+  }
+});
 
 // ---------- 홈 메뉴 동작 (사진 선택 시작 / 로그아웃 / 피드백) ----------
 document.getElementById('btn-start-picker').addEventListener('click', () => {
@@ -1381,6 +1478,9 @@ function boot(photos) {
 
 let loggedInName = null;
 let isLoggedIn = false;
+// 구글로 로그인해서 구글 포토(Picker·/img·/video)를 쓸 수 있는 상태인가.
+// 카카오·네이버 로그인은 false — 이 값을 보고 구글 전용 UI·동작을 전부 막는다.
+let canUseGooglePhotos = false;
 
 // 로그인 제공자 버튼 정의. 서버(/api/status의 availableProviders)가 "키가 설정된" 제공자만
 // 알려주므로, 나머지는 눌러도 오류가 나지 않게 "준비중"으로 비활성 표시한다.
@@ -1421,6 +1521,17 @@ function applyLoginState(status) {
   // My사진관리는 로그인한 Wepic 사용자(관리자 포함)라면 누구나 노출
   document.getElementById('menu-my').classList.toggle('hidden', !status.loggedIn);
   loggedInName = isLoggedIn ? (status.name || status.email || null) : null;
+  // 구글로 로그인했는지 여기 한 곳에서 판단해 화면 전체가 같은 기준을 쓰게 한다.
+  // (예전에는 이 구분이 없어 카카오 로그인인데도 구글 포토 인증을 시도해 오류가 났다)
+  canUseGooglePhotos = !!(isLoggedIn && status.canPickGooglePhotos);
+
+  // 상단 메뉴: 로그인 전 "로그인" / 로그인 후 이름(누르면 회원정보)
+  const menuLogin = document.getElementById('menu-login');
+  const menuMe = document.getElementById('menu-me');
+  menuLogin.classList.toggle('hidden', isLoggedIn);
+  menuMe.classList.toggle('hidden', !isLoggedIn);
+  if (isLoggedIn) menuMe.textContent = `👤 ${loggedInName || '내 정보'}`;
+
   const providers = document.getElementById('login-providers');
   const loginActions = document.getElementById('login-actions');
   const loginStatus = document.getElementById('login-status');
@@ -1429,27 +1540,169 @@ function applyLoginState(status) {
   if (isLoggedIn) {
     providers.classList.add('hidden');
     loginActions.classList.remove('hidden');
-    const via = status.provider ? ` (${status.provider})` : '';
+    const via = status.provider ? ` (${PROVIDER_LABELS[status.provider] || status.provider})` : '';
     loginStatus.textContent = `✓ ${loggedInName || '내 계정'}으로 로그인됨${via}`;
     loginStatus.classList.remove('hidden');
-    photosNote.classList.add('hidden');
   } else {
     providers.classList.remove('hidden');
     loginActions.classList.add('hidden');
     loginStatus.classList.add('hidden');
-    photosNote.classList.remove('hidden');
   }
-  // 구글 외 제공자로 로그인하면 구글 포토 Picker를 쓸 수 없다는 것을 사진 패널에 알린다.
-  const pickerBtn = document.getElementById('btn-start-picker');
-  if (isLoggedIn && !status.canPickGooglePhotos) {
-    pickerBtn.disabled = true;
-    pickerBtn.title = '구글 계정으로 로그인한 경우에만 구글 포토에서 사진을 고를 수 있습니다.';
-    photosNote.textContent = '구글 포토에서 고르려면 Google 계정으로 로그인해야 합니다. (기기 갤러리에서 올리는 기능은 준비 중입니다)';
-    photosNote.classList.remove('hidden');
-  } else {
-    pickerBtn.disabled = false;
-    pickerBtn.title = '';
+
+  // 사진 선택 패널: 구글이면 Picker, 그 외 제공자면 기기 갤러리 업로드 UI를 보여준다.
+  const photosGoogle = document.getElementById('photos-google');
+  const photosLocal = document.getElementById('photos-local');
+  photosGoogle.classList.toggle('hidden', !canUseGooglePhotos);
+  photosLocal.classList.toggle('hidden', !(isLoggedIn && !canUseGooglePhotos));
+  // 로그인 전에는 두 블록 모두 감추고 "로그인이 필요합니다"만 남긴다.
+  photosNote.classList.toggle('hidden', isLoggedIn);
+
+  // wepic 메인화면 하단 링크도 같은 기준으로 나눈다.
+  // 구글 전용(포토 다시 선택·추가·계정 다시 연결)은 구글 로그인일 때만 보인다.
+  document.getElementById('google-only-links').classList.toggle('hidden', !canUseGooglePhotos);
+  document.getElementById('local-only-links').classList.toggle('hidden', canUseGooglePhotos || !isLoggedIn);
+  document.getElementById('btn-reconnect').classList.toggle('hidden', !canUseGooglePhotos);
+  document.getElementById('reconnect-dot').classList.toggle('hidden', !canUseGooglePhotos);
+
+  // 회원정보 패널 채우기
+  fillMeForm(status.me, status.provider);
+}
+
+// 제공자 코드를 사람이 읽는 이름으로
+const PROVIDER_LABELS = { google: 'Google', kakao: '카카오', naver: '네이버' };
+
+// 회원정보 패널: 이름은 수정 가능, 나머지는 읽기 전용으로 표시
+function fillMeForm(me, provider) {
+  if (!me) return;
+  document.getElementById('me-name').value = me.name || '';
+  document.getElementById('me-provider').textContent =
+    PROVIDER_LABELS[me.provider || provider] || me.provider || provider || '-';
+  document.getElementById('me-email').textContent = me.email || '(제공 안 됨)';
+  document.getElementById('me-role').textContent =
+    me.role === 'admin' ? 'Wepic 관리자' : 'Wepic 사용자';
+  document.getElementById('me-created').textContent = fmtDateTime(me.createdAt);
+  document.getElementById('me-last').textContent = fmtDateTime(me.lastLoginAt);
+}
+
+document.getElementById('me-save').addEventListener('click', async () => {
+  const name = document.getElementById('me-name').value.trim();
+  if (!name) { alert('이름을 입력하세요.'); return; }
+  const btn = document.getElementById('me-save');
+  btn.disabled = true;
+  try {
+    const r = await api('/api/me', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+    });
+    // 저장된 이름을 상단 메뉴에도 즉시 반영
+    loggedInName = r.me?.name || name;
+    document.getElementById('menu-me').textContent = `👤 ${loggedInName}`;
+    const ok = document.getElementById('me-saved');
+    ok.classList.remove('hidden');
+    setTimeout(() => ok.classList.add('hidden'), 2000);
+  } catch (err) {
+    alert('저장 실패: ' + err.message);
+  } finally {
+    btn.disabled = false;
   }
+});
+document.getElementById('btn-logout-me').addEventListener('click', async (e) => {
+  e.preventDefault();
+  await api('/api/logout', { method: 'POST' }).catch(() => {});
+  location.href = '/';
+});
+
+// ---------- 촬영일시 읽기 (EXIF) ----------
+// 기기에서 올린 사진은 파일의 lastModified가 "촬영 시각"이 아니라 "기기에 복사/저장된
+// 시각"인 경우가 많다(갤러리에서 공유하거나 다운로드받은 사진). 그래서 날짜가 오늘로
+// 보이는 문제가 있었다 → JPEG의 EXIF DateTimeOriginal(0x9003)을 먼저 읽고,
+// 없을 때만 lastModified로 대체한다.
+//
+// 외부 라이브러리를 쓸 수 없어(정적 자산만 서빙) 필요한 부분만 직접 파싱한다:
+// JPEG 세그먼트를 훑어 APP1(Exif) → TIFF 헤더 → IFD0 → ExifIFD → DateTimeOriginal.
+async function readExifDateTime(blob) {
+  try {
+    // EXIF는 파일 앞부분에 있다. 전체를 읽지 않고 앞 256KB만 본다(대용량 사진 대비).
+    const buf = await blob.slice(0, 256 * 1024).arrayBuffer();
+    const v = new DataView(buf);
+    if (v.byteLength < 4 || v.getUint16(0) !== 0xffd8) return null; // JPEG(SOI) 아님
+
+    let off = 2;
+    while (off + 4 <= v.byteLength) {
+      if (v.getUint8(off) !== 0xff) break;         // 마커 정렬이 깨졌으면 중단
+      const marker = v.getUint8(off + 1);
+      if (marker === 0xda) break;                   // SOS(이미지 데이터) — 여기까진 EXIF 없음
+      const segLen = v.getUint16(off + 2);
+      if (segLen < 2) break;
+      // APP1 + "Exif\0\0" 이면 그 안의 TIFF 구조를 읽는다
+      if (marker === 0xe1 && off + 10 <= v.byteLength &&
+          v.getUint32(off + 4) === 0x45786966 && v.getUint16(off + 8) === 0x0000) {
+        const tiff = off + 10;
+        if (tiff + 8 > v.byteLength) return null;
+        const bomVal = v.getUint16(tiff);
+        if (bomVal !== 0x4949 && bomVal !== 0x4d4d) return null;
+        const le = bomVal === 0x4949;               // 'II'=little endian, 'MM'=big endian
+        if (v.getUint16(tiff + 2, le) !== 0x002a) return null;
+        const ifd0 = tiff + v.getUint32(tiff + 4, le);
+
+        // 태그 하나에서 ASCII 문자열을 꺼낸다(날짜는 "YYYY:MM:DD HH:MM:SS" 형식).
+        const readAscii = (entry) => {
+          const count = v.getUint32(entry + 4, le);
+          const valOff = count > 4 ? tiff + v.getUint32(entry + 8, le) : entry + 8;
+          if (valOff + count > v.byteLength) return '';
+          let s = '';
+          for (let i = 0; i < count; i++) {
+            const c = v.getUint8(valOff + i);
+            if (c === 0) break;
+            s += String.fromCharCode(c);
+          }
+          return s;
+        };
+        // IFD를 훑어 원하는 태그를 찾는다. exifPtr(0x8769)는 하위 IFD 위치.
+        const scanIfd = (ifdOff, wanted) => {
+          if (ifdOff + 2 > v.byteLength) return {};
+          const n = v.getUint16(ifdOff, le);
+          const found = {};
+          for (let i = 0; i < n; i++) {
+            const entry = ifdOff + 2 + i * 12;
+            if (entry + 12 > v.byteLength) break;
+            const tag = v.getUint16(entry, le);
+            if (wanted.includes(tag)) found[tag] = entry;
+          }
+          return found;
+        };
+
+        // DateTimeOriginal은 보통 ExifIFD 안에 있고, DateTime(0x0132)은 IFD0에 있다.
+        const f0 = scanIfd(ifd0, [0x8769, 0x0132]);
+        let raw = '';
+        if (f0[0x8769]) {
+          const sub = tiff + v.getUint32(f0[0x8769] + 8, le);
+          const fe = scanIfd(sub, [0x9003, 0x9004]); // DateTimeOriginal, DateTimeDigitized
+          if (fe[0x9003]) raw = readAscii(fe[0x9003]);
+          else if (fe[0x9004]) raw = readAscii(fe[0x9004]);
+        }
+        if (!raw && f0[0x0132]) raw = readAscii(f0[0x0132]);
+
+        // "2024:05:01 14:30:00" → Date. 값이 비었거나 0이면 무효로 본다.
+        const mm = raw.match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+        if (!mm) return null;
+        const [, Y, Mo, D, H, Mi, S] = mm.map(Number);
+        if (!Y || !Mo || !D) return null;
+        const d = new Date(Y, Mo - 1, D, H, Mi, S); // EXIF는 시간대가 없어 로컬 시각으로 해석
+        return Number.isNaN(d.getTime()) ? null : d.toISOString();
+      }
+      off += 2 + segLen;
+    }
+    return null;
+  } catch {
+    return null; // 파싱 실패는 조용히 무시하고 lastModified로 대체
+  }
+}
+
+// 촬영일시 결정: EXIF가 있으면 그것, 없으면 파일 수정시각, 그것도 없으면 현재 시각.
+async function bestPhotoTime(blob, lastModified) {
+  const exif = await readExifDateTime(blob);
+  if (exif) return exif;
+  return new Date(lastModified || Date.now()).toISOString();
 }
 
 // ---------- PWA: 공유 타깃으로 받은 사진 읽어오기 ----------
@@ -1471,14 +1724,17 @@ async function loadSharedMedia() {
     const it = {
       id: m.key,
       type,
-      createTime: new Date(m.lastModified || Date.now()).toISOString(),
+      // 사진은 EXIF 촬영일시를 우선한다(동영상은 EXIF가 없어 파일 시각을 쓴다).
+      createTime: type === 'video'
+        ? new Date(m.lastModified || Date.now()).toISOString()
+        : await bestPhotoTime(blob, m.lastModified),
       width: null, height: null,
       fullUrl: objUrl, thumbUrl: objUrl,
     };
     if (type === 'video') it.videoUrl = objUrl;
     items.push(it);
   }
-  // 파일 수정시각(촬영시각 근사) 오름차순 — 앱 전반 정렬 규칙과 동일
+  // 촬영일시 오름차순 — 앱 전반 정렬 규칙과 동일
   items.sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
   return items;
 }
@@ -1516,6 +1772,9 @@ async function init() {
       const m = await loadFrame(frameId);
       isFrameMode = true;
       frameManifest = m;
+      // 하단 링크(구글 전용 vs 갤러리)와 상단 이름 표시가 로그인 제공자에 맞게 나오도록
+      // 여기서도 로그인 상태를 반영한다 — 이 분기는 아래 공통 처리까지 가지 않고 return한다.
+      applyLoginState(await api('/api/status').catch(() => ({ loggedIn: false })));
       if (m.musicUrl) document.getElementById('music-url').value = m.musicUrl;
       // 액자에 저장된 동영상은 type/videoUrl을 그대로 살려야 한다 — 그렇지 않으면
       // "링크변경 반영"으로 다시 저장할 때 동영상이 사진으로 바뀌어 사라진다.

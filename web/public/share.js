@@ -158,6 +158,12 @@ document.addEventListener('fullscreenchange', () =>
 // ---- 배경음악 (선택) ----
 // 기본은 "무음": 음소거 자동재생으로 곡 제목만 얻어 캡션에 표시하고, ▶ 버튼을 눌러야 소리가 난다.
 let ytPlayer = null, ytReady = null, soundOn = false, musicUrl = '', musicTitle = '';
+// 유튜브 곡 제목은 매우 길 때가 많아 캡션이 화면을 밀어낸다 → 20자까지만 보여준다.
+const MUSIC_TITLE_MAX = 20;
+function shortMusicTitle(t) {
+  const s = String(t || '').trim();
+  return s.length > MUSIC_TITLE_MAX ? s.slice(0, MUSIC_TITLE_MAX) + '…' : s;
+}
 function loadYouTubeApi() {
   if (ytReady) return ytReady;
   ytReady = new Promise((resolve) => {
@@ -199,7 +205,10 @@ function ensurePlayer(videoId) {
 // 제목 읽기 (소리와 무관). 메타데이터 로딩 지연 대비 두 번 시도.
 function readMusicTitleSoon() {
   const readTitle = () => {
-    try { musicTitle = ytPlayer?.getVideoData?.()?.title || musicTitle; renderCaption(); } catch {}
+    try {
+      musicTitle = shortMusicTitle(ytPlayer?.getVideoData?.()?.title || musicTitle);
+      renderCaption();
+    } catch {}
   };
   setTimeout(readTitle, 900);
   setTimeout(readTitle, 2500);
