@@ -7,21 +7,45 @@ const pickerScreens = {
   sync: document.getElementById('screen-sync'),
 };
 
+const heroEl = document.querySelector('.hero');
+const homeBodyEl = document.querySelector('.home-body');
+const homeFrameEl = document.querySelector('.home-frame');
+
+// wepic 메인화면(슬라이드쇼)은 홈페이지의 "하위 프레임"으로 보여준다 — 상단 메뉴는 그대로
+// 두고 그 아래 영역만 사진으로 채운다. 그래서 마크업상 별도 형제였던 슬라이드쇼를 시작할 때
+// home-body 안으로 옮겨 flex 레이아웃에 참여시킨다(고정 오프셋 계산이 필요 없어 반응형에
+// 강하다). 전체화면은 이 요소 자체를 대상으로 하므로 메뉴 없이 사진만 꽉 찬다.
+homeBodyEl.appendChild(slideshowEl);
+
 function showHome() {
   pickerShell.classList.add('hidden');
   slideshowEl.classList.add('hidden');
+  heroEl.classList.remove('hidden');      // 로고 배너 복귀
+  homeFrameEl.classList.remove('hidden'); // 패널 영역 복귀
   homeShell.classList.remove('hidden');
 }
 function showPicker(name) {
+  // QR·동기화는 짧게 지나가는 중간 단계라 지금처럼 전체 화면으로 둔다.
   homeShell.classList.add('hidden');
   slideshowEl.classList.add('hidden');
   pickerShell.classList.remove('hidden');
   Object.entries(pickerScreens).forEach(([k, el]) => el.classList.toggle('hidden', k !== name));
 }
 function showSlideshow() {
-  homeShell.classList.add('hidden');
   pickerShell.classList.add('hidden');
+  homeShell.classList.remove('hidden');   // 상단 메뉴를 보이게 하려고 홈 셸은 유지한다
+  heroEl.classList.add('hidden');         // 로고 배너는 숨겨 사진 영역을 최대한 넓힌다
+  homeFrameEl.classList.add('hidden');    // 안내 패널 영역은 숨긴다
+  document.getElementById('admin-side-menu').classList.add('hidden');
+  document.getElementById('my-side-menu').classList.add('hidden');
   slideshowEl.classList.remove('hidden');
+  // 모바일에서는 사진 아래로 설정 패널이 이어지는 세로 배치라, 진입 시 스크롤이 아래에
+  // 남아 있으면 사진이 안 보인다 → 항상 맨 위(사진)부터 보이도록 되돌린다.
+  requestAnimationFrame(() => {
+    slideshowEl.scrollTop = 0;
+    document.querySelector('.info-pane')?.scrollTo?.({ top: 0 });
+    homeBodyEl.scrollTop = 0;
+  });
 }
 
 // ---------- 홈 상단 메뉴 / 관리자·My사진관리 좌측 메뉴 / 패널 ----------
@@ -55,6 +79,13 @@ function selectPanel(name) {
   if (name === 'my-screens') loadShareList('my-shares-list', 'my');
   if (name === 'my-pins') loadShareList('my-pins-list', 'my');
   if (name === 'signup') refreshSignupGate(); // 동의 상태에 맞춰 가입 버튼 활성/비활성
+  // "갤러리에서 사진 추가"는 이미 보고 있는 사진이 있을 때만 노출한다.
+  if (name === 'photos') {
+    document.getElementById('btn-pick-local-add').classList.toggle('hidden', allPhotos.length === 0);
+  }
+  // Demo는 안내창 없이 곧바로 하위 프레임에서 재생한다(요청). 이미 데모를 보고 있으면
+  // 다시 처음부터 불러오지 않는다.
+  if (name === 'demo' && !isDemoMode) startDemo();
 }
 // data-panel이 있는 항목만 클릭으로 이동한다(로그인 상태 표시는 data-panel이 없어 제외됨).
 document.querySelectorAll(
@@ -468,9 +499,12 @@ document.querySelectorAll('#orientation-radios input').forEach((r) =>
 );
 
 // ---------- 전체화면 / 공유 ----------
+// 슬라이드쇼가 홈페이지 하위 프레임 안에 있으므로, 페이지 전체(documentElement)를 전체화면으로
+// 만들면 상단 메뉴까지 같이 커진다. 슬라이드쇼 요소 자체를 전체화면 대상으로 삼아 사진만
+// 화면을 꽉 채우게 한다.
 function setFullscreen(on) {
   document.body.classList.toggle('fullscreen', on);
-  if (on) document.documentElement.requestFullscreen?.().catch(() => {});
+  if (on) slideshowEl.requestFullscreen?.().catch(() => {});
   else if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
 }
 const toggleFullscreen = () => setFullscreen(!document.body.classList.contains('fullscreen'));
@@ -913,11 +947,6 @@ document.getElementById('btn-local-reselect').addEventListener('click', (e) => {
   if (intervalHandle) clearInterval(intervalHandle);
   document.getElementById('local-file-input').click();
 });
-// 재생·음악을 모두 멈추고 홈페이지로 돌아간다.
-document.getElementById('btn-home').addEventListener('click', (e) => {
-  e.preventDefault();
-  stopEverythingAndGoHome();
-});
 document.getElementById('btn-logout').addEventListener('click', async (e) => {
   e.preventDefault();
   await api('/api/logout', { method: 'POST' }).catch(() => {});
@@ -1000,10 +1029,21 @@ document.getElementById('btn-demo').addEventListener('click', startDemo);
 // <input type="file">은 웹 표준이라 iOS 사파리·안드로이드 크롬 모두 기기 사진 선택 화면을
 // 그대로 띄운다. 고른 파일은 그대로 슬라이드쇼로 띄우고, "공유 링크 만들기"를 누르면
 // 기존 blob 업로드 경로(/api/share/blob)로 올라간다.
-let isLocalMode = false; // 기기 갤러리에서 고른 사진으로 보는 중
-document.getElementById('btn-pick-local').addEventListener('click', () => {
+let isLocalMode = false;       // 기기 갤러리에서 고른 사진으로 보는 중
+let localAppendMode = false;   // true면 고른 사진을 기존 목록에 덧붙인다("사진 추가")
+// 갤러리 선택창을 연다. append=true면 기존 사진을 유지하고 뒤에 더한다.
+function openLocalPicker(append) {
   if (!isLoggedIn) { selectPanel('login'); return; } // 업로드는 로그인 필수
+  localAppendMode = !!append;
   document.getElementById('local-file-input').click();
+}
+document.getElementById('btn-pick-local').addEventListener('click', () => openLocalPicker(false));
+document.getElementById('btn-pick-local-add').addEventListener('click', () => openLocalPicker(true));
+// 슬라이드쇼 하단 링크(카카오·네이버 로그인에서만 보임)
+document.getElementById('btn-local-add').addEventListener('click', (e) => {
+  e.preventDefault();
+  if (intervalHandle) clearInterval(intervalHandle);
+  openLocalPicker(true);
 });
 document.getElementById('local-file-input').addEventListener('change', async (e) => {
   const files = [...(e.target.files || [])].filter((f) => /^image\//.test(f.type || ''));
@@ -1030,11 +1070,18 @@ document.getElementById('local-file-input').addEventListener('change', async (e)
         fullUrl: objUrl, thumbUrl: objUrl,
       });
     }
-    items.sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
+    // "사진 추가"면 기존 목록에 덧붙이고(촬영일 순으로 다시 정렬), 아니면 교체한다.
+    let finalItems = items;
+    if (localAppendMode && allPhotos.length) {
+      finalItems = allPhotos.concat(items);
+    }
+    localAppendMode = false;
+    finalItems.sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
     isLocalMode = true;
     statusEl.classList.add('hidden');
-    boot(items);
+    boot(finalItems);
   } catch (err) {
+    localAppendMode = false;
     statusEl.textContent = '사진을 읽지 못했습니다: ' + err.message;
   }
 });
@@ -1599,6 +1646,8 @@ function applyLoginState(status) {
   const photosLocal = document.getElementById('photos-local');
   photosGoogle.classList.toggle('hidden', !canUseGooglePhotos);
   photosLocal.classList.toggle('hidden', !(isLoggedIn && !canUseGooglePhotos));
+  // "사진 추가"는 이미 보고 있는 사진이 있을 때만 의미가 있다.
+  document.getElementById('btn-pick-local-add').classList.toggle('hidden', allPhotos.length === 0);
   // 로그인 전에는 두 블록 모두 감추고 "로그인이 필요합니다"만 남긴다.
   photosNote.classList.toggle('hidden', isLoggedIn);
 

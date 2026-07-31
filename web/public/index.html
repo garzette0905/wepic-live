@@ -172,6 +172,8 @@
             <!-- 웹 표준 file input — iOS 사파리·안드로이드 크롬 모두 기기 사진 선택 화면을 띄운다 -->
             <input type="file" id="local-file-input" accept="image/*" multiple hidden />
             <button id="btn-pick-local" class="btn-primary">갤러리에서 사진 선택</button>
+            <!-- 이미 보고 있는 사진이 있을 때만 의미가 있어 app.js가 노출을 결정한다 -->
+            <button id="btn-pick-local-add" class="secondary slim hidden" style="margin-top:8px;">갤러리에서 사진 추가</button>
             <p id="local-pick-status" class="status hidden"></p>
             <p class="hint" style="margin:8px 0 0;">동영상은 공유 링크에 담기지 않아 사진만 선택됩니다.</p>
           </div>
@@ -496,13 +498,14 @@
           <span id="local-only-links" class="hidden">
             <a href="#" id="btn-local-reselect" class="text-link small">갤러리에서 다시 선택</a>
             <span class="dot">·</span>
+            <a href="#" id="btn-local-add" class="text-link small">갤러리에서 사진 추가</a>
+            <span class="dot">·</span>
           </span>
           <a href="#" id="btn-exclude" class="text-link small">사진 제외</a>
           <span class="dot">·</span>
           <a href="/auth/login" id="btn-reconnect" class="text-link small hidden">계정 다시 연결하기</a>
           <span id="reconnect-dot" class="dot hidden">·</span>
-          <a href="#" id="btn-home" class="text-link small">홈으로</a>
-          <span class="dot">·</span>
+          <!-- "홈으로"는 없앴다: 슬라이드쇼가 홈페이지 하위 프레임에 있어 상단 메뉴로 바로 갈 수 있다 -->
           <a href="#" id="btn-logout" class="text-link small">로그아웃</a>
         </span>
         <span id="demo-links" class="account-links hidden">

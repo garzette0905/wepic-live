@@ -107,7 +107,10 @@ button.secondary.slim { padding: 8px 12px; font-size: 12.5px; font-weight: 500; 
 .progress-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.3s ease; }
 
 /* ---------- Slideshow ---------- */
-.slideshow { height: 100vh; display: flex; }
+/* 홈페이지의 하위 프레임(home-body) 안에서 남은 공간을 모두 채운다.
+   전체화면일 때는 이 요소 자체가 전체화면 대상이 되므로 화면을 꽉 채운다. */
+.slideshow { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; }
+.slideshow:fullscreen { width: 100vw; height: 100vh; }
 .photo-pane { position: relative; flex: 1 1 auto; min-width: 0; background: #000; overflow: hidden; }
 .photo-layer {
   position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain;
@@ -296,6 +299,14 @@ body.ts-large { --title-size: 28px; }
 .mini-select {
   flex: 1; min-width: 0; background: rgba(255, 255, 255, 0.06); border: 1px solid var(--border);
   color: var(--text-main); border-radius: 8px; padding: 7px 9px; font-size: 12.5px; font-family: inherit;
+}
+/* 목록을 펼쳤을 때 항목이 흰 배경으로 그려지는데 글자색은 흰색(--text-main)을 물려받아
+   "흰 바탕에 흰 글씨"가 되어 안 보이던 문제. 항목에 배경·글자색을 직접 지정한다.
+   (반투명 rgba 배경은 드롭다운 목록에 적용되지 않아 불투명 색을 써야 한다) */
+select option,
+select optgroup {
+  background-color: #0d1424;
+  color: #e8eefc;
 }
 .title-input { width: 100%; }
 .check-row { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-main); cursor: pointer; }
