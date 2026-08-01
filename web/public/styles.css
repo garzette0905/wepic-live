@@ -386,6 +386,28 @@ select optgroup {
 .share-block { flex: none; padding-top: 10px; border-top: 1px solid var(--border); }
 .frame-select-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .frame-select-row .mini-select { flex: 1; min-width: 0; }
+/* wepic 이름 입력칸 — 만들기 전까지만 고칠 수 있고, 만든 뒤에는 disabled로 잠긴다 */
+.frame-name-input {
+  flex: 1; min-width: 0; padding: 7px 10px; font-size: 13px; font-weight: 600;
+  background: rgba(255, 255, 255, 0.08); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text-main); font-family: inherit;
+}
+.frame-name-input:disabled {
+  opacity: 0.75; cursor: not-allowed;
+  background: rgba(255, 255, 255, 0.04); color: var(--text-muted);
+}
+.mini-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.mini-btn:disabled:hover { background: rgba(255, 255, 255, 0.08); color: var(--text-muted); }
+/* 눌린 상태(사진 제외 중)를 아이콘 버튼에 표시 */
+.mini-btn.active { background: rgba(91, 141, 239, 0.42); color: #fff; }
+
+/* "사진선택" 섹션의 사진 고르기 아이콘 줄 */
+.photo-pick-actions {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+}
+.photo-pick-actions .pick-group { display: contents; } /* 아이콘들이 한 줄에 그대로 늘어서게 */
+.photo-pick-actions .mini-btn { font-size: 13px; }
 .share-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .share-btn-row { display: flex; gap: 6px; }
 .share-btn-row .share-btn { flex: 1; min-width: 0; }

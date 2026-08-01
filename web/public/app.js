@@ -928,21 +928,35 @@ function spotifyRow(t) {
 }
 
 // ---------- 실시간 공유 링크 ----------
-const shareModal = document.getElementById('share-modal');
+// 지금 만들어져 있는 wepic 주소. 예전에는 팝업 안의 <input>에 담아뒀는데 팝업을 없애면서
+// 이 변수 하나로 관리한다(주소 줄·복사 아이콘이 모두 이 값을 쓴다).
+let currentShareUrl = '';
 
-// 공유 버튼은 언제나 하나만 보인다. 링크가 없으면 "실시간 공유 링크 만들기", 링크가 생기면
-// "링크변경 반영"만 남기고, 액자 이름 리스트박스 옆에 주소 복사·링크 삭제 아이콘을 띄운다.
-// (예전에는 두 버튼이 같이 보여서 어느 쪽을 눌러야 하는지 헷갈렸다)
-function setShareLinkState(hasLink) {
+// 공유 버튼은 언제나 하나만 보인다. wepic이 없으면 "실시간 공유 링크 만들기", 생기면
+// "링크변경 반영"만 남기고, 이름 옆에 주소 복사·링크 삭제 아이콘을 띄운다.
+// wepic이 만들어진 뒤에는 이름을 고칠 수 없다(메인화면은 "새로 만드는" 화면이라서).
+function setShareLinkState(hasLink, url) {
   const has = !!hasLink;
   document.getElementById('btn-make-share').classList.toggle('hidden', has);
   document.getElementById('btn-update-share').classList.toggle('hidden', !has);
   document.getElementById('btn-frame-copy').classList.toggle('hidden', !has);
   document.getElementById('btn-frame-delete').classList.toggle('hidden', !has);
-  showShareUrlInline(has ? document.getElementById('share-url').value : '');
+  if (url !== undefined) currentShareUrl = url || '';
+  showShareUrlInline(has ? currentShareUrl : '');
+  setFrameNameEditable(!has);
 }
 
-// wepic이 만들어지면 그 주소를 "링크변경 반영" 버튼 바로 위에 보여준다(눌러서 바로 열 수 있게).
+// 이름 입력칸/연필 버튼을 켜고 끈다. 아직 만들지 않은 wepic만 이름을 고칠 수 있다.
+function setFrameNameEditable(on) {
+  const input = document.getElementById('frame-name');
+  const pencil = document.getElementById('btn-frame-rename');
+  input.disabled = !on;
+  pencil.disabled = !on;
+  input.title = on ? '이 wepic의 이름' : '이미 만들어진 wepic은 이름을 바꿀 수 없습니다';
+  pencil.title = on ? '이름 고치기' : '이미 만들어진 wepic은 이름을 바꿀 수 없습니다';
+}
+
+// wepic이 만들어지면 그 주소를 보여준다(눌러서 바로 열 수 있게).
 function showShareUrlInline(url) {
   const box = document.getElementById('share-url-inline');
   const link = document.getElementById('share-url-link');
@@ -952,14 +966,19 @@ function showShareUrlInline(url) {
   box.classList.toggle('hidden', !has);
 }
 
-// 공유 주소를 클립보드로. (구형 브라우저·비보안 컨텍스트에서는 선택+복사로 폴백)
+// 공유 주소를 클립보드로. (구형 브라우저·비보안 컨텍스트에서는 임시 textarea로 폴백)
 async function copyShareUrl() {
-  const input = document.getElementById('share-url');
-  if (!input.value) { showToast('아직 공유 링크가 없습니다.'); return false; }
+  if (!currentShareUrl) { showToast('아직 공유 링크가 없습니다.'); return false; }
   try {
-    await navigator.clipboard.writeText(input.value);
+    await navigator.clipboard.writeText(currentShareUrl);
   } catch {
-    input.select(); document.execCommand('copy');
+    const t = document.createElement('textarea');
+    t.value = currentShareUrl;
+    t.style.position = 'fixed';
+    t.style.opacity = '0';
+    document.body.appendChild(t);
+    t.select();
+    try { document.execCommand('copy'); } finally { t.remove(); }
   }
   return true;
 }
@@ -988,30 +1007,33 @@ document.getElementById('share-public').addEventListener('change', (e) => {
   else setSharePin(document.getElementById('share-pin').value.trim());
 });
 
-// ---------- 세션당 액자 목록 (다중 액자) ----------
-// 한 세션이 여러 액자(공유 링크)를 만들고, 이름 붙여 전환하며 각각 계속 갱신할 수 있다.
-// 관리자가 "wepic 메인화면 열기"(isFrameMode)로 연 액자도 서버가 currentFrameId로 선택해
-// 두므로 이 목록에 함께 나타난다.
+// ---------- wepic 이름 ----------
+// 메인화면은 "새 wepic을 만드는" 화면이다. 예전 wepic을 골라 불러오는 리스트박스는
+// My사진관리가 그 역할을 하므로 없앴고, 여기서는 이름만 정한다(만들기 전까지 수정 가능).
 let frames = [];
 let currentFrameId = null;
 
-function renderFrameSelect() {
-  const sel = document.getElementById('frame-select');
-  sel.innerHTML = '';
-  // 아직 어느 액자도 선택되지 않은 상태 = "새 액자"(첫 공유 시 자동 생성됨).
-  const newOpt = document.createElement('option');
-  newOpt.value = '';
-  newOpt.textContent = '새 액자 (아직 저장 안 됨)';
-  if (!currentFrameId) newOpt.selected = true;
-  sel.appendChild(newOpt);
-  frames.forEach((f) => {
-    const opt = document.createElement('option');
-    opt.value = f.id;
-    opt.textContent = f.name + (f.hasContent ? '' : ' (빈 액자)');
-    if (f.id === currentFrameId) opt.selected = true;
-    sel.appendChild(opt);
-  });
+// 이름을 매번 짓기 번거로우니 "색깔 + 동물"로 자동 제안한다(예: "파란 여우").
+const NAME_COLORS = ['빨간', '주황', '노란', '초록', '파란', '남색', '보라', '분홍',
+  '하늘', '연두', '금빛', '은빛', '하얀', '검은', '민트', '살구'];
+const NAME_ANIMALS = ['여우', '고양이', '강아지', '토끼', '사슴', '곰', '판다', '펭귄',
+  '돌고래', '부엉이', '다람쥐', '호랑이', '코알라', '수달', '거북이', '고래', '너구리', '앵무새'];
+const pickRandom = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const randomFrameName = () => `${pickRandom(NAME_COLORS)} ${pickRandom(NAME_ANIMALS)}`;
+
+const frameNameInput = () => document.getElementById('frame-name');
+// 화면에 적힌 이름(비어 있으면 새로 뽑아 채워준다 — 이름 없는 wepic이 생기지 않게).
+function currentFrameName() {
+  const el = frameNameInput();
+  const v = el.value.trim();
+  if (v) return v;
+  const gen = randomFrameName();
+  el.value = gen;
+  return gen;
 }
+// 처음부터 이름이 하나 들어 있게 해 둔다(빈 칸으로 시작하면 뭘 적어야 할지 모른다).
+// 이미 만든 wepic을 불러오면 applyCurrentFrameToShareUI가 그 이름으로 덮어쓴다.
+frameNameInput().value = randomFrameName();
 
 // 제목·배경음악을 관리자 Default 설정으로 리셋한다. 새 액자로 시작할 때, 방금 전까지
 // 다른 액자를 편집하며 입력해 둔 값이 그대로 남아있지 않도록 하기 위함이다.
@@ -1047,19 +1069,19 @@ function applyCurrentFrameToShareUI() {
   const f = frames.find((x) => x.id === currentFrameId);
   const publicBox = document.getElementById('share-public');
   if (f && f.hasContent) {
-    // share-url을 먼저 채운다 — setShareLinkState가 이 값을 읽어 주소 줄을 그린다.
-    document.getElementById('share-url').value = f.url || '';
-    setShareLinkState(true);
-    document.getElementById('btn-open-share').href = f.url || '#';
+    // 이미 만들어진 wepic — 이름은 그 액자의 이름으로 고정(수정 불가).
+    frameNameInput().value = f.name || '';
+    setShareLinkState(true, f.url || '');
     publicBox.checked = !!f.isPublic;
     // 전체공유면 서버가 애초에 pin을 두지 않으므로 f.pin이 없다 — setSharePin이 알아서 숨긴다.
     if (f.pin) setSharePin(f.pin); else setSharePin('');
     applyFrameSettingsToUI(f);
   } else {
-    setShareLinkState(false);
+    // 아직 만들지 않은 새 wepic — 이름을 자동으로 제안하고 고칠 수 있게 열어둔다.
+    if (!frameNameInput().value.trim()) frameNameInput().value = randomFrameName();
+    setShareLinkState(false, '');
     setSharePin('');
     publicBox.checked = false;
-    document.getElementById('share-url').value = '';
     resetTitleAndMusicToDefault();
   }
 }
@@ -1069,60 +1091,28 @@ async function loadFrames() {
     const r = await api('/api/frames');
     frames = r.frames || [];
     currentFrameId = r.currentFrameId || null;
-    renderFrameSelect();
     applyCurrentFrameToShareUI();
   } catch { /* 로그인 전이거나 세션이 없으면 조용히 무시 */ }
 }
 
-document.getElementById('frame-select').addEventListener('change', async (e) => {
-  const id = e.target.value;
-  try {
-    if (id) {
-      await api(`/api/frames/${encodeURIComponent(id)}/select`, { method: 'POST' });
-    } else {
-      await api('/api/frames/deselect', { method: 'POST' });
-    }
-    currentFrameId = id || null;
-    applyCurrentFrameToShareUI();
-  } catch (err) {
-    showToast('액자 전환 실패: ' + err.message);
-  }
-});
-
+// "+" — 새 wepic 시작. 현재 선택을 풀고 이름을 새로 뽑는다(서버에 빈 액자를 미리
+// 만들지는 않는다 — 사진을 올려 실제로 만들 때 생성된다).
 document.getElementById('btn-frame-new').addEventListener('click', async () => {
-  const name = prompt('새 액자 이름을 입력하세요.', `액자 ${frames.length + 1}`);
-  if (name === null) return;
   try {
-    const r = await api('/api/frames', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
-    });
-    frames = r.frames || [];
-    currentFrameId = r.currentFrameId || null;
-    renderFrameSelect();
-    applyCurrentFrameToShareUI();
-    showToast(`"${r.frame?.name || name}" 액자를 만들었습니다. 사진을 공유하면 이 액자에 저장됩니다.`);
-  } catch (err) {
-    showToast('액자 추가 실패: ' + err.message);
-  }
+    await api('/api/frames/deselect', { method: 'POST' });
+  } catch { /* 로그인 전이면 무시 — 화면 상태만 새 wepic으로 돌린다 */ }
+  currentFrameId = null;
+  frameNameInput().value = randomFrameName();
+  applyCurrentFrameToShareUI();
+  showToast(`새 wepic "${frameNameInput().value}" — 사진을 고르고 아래 버튼을 누르면 만들어집니다.`);
 });
 
-document.getElementById('btn-frame-rename').addEventListener('click', async () => {
-  const f = frames.find((x) => x.id === currentFrameId);
-  if (!f) { showToast('먼저 액자를 선택하세요.'); return; }
-  const name = prompt('새 이름을 입력하세요.', f.name);
-  if (name === null || !name.trim()) return;
-  try {
-    await api(`/api/frames/${encodeURIComponent(f.id)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name.trim() }),
-    });
-    await loadFrames();
-  } catch (err) {
-    showToast('이름 변경 실패: ' + err.message);
-  }
+// 연필 — 이름 고치기. 아직 만들지 않은 wepic에서만 눌린다(만든 뒤에는 disabled).
+document.getElementById('btn-frame-rename').addEventListener('click', () => {
+  const el = frameNameInput();
+  if (el.disabled) return;
+  el.focus();
+  el.select();
 });
 
 // 현재 화면의 사진·제목·음악·전환설정을 서버에 올린다.
@@ -1168,6 +1158,7 @@ async function pushShare(mode) {
       // Spotify 미리듣기는 주소만으로 곡 제목을 알 수 없어(YouTube는 플레이어가 알려준다)
       // 지금 화면에 표시된 제목을 함께 저장한다 → 공유화면에서도 곡목이 보인다.
       form.append('musicTitle', musicTitle || '');
+      form.append('frameName', currentFrameName()); // 이 wepic의 이름(화면 입력칸)
       form.append('title', title);
       form.append('intervalSec', String(intervalSec));
       form.append('effect', slideEffect);
@@ -1188,21 +1179,21 @@ async function pushShare(mode) {
         body: JSON.stringify({
           items, musicUrl, title, intervalSec, effect: slideEffect, pin, isPublic,
           musicTitle: musicTitle || '', // Spotify 미리듣기용 곡목 스냅샷(위 blob 경로 주석 참고)
+          frameName: currentFrameName(), // 이 wepic의 이름(화면 입력칸)
         }),
       });
     }
-    document.getElementById('share-url').value = r.url;
-    document.getElementById('btn-open-share').href = r.url;
     setSharePin(r.pin || ''); // 전체공유면 서버가 pin을 null로 돌려주므로 PIN 행이 사라진다
-    // 링크가 생겼으니 "만들기" 대신 "반영"만 남기고 복사·삭제 아이콘을 띄운다.
-    setShareLinkState(true);
-    await loadFrames(); // 액자 목록·이름표 갱신(자동 생성된 첫 액자 포함)
+    // wepic이 생겼으니 "만들기" 대신 "반영"만 남기고 복사·삭제 아이콘과 주소를 띄운다.
+    setShareLinkState(true, r.url);
+    await loadFrames(); // 액자 이름·설정 갱신(자동 생성된 첫 액자 포함)
     if (mode === 'update') {
       const pinNote = r.isPublic ? '전체공유(PIN 없음)' : `PIN ${r.pin || '없음'}`;
       showToast(`사진·제목·배경음악·PIN을 모두 반영했습니다. (사진 ${r.count}장, ${pinNote})`);
     } else {
-      document.getElementById('share-copied').classList.add('hidden');
-      shareModal.classList.remove('hidden');
+      // 팝업 없이 토스트로만 알린다 — 주소는 바로 위 "wepic 주소" 줄에 표시된다.
+      const pinNote = r.isPublic ? '전체공유(PIN 없음)' : `PIN ${r.pin || '없음'}`;
+      showToast(`wepic을 만들었습니다. (사진 ${r.count}장, ${pinNote}) 주소는 아래에서 복사할 수 있습니다.`);
       if (excludedVideos) showToast(`동영상 ${excludedVideos}개는 공유 링크에서 제외되었습니다.`);
     }
     // 저장용량 한도에 걸려 일부만 저장된 경우 — 조용히 넘기면 사진이 왜 빠졌는지 알 수 없다.
@@ -1221,33 +1212,24 @@ async function pushShare(mode) {
 document.getElementById('btn-make-share').addEventListener('click', () => pushShare('create'));
 document.getElementById('btn-update-share').addEventListener('click', () => pushShare('update'));
 
-document.getElementById('btn-copy-share').addEventListener('click', async () => {
-  if (await copyShareUrl()) document.getElementById('share-copied').classList.remove('hidden');
-});
-
-// 액자 이름 옆 아이콘 ① 주소 복사하기
+// wepic 이름 옆 아이콘 ① 주소 복사하기
 document.getElementById('btn-frame-copy').addEventListener('click', async () => {
   if (await copyShareUrl()) showToast('공유 주소를 복사했습니다.');
 });
-// 액자 이름 옆 아이콘 ② 링크 삭제하기
+// wepic 이름 옆 아이콘 ② 링크 삭제하기
 document.getElementById('btn-frame-delete').addEventListener('click', (e) =>
   revokeCurrentShare(e.currentTarget));
-document.getElementById('btn-share-close').addEventListener('click', (e) => {
-  e.preventDefault(); shareModal.classList.add('hidden');
-});
-shareModal.addEventListener('click', (e) => { if (e.target === shareModal) shareModal.classList.add('hidden'); });
 
-// 현재 액자의 공유 링크를 삭제한다. 안내 팝업의 "링크 폐기"와 액자 이름 옆 🗑 아이콘이 함께 쓴다.
+// 현재 wepic의 공유 링크를 삭제한다(🗑 아이콘).
 async function revokeCurrentShare(btn) {
   if (!confirm('공유 링크를 지금 삭제할까요? 이후 이 링크로는 접속할 수 없습니다.')) return;
   if (btn) btn.disabled = true;
   try {
     await api('/api/share', { method: 'DELETE' });
-    shareModal.classList.add('hidden');
-    setShareLinkState(false); // 반영할 링크가 없어짐 → 다시 "만들기"만 보인다
-    document.getElementById('share-url').value = '';
+    setShareLinkState(false, ''); // 반영할 링크가 없어짐 → 다시 "만들기"만 보인다
     setSharePin('');
-    await loadFrames(); // 삭제된 액자를 목록에서 제거
+    frameNameInput().value = randomFrameName(); // 다음 wepic 이름을 새로 제안
+    await loadFrames();
     showToast('공유 링크를 삭제했습니다.');
   } catch (err) {
     showToast('삭제 실패: ' + err.message);
@@ -1255,8 +1237,6 @@ async function revokeCurrentShare(btn) {
     if (btn) btn.disabled = false;
   }
 }
-document.getElementById('btn-revoke-share').addEventListener('click', (e) =>
-  revokeCurrentShare(e.currentTarget));
 
 // ---------- 하단 링크 ----------
 document.getElementById('btn-reselect').addEventListener('click', (e) => {
@@ -1288,10 +1268,7 @@ document.getElementById('menu-whoami').addEventListener('click', async () => {
   if (!confirm('로그아웃하시겠습니까?')) return;
   await doLogout();
 });
-document.getElementById('btn-logout').addEventListener('click', async (e) => {
-  e.preventDefault();
-  await doLogout();
-});
+// (슬라이드쇼 하단의 로그아웃 링크는 없앴다 — 상단 메뉴의 내 이름을 누르면 로그아웃된다)
 
 // 전체화면을 해제하고 홈(소개)으로 이동한다. 재생 중이던 동영상·배경음악은
 // selectPanel → showHome()이 stopSlideshowPlayback()으로 함께 멈춰준다.
@@ -1305,12 +1282,20 @@ function exitFullscreenIfAny() {
 }
 
 // ---------- 사진 제외 (체크박스 선택 삭제) ----------
+// 아이콘 버튼이라 글자를 바꾸지 않는다(바꾸면 아이콘이 사라진다). 눌린 상태는
+// .active 클래스와 툴팁으로 알린다.
+function setExcludeBtnState(on) {
+  const b = document.getElementById('btn-exclude');
+  b.classList.toggle('active', on);
+  b.title = on ? '제외 취소' : '사진 제외';
+  b.setAttribute('aria-label', b.title);
+}
 function setExcludeMode(on) {
   excludeMode = on;
   excludeSel.clear();
   document.getElementById('exclude-count').textContent = '0';
   document.getElementById('exclude-actions').classList.toggle('hidden', !on);
-  document.getElementById('btn-exclude').textContent = on ? '제외 취소' : '사진 제외';
+  setExcludeBtnState(on);
   if (on && intervalHandle) clearInterval(intervalHandle); // 선택 중엔 슬라이드 정지
   renderPhotoList();
   if (!on) resetTimer();
@@ -1326,7 +1311,7 @@ document.getElementById('btn-exclude-apply').addEventListener('click', () => {
   excludeMode = false;
   excludeSel.clear();
   document.getElementById('exclude-actions').classList.add('hidden');
-  document.getElementById('btn-exclude').textContent = '사진 제외';
+  setExcludeBtnState(false);
   if (!allPhotos.length) { showToast('모든 사진이 제외되었습니다. 사진을 다시 선택해주세요.'); }
   recomputeFiltered();
 });
@@ -2145,11 +2130,7 @@ function applyLoginState(status) {
   isLoggedIn = !!status.loggedIn;
   // 이전에 만든 공유 링크가 있으면 "링크변경 반영"을 바로 쓸 수 있게 노출
   if (status.hasShare) {
-    if (status.shareUrl) {
-      document.getElementById('share-url').value = status.shareUrl;
-      document.getElementById('btn-open-share').href = status.shareUrl;
-    }
-    setShareLinkState(true);
+    setShareLinkState(true, status.shareUrl || '');
     if (status.sharePin) setSharePin(status.sharePin); // 기존 공유의 PIN 표시
     document.getElementById('share-public').checked = !!status.sharePublic;
   }
@@ -2208,12 +2189,11 @@ function applyLoginState(status) {
   // 로그인 전에는 두 블록 모두 감추고 "로그인이 필요합니다"만 남긴다.
   photosNote.classList.toggle('hidden', isLoggedIn);
 
-  // wepic 메인화면 하단 링크도 같은 기준으로 나눈다.
+  // "사진선택" 섹션의 사진 고르기 아이콘도 같은 기준으로 나눈다.
   // 구글 전용(포토 다시 선택·추가·계정 다시 연결)은 구글 로그인일 때만 보인다.
   document.getElementById('google-only-links').classList.toggle('hidden', !canUseGooglePhotos);
   document.getElementById('local-only-links').classList.toggle('hidden', canUseGooglePhotos || !isLoggedIn);
   document.getElementById('btn-reconnect').classList.toggle('hidden', !canUseGooglePhotos);
-  document.getElementById('reconnect-dot').classList.toggle('hidden', !canUseGooglePhotos);
 
   // 회원정보 패널 채우기
   fillMeForm(status.me, status.provider);

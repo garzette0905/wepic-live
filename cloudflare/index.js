@@ -1309,6 +1309,9 @@ async function shareCreate(request, env, token, sess) {
   const musicUrl = typeof body.musicUrl === 'string' ? body.musicUrl : '';
   // Spotify 미리듣기는 주소만으로 곡목을 알 수 없어 화면이 보내준 값을 저장한다.
   const musicTitle = typeof body.musicTitle === 'string' ? body.musicTitle.slice(0, 60) : '';
+  // 화면에서 정한 wepic 이름. 새로 만들 때는 이 이름으로 액자를 만들고,
+  // 이미 있는 액자면 이름을 바꾸지 않는다(만든 뒤에는 이름 고정).
+  const wantName = typeof body.frameName === 'string' ? body.frameName.trim().slice(0, 30) : '';
   const title = typeof body.title === 'string' ? body.title.slice(0, 40) : '';
   const intervalSec = Math.min(60, Math.max(3, Number(body.intervalSec) || 10));
   const effect = ['fade', 'slide', 'kenburns'].includes(body.effect) ? body.effect : 'fade';
@@ -1318,7 +1321,7 @@ async function shareCreate(request, env, token, sess) {
   ensureFrames(sess.data);
   if (!sess.data.currentFrameId) {
     const newId = randomId(9);
-    sess.data.frames.push({ id: newId, name: `액자 ${sess.data.frames.length + 1}` });
+    sess.data.frames.push({ id: newId, name: wantName || `액자 ${sess.data.frames.length + 1}` });
     sess.data.currentFrameId = newId;
   }
   const shareId = sess.data.currentFrameId;
@@ -1466,6 +1469,7 @@ async function shareBlob(request, env, sess, user) {
   try { meta = JSON.parse(form.get('meta') || '[]'); } catch { /* 무시 */ }
   const musicUrl = typeof form.get('musicUrl') === 'string' ? form.get('musicUrl') : '';
   const musicTitle = String(form.get('musicTitle') || '').slice(0, 60);
+  const wantName = String(form.get('frameName') || '').trim().slice(0, 30);
   const title = String(form.get('title') || '').slice(0, 40);
   const intervalSec = Math.min(60, Math.max(3, Number(form.get('intervalSec')) || 10));
   const effect = ['fade', 'slide', 'kenburns'].includes(form.get('effect')) ? form.get('effect') : 'fade';
@@ -1475,7 +1479,7 @@ async function shareBlob(request, env, sess, user) {
   ensureFrames(sdata);
   if (!sdata.currentFrameId) {
     const newId = randomId(9);
-    sdata.frames.push({ id: newId, name: `액자 ${sdata.frames.length + 1}` });
+    sdata.frames.push({ id: newId, name: wantName || `액자 ${sdata.frames.length + 1}` });
     sdata.currentFrameId = newId;
   }
   const shareId = sdata.currentFrameId;

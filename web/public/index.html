@@ -529,26 +529,23 @@
       </div>
 
       <div class="share-block" id="share-block">
-        <div class="section-label">공유</div>
-        <!-- 세션당 여러 액자(공유 링크)를 만들고 이름 붙여 전환할 수 있다 -->
+        <div class="section-label">사진선택</div>
+        <!-- 메인화면은 "새 wepic을 만드는" 화면이다. 예전 wepic을 불러와 고르는 리스트박스는
+             My사진관리가 그 역할을 하므로 없앴고, 여기서는 이름만 정한다.
+             이름은 처음에 "색깔 + 동물"로 자동 생성되고, wepic을 만들기 전까지만 고칠 수 있다. -->
         <div class="frame-select-row">
-          <select id="frame-select" class="mini-select"></select>
-          <button id="btn-frame-new" class="mini-btn" title="새 액자 추가">+</button>
-          <button id="btn-frame-rename" class="mini-btn" title="이름 바꾸기">✎</button>
-          <!-- 링크가 만들어진 액자에서만 쓰는 두 가지: 주소 복사 / 링크 삭제 -->
+          <input type="text" id="frame-name" class="frame-name-input" maxlength="30"
+                 placeholder="wepic 이름" title="이 wepic의 이름" />
+          <button id="btn-frame-new" class="mini-btn" title="새 wepic 시작 (이름 새로 뽑기)">+</button>
+          <button id="btn-frame-rename" class="mini-btn" title="이름 고치기">✎</button>
+          <!-- wepic이 만들어진 뒤에만 쓰는 두 가지: 주소 복사 / 링크 삭제 -->
           <button id="btn-frame-copy" class="mini-btn hidden" title="주소 복사하기">📋</button>
           <button id="btn-frame-delete" class="mini-btn hidden" title="링크 삭제하기">🗑</button>
         </div>
-        <!-- wepic이 만들어지면 그 주소를 버튼 바로 위에 보여준다(눌러서 바로 열 수 있게). -->
+        <!-- wepic이 만들어지면 그 주소를 보여준다(눌러서 바로 열 수 있게). -->
         <div id="share-url-inline" class="share-url-inline hidden">
           <span class="share-url-caption">wepic 주소</span>
           <a id="share-url-link" class="share-url-text" target="_blank" rel="noopener"></a>
-        </div>
-        <!-- 버튼은 언제나 하나만 보인다: 링크가 없으면 "만들기", 있으면 "반영".
-             "반영"은 사진 추가·삭제, 제목, 배경음악, 전환설정, PIN을 한 번에 저장한다. -->
-        <div class="share-btn-row">
-          <button id="btn-make-share" class="secondary slim share-btn">실시간 공유 링크 만들기</button>
-          <button id="btn-update-share" class="secondary slim share-btn hidden" title="사진 추가·삭제, 제목, 배경음악, PIN을 한 번에 저장합니다">링크변경 반영</button>
         </div>
         <!-- 전체공유: 체크하면 PIN 없이 누구나 볼 수 있고, "사진 보기" 피드에도 올라간다. -->
         <label class="public-share-row">
@@ -562,6 +559,31 @@
           <input type="text" id="share-pin" class="pin-input" maxlength="4" inputmode="numeric" pattern="[0-9]*" />
           <button id="btn-pin-new" class="mini-btn" title="새 PIN 만들기">🎲</button>
           <span class="panel-muted" style="font-size:11px;">받는 분에게 링크와 함께 알려주세요</span>
+        </div>
+
+        <!-- 사진 고르기 동작 — 예전에는 화면 맨 아래 글자 링크였는데, "사진선택"에 속한
+             동작이라 이 섹션으로 올리고 아이콘으로 바꿨다. -->
+        <div id="photo-pick-actions" class="photo-pick-actions">
+          <!-- 구글 전용(포토 Picker) — 카카오·네이버 로그인에서는 app.js가 숨긴다 -->
+          <span id="google-only-links" class="pick-group">
+            <button id="btn-reselect" class="mini-btn" title="사진 다시 선택하기" aria-label="사진 다시 선택하기">🔄</button>
+            <button id="btn-add" class="mini-btn" title="사진 추가" aria-label="사진 추가">➕</button>
+          </span>
+          <!-- 기기 갤러리에서 올리기 — 구글 외 로그인에서만 보인다 -->
+          <span id="local-only-links" class="pick-group hidden">
+            <button id="btn-local-reselect" class="mini-btn" title="갤러리에서 다시 선택" aria-label="갤러리에서 다시 선택">🔄</button>
+            <button id="btn-local-add" class="mini-btn" title="갤러리에서 사진 추가" aria-label="갤러리에서 사진 추가">➕</button>
+          </span>
+          <button id="btn-exclude" class="mini-btn" title="사진 제외" aria-label="사진 제외">➖</button>
+          <a href="/auth/login" id="btn-reconnect" class="text-link small hidden">계정 다시 연결하기</a>
+        </div>
+
+        <!-- 버튼은 언제나 하나만 보인다: wepic이 없으면 "만들기", 있으면 "반영".
+             "반영"은 사진 추가·삭제, 제목, 배경음악, 전환설정, PIN을 한 번에 저장한다.
+             이 섹션의 맨 아래에 둔다(위 설정을 다 마친 뒤 누르는 마지막 동작이라서). -->
+        <div class="share-btn-row">
+          <button id="btn-make-share" class="secondary slim share-btn">실시간 공유 링크 만들기</button>
+          <button id="btn-update-share" class="secondary slim share-btn hidden" title="사진 추가·삭제, 제목, 배경음악, PIN을 한 번에 저장합니다">링크변경 반영</button>
         </div>
       </div>
 
@@ -608,28 +630,9 @@
       </div>
 
       <div class="settings-block">
-        <span id="account-links" class="account-links">
-          <!-- 구글 전용(포토 Picker) — 카카오·네이버 로그인에서는 app.js가 숨긴다 -->
-          <span id="google-only-links">
-            <a href="#" id="btn-reselect" class="text-link small">사진 다시 선택하기</a>
-            <span class="dot">·</span>
-            <a href="#" id="btn-add" class="text-link small">사진 추가</a>
-            <span class="dot">·</span>
-          </span>
-          <!-- 기기 갤러리에서 올리기 — 구글 외 로그인에서만 보인다 -->
-          <span id="local-only-links" class="hidden">
-            <a href="#" id="btn-local-reselect" class="text-link small">갤러리에서 다시 선택</a>
-            <span class="dot">·</span>
-            <a href="#" id="btn-local-add" class="text-link small">갤러리에서 사진 추가</a>
-            <span class="dot">·</span>
-          </span>
-          <a href="#" id="btn-exclude" class="text-link small">사진 제외</a>
-          <span class="dot">·</span>
-          <a href="/auth/login" id="btn-reconnect" class="text-link small hidden">계정 다시 연결하기</a>
-          <span id="reconnect-dot" class="dot hidden">·</span>
-          <!-- "홈으로"는 없앴다: 슬라이드쇼가 홈페이지 하위 프레임에 있어 상단 메뉴로 바로 갈 수 있다 -->
-          <a href="#" id="btn-logout" class="text-link small">로그아웃</a>
-        </span>
+        <!-- 사진 고르기·로그아웃 링크는 없앴다: 앞의 것들은 "사진선택" 섹션으로 아이콘이 되어
+             올라갔고, 로그아웃은 상단 메뉴의 내 이름을 누르면 된다. -->
+        <span id="account-links" class="account-links"></span>
         <span id="demo-links" class="account-links hidden">
           <a href="#" id="btn-demo-home" class="text-link small">홈페이지로 가기</a>
           <span class="dot">·</span>
@@ -643,27 +646,8 @@
     </div>
   </div>
 
-  <!-- 실시간 공유 링크 팝업 -->
-  <div id="share-modal" class="modal-overlay hidden">
-    <div class="modal-card">
-      <h2 style="margin:0 0 6px;">실시간 공유 링크</h2>
-      <p class="modal-block" id="share-modal-desc">
-        아래 링크를 보내면 <b>로그인 없이</b> 사진을 볼 수 있습니다.<br />
-        사진을 다시 선택한 뒤 이 버튼을 다시 누르면 <b>같은 링크</b>에 최신 사진이 반영됩니다.
-      </p>
-      <div class="share-url-row">
-        <input id="share-url" type="text" readonly />
-        <button id="btn-copy-share" class="btn-primary">복사</button>
-      </div>
-      <p id="share-copied" class="share-copied hidden">복사되었습니다.</p>
-      <div class="share-modal-actions">
-        <a href="#" id="btn-open-share" class="text-link small" target="_blank">링크 열어보기</a>
-        <a href="#" id="btn-share-close" class="text-link small">닫기</a>
-      </div>
-      <button id="btn-revoke-share" class="secondary slim revoke-btn">링크 삭제하기</button>
-      <p class="hint" style="margin:6px 0 0;">삭제하면 이 링크는 즉시 만료되어 더 이상 열리지 않습니다.</p>
-    </div>
-  </div>
+  <!-- 실시간 공유 링크 팝업은 없앴다(요청): wepic을 만들면 주소가 "사진선택" 섹션에 바로
+       표시되고, 복사·삭제는 이름 옆 아이콘(📋·🗑)으로 할 수 있어 팝업이 필요 없다. -->
 
   <!-- Spotify 곡 찾기 팝업 -->
   <div id="spotify-modal" class="modal-overlay hidden">
