@@ -234,12 +234,28 @@
         <!-- 사진 보기: 전체공유(PIN 없이 공개)로 설정된 액자들을 카드로 모아 보여준다.
              로그인 없이도 볼 수 있다. 카드를 누르면 같은 화면 안에서 바로 슬라이드쇼가 재생된다. -->
         <div class="panel panel-wide hidden" id="panel-feed">
-          <h2>사진 보기</h2>
-          <p>회원들이 "전체공유"로 공개한 사진들입니다. 카드를 누르면 바로 재생됩니다.</p>
-          <div id="feed-list" class="feed-list"></div>
-          <p id="feed-empty" class="panel-muted hidden">아직 공개된 사진이 없습니다.</p>
-          <p id="feed-loading" class="panel-muted hidden">불러오는 중...</p>
-          <div id="feed-sentinel"></div>
+          <!-- 카드 목록 -->
+          <div id="feed-browse">
+            <h2>사진 보기</h2>
+            <p>회원들이 "전체공유"로 공개한 사진들입니다. 카드를 누르면 바로 재생됩니다.</p>
+            <div id="feed-list" class="feed-list"></div>
+            <p id="feed-empty" class="panel-muted hidden">아직 공개된 사진이 없습니다.</p>
+            <p id="feed-loading" class="panel-muted hidden">불러오는 중...</p>
+            <div id="feed-sentinel"></div>
+          </div>
+
+          <!-- 카드를 누르면 이 자리에 wepic 공유화면(/f/&lt;id&gt;)을 그대로 띄운다.
+               페이지를 통째로 옮기지 않고 iframe으로 넣어야 홈페이지 상단 메뉴가 계속 보인다.
+               allow에 fullscreen·autoplay를 줘야 공유화면의 전체화면 버튼과 배경음악이 동작한다. -->
+          <div id="feed-viewer" class="feed-viewer hidden">
+            <div class="feed-viewer-bar">
+              <button id="btn-feed-back" class="secondary slim">← 목록으로</button>
+              <span id="feed-viewer-title" class="feed-viewer-title"></span>
+              <a id="feed-viewer-open" class="text-link small" target="_blank" rel="noopener">새 창으로 열기</a>
+            </div>
+            <iframe id="feed-frame" class="feed-frame" title="wepic 공유화면"
+                    allow="fullscreen; autoplay; encrypted-media"></iframe>
+          </div>
         </div>
 
         <!-- 피드백 — 상단 메뉴에서는 감췄다(요청). 패널은 남겨두었으니 다시 노출하려면
@@ -487,13 +503,9 @@
         <div id="cur-date-sub" class="date-sub"></div>
       </div>
 
-      <div class="filter-block">
-        <div class="filter-actions">
-          <button id="btn-pause" class="secondary slim">⏸ 화면 잠시멈춤</button>
-        </div>
-      </div>
+      <!-- "화면 잠시멈춤" 버튼은 없앴다 — 사진 위 좌측 아이콘 줄의 ⏸ 버튼이 같은 일을 한다. -->
 
-      <!-- 순서: 사진 목록 → 화면 표시 → 배경음악 → 공유 → (추가옵션: 사진 방향·재생 설정) -->
+      <!-- 순서: 사진 목록 → 화면 표시 → 배경음악 → 사진선택 → (추가옵션: 사진 방향·재생 설정·시계날씨) -->
       <div class="photo-list-block">
         <div class="section-label">사진 목록 (<span id="photo-list-count">0</span>)</div>
         <div id="exclude-actions" class="exclude-actions hidden">
@@ -509,7 +521,6 @@
         <div class="setting-row">
           <input type="text" id="title-input" class="title-input" placeholder="슬라이드쇼 제목 (좌측 상단 표시)" maxlength="40" />
         </div>
-        <label class="check-row"><input type="checkbox" id="ambient-toggle" checked /> 시계·날씨 표시</label>
       </div>
 
       <div class="music-block">
@@ -530,39 +541,11 @@
 
       <div class="share-block" id="share-block">
         <div class="section-label">사진선택</div>
-        <!-- 메인화면은 "새 wepic을 만드는" 화면이다. 예전 wepic을 불러와 고르는 리스트박스는
-             My사진관리가 그 역할을 하므로 없앴고, 여기서는 이름만 정한다.
-             이름은 처음에 "색깔 + 동물"로 자동 생성되고, wepic을 만들기 전까지만 고칠 수 있다. -->
-        <div class="frame-select-row">
-          <input type="text" id="frame-name" class="frame-name-input" maxlength="30"
-                 placeholder="wepic 이름" title="이 wepic의 이름" />
-          <button id="btn-frame-new" class="mini-btn" title="새 wepic 시작 (이름 새로 뽑기)">+</button>
-          <button id="btn-frame-rename" class="mini-btn" title="이름 고치기">✎</button>
-          <!-- wepic이 만들어진 뒤에만 쓰는 두 가지: 주소 복사 / 링크 삭제 -->
-          <button id="btn-frame-copy" class="mini-btn hidden" title="주소 복사하기">📋</button>
-          <button id="btn-frame-delete" class="mini-btn hidden" title="링크 삭제하기">🗑</button>
-        </div>
-        <!-- wepic이 만들어지면 그 주소를 보여준다(눌러서 바로 열 수 있게). -->
-        <div id="share-url-inline" class="share-url-inline hidden">
-          <span class="share-url-caption">wepic 주소</span>
-          <a id="share-url-link" class="share-url-text" target="_blank" rel="noopener"></a>
-        </div>
-        <!-- 전체공유: 체크하면 PIN 없이 누구나 볼 수 있고, "사진 보기" 피드에도 올라간다. -->
-        <label class="public-share-row">
-          <input type="checkbox" id="share-public" />
-          <span>전체공유 (PIN 없이 누구나 보기 · "사진 보기"에 공개)</span>
-        </label>
-        <!-- 공유 링크 열람용 PIN(4자리). 수정 후 "링크변경 반영"을 누르면 새 PIN이 적용된다.
-             전체공유를 체크하면 PIN이 필요 없으므로 이 행 자체를 숨긴다. -->
-        <div id="share-pin-row" class="share-pin-row hidden">
-          <span class="setting-label">PIN</span>
-          <input type="text" id="share-pin" class="pin-input" maxlength="4" inputmode="numeric" pattern="[0-9]*" />
-          <button id="btn-pin-new" class="mini-btn" title="새 PIN 만들기">🎲</button>
-          <span class="panel-muted" style="font-size:11px;">받는 분에게 링크와 함께 알려주세요</span>
-        </div>
+        <!-- 액자(이름) 개념은 화면에서 없앴다. 메인화면은 "사진을 골라 공유하는" 곳이고,
+             만들어 둔 wepic을 찾아 관리하는 것은 My사진관리가 한다.
+             (액자 이름은 목록에서 알아보기 쉽도록 app.js가 조용히 자동으로 붙여준다) -->
 
-        <!-- 사진 고르기 동작 — 예전에는 화면 맨 아래 글자 링크였는데, "사진선택"에 속한
-             동작이라 이 섹션으로 올리고 아이콘으로 바꿨다. -->
+        <!-- 사진 고르기 + 링크 다루기 아이콘을 한 줄에 모았다 -->
         <div id="photo-pick-actions" class="photo-pick-actions">
           <!-- 구글 전용(포토 Picker) — 카카오·네이버 로그인에서는 app.js가 숨긴다 -->
           <span id="google-only-links" class="pick-group">
@@ -575,16 +558,39 @@
             <button id="btn-local-add" class="mini-btn" title="갤러리에서 사진 추가" aria-label="갤러리에서 사진 추가">➕</button>
           </span>
           <button id="btn-exclude" class="mini-btn" title="사진 제외" aria-label="사진 제외">➖</button>
-          <a href="/auth/login" id="btn-reconnect" class="text-link small hidden">계정 다시 연결하기</a>
+          <span class="pick-divider" aria-hidden="true"></span>
+          <!-- 공유한 뒤에만 쓰는 두 가지: 링크 복사 / 링크 삭제 -->
+          <button id="btn-frame-copy" class="mini-btn hidden" title="링크 복사하기" aria-label="링크 복사하기">📋</button>
+          <button id="btn-frame-delete" class="mini-btn hidden" title="링크 삭제하기" aria-label="링크 삭제하기">🗑</button>
         </div>
 
-        <!-- 버튼은 언제나 하나만 보인다: wepic이 없으면 "만들기", 있으면 "반영".
-             "반영"은 사진 추가·삭제, 제목, 배경음악, 전환설정, PIN을 한 번에 저장한다.
-             이 섹션의 맨 아래에 둔다(위 설정을 다 마친 뒤 누르는 마지막 동작이라서). -->
-        <div class="share-btn-row">
-          <button id="btn-make-share" class="secondary slim share-btn">실시간 공유 링크 만들기</button>
-          <button id="btn-update-share" class="secondary slim share-btn hidden" title="사진 추가·삭제, 제목, 배경음악, PIN을 한 번에 저장합니다">링크변경 반영</button>
+        <!-- 공유 링크 열람용 PIN(4자리). 수정 후 "공유하기"를 누르면 새 PIN이 적용된다.
+             전체공유를 체크하면 PIN이 필요 없으므로 이 행 자체를 숨긴다. -->
+        <div id="share-pin-row" class="share-pin-row hidden">
+          <span class="setting-label">PIN</span>
+          <input type="text" id="share-pin" class="pin-input" maxlength="4" inputmode="numeric" pattern="[0-9]*" />
+          <button id="btn-pin-new" class="mini-btn" title="새 PIN 만들기">🎲</button>
+          <span class="panel-muted" style="font-size:11px;">받는 분에게 링크와 함께 알려주세요</span>
         </div>
+
+        <!-- 공유하기: 사진·제목·배경음악·전환설정·PIN을 한 번에 저장하고 링크를 만든다.
+             이미 만든 wepic에서 다시 누르면 같은 링크에 최신 내용이 반영된다. -->
+        <div class="share-btn-row">
+          <button id="btn-share" class="secondary slim share-btn"
+                  title="사진·제목·배경음악·PIN을 저장하고 공유 링크를 만듭니다">공유하기</button>
+        </div>
+
+        <!-- 공유하기를 누르면 여기에 링크가 나타난다(눌러서 바로 열 수 있게). -->
+        <div id="share-url-inline" class="share-url-inline hidden">
+          <span class="share-url-caption">wepic 주소</span>
+          <a id="share-url-link" class="share-url-text" target="_blank" rel="noopener"></a>
+        </div>
+
+        <!-- 전체공유: 체크하면 PIN 없이 누구나 볼 수 있고, "사진 보기" 피드에도 올라간다. -->
+        <label class="public-share-row">
+          <input type="checkbox" id="share-public" />
+          <span>전체공유 (PIN 없이 누구나 보기 · "사진 보기"에 공개)</span>
+        </label>
       </div>
 
       <!-- 추가옵션: 자주 안 바꾸는 설정은 접어둔다(사진 방향·재생 설정) -->
@@ -625,6 +631,7 @@
               </div>
             </div>
             <label class="check-row"><input type="checkbox" id="video-sound-toggle" /> 동영상 소리 재생 (재생 중 배경음악 정지)</label>
+            <label class="check-row"><input type="checkbox" id="ambient-toggle" checked /> 시계·날씨 표시</label>
           </div>
         </div>
       </div>

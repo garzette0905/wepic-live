@@ -549,9 +549,7 @@ function resetTimer() {
 
 function setSlideshowPaused(paused) {
   slideshowPaused = paused;
-  const btn = document.getElementById('btn-pause');
-  btn.textContent = paused ? '▶ 화면 재개' : '⏸ 화면 잠시멈춤';
-  // 사진 위 좌측 아이콘 줄의 멈춤/재개 버튼도 같은 상태를 보여준다(설정 패널 버튼과 동기화)
+  // 설정 패널의 "화면 잠시멈춤" 버튼은 없앴다 — 사진 위 좌측 아이콘 줄의 ⏸ 버튼만 쓴다.
   const iconBtn = document.getElementById('btn-photo-pause');
   if (iconBtn) {
     iconBtn.classList.toggle('paused', paused);
@@ -569,7 +567,6 @@ function setSlideshowPaused(paused) {
     resetTimer();
   }
 }
-document.getElementById('btn-pause').addEventListener('click', () => setSlideshowPaused(!slideshowPaused));
 document.getElementById('btn-photo-pause').addEventListener('click', () => setSlideshowPaused(!slideshowPaused));
 document.getElementById('btn-photo-prev').addEventListener('click', () => goToPhoto(-1));
 document.getElementById('btn-photo-next').addEventListener('click', () => goToPhoto(1));
@@ -932,28 +929,18 @@ function spotifyRow(t) {
 // 이 변수 하나로 관리한다(주소 줄·복사 아이콘이 모두 이 값을 쓴다).
 let currentShareUrl = '';
 
-// 공유 버튼은 언제나 하나만 보인다. wepic이 없으면 "실시간 공유 링크 만들기", 생기면
-// "링크변경 반영"만 남기고, 이름 옆에 주소 복사·링크 삭제 아이콘을 띄운다.
-// wepic이 만들어진 뒤에는 이름을 고칠 수 없다(메인화면은 "새로 만드는" 화면이라서).
+// 버튼은 "공유하기" 하나뿐이다. 아직 안 만들었으면 눌러서 만들고, 이미 만들었으면
+// 같은 링크에 최신 내용을 반영한다. 만들어진 뒤에만 링크 복사·삭제 아이콘과 주소가 보인다.
 function setShareLinkState(hasLink, url) {
   const has = !!hasLink;
-  document.getElementById('btn-make-share').classList.toggle('hidden', has);
-  document.getElementById('btn-update-share').classList.toggle('hidden', !has);
   document.getElementById('btn-frame-copy').classList.toggle('hidden', !has);
   document.getElementById('btn-frame-delete').classList.toggle('hidden', !has);
+  const btn = document.getElementById('btn-share');
+  btn.title = has
+    ? '사진·제목·배경음악·PIN의 변경 내용을 이 링크에 반영합니다'
+    : '사진·제목·배경음악·PIN을 저장하고 공유 링크를 만듭니다';
   if (url !== undefined) currentShareUrl = url || '';
   showShareUrlInline(has ? currentShareUrl : '');
-  setFrameNameEditable(!has);
-}
-
-// 이름 입력칸/연필 버튼을 켜고 끈다. 아직 만들지 않은 wepic만 이름을 고칠 수 있다.
-function setFrameNameEditable(on) {
-  const input = document.getElementById('frame-name');
-  const pencil = document.getElementById('btn-frame-rename');
-  input.disabled = !on;
-  pencil.disabled = !on;
-  input.title = on ? '이 wepic의 이름' : '이미 만들어진 wepic은 이름을 바꿀 수 없습니다';
-  pencil.title = on ? '이름 고치기' : '이미 만들어진 wepic은 이름을 바꿀 수 없습니다';
 }
 
 // wepic이 만들어지면 그 주소를 보여준다(눌러서 바로 열 수 있게).
@@ -1021,19 +1008,12 @@ const NAME_ANIMALS = ['여우', '고양이', '강아지', '토끼', '사슴', '�
 const pickRandom = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const randomFrameName = () => `${pickRandom(NAME_COLORS)} ${pickRandom(NAME_ANIMALS)}`;
 
-const frameNameInput = () => document.getElementById('frame-name');
-// 화면에 적힌 이름(비어 있으면 새로 뽑아 채워준다 — 이름 없는 wepic이 생기지 않게).
-function currentFrameName() {
-  const el = frameNameInput();
-  const v = el.value.trim();
-  if (v) return v;
-  const gen = randomFrameName();
-  el.value = gen;
-  return gen;
-}
-// 처음부터 이름이 하나 들어 있게 해 둔다(빈 칸으로 시작하면 뭘 적어야 할지 모른다).
-// 이미 만든 wepic을 불러오면 applyCurrentFrameToShareUI가 그 이름으로 덮어쓴다.
-frameNameInput().value = randomFrameName();
+// 이름을 정하는 UI는 없앴다(요청). 그래도 My사진관리·관리자 목록에서 "액자 1, 액자 2"보다는
+// 알아보기 쉬우므로, 새 wepic을 만들 때 이 이름을 조용히 붙여준다.
+let pendingFrameName = randomFrameName();
+const currentFrameName = () => pendingFrameName;
+// 새 wepic을 시작할 때(공유를 삭제했을 때 등) 다음 이름을 새로 뽑아둔다.
+const renewFrameName = () => { pendingFrameName = randomFrameName(); };
 
 // 제목·배경음악을 관리자 Default 설정으로 리셋한다. 새 액자로 시작할 때, 방금 전까지
 // 다른 액자를 편집하며 입력해 둔 값이 그대로 남아있지 않도록 하기 위함이다.
@@ -1069,16 +1049,12 @@ function applyCurrentFrameToShareUI() {
   const f = frames.find((x) => x.id === currentFrameId);
   const publicBox = document.getElementById('share-public');
   if (f && f.hasContent) {
-    // 이미 만들어진 wepic — 이름은 그 액자의 이름으로 고정(수정 불가).
-    frameNameInput().value = f.name || '';
     setShareLinkState(true, f.url || '');
     publicBox.checked = !!f.isPublic;
     // 전체공유면 서버가 애초에 pin을 두지 않으므로 f.pin이 없다 — setSharePin이 알아서 숨긴다.
     if (f.pin) setSharePin(f.pin); else setSharePin('');
     applyFrameSettingsToUI(f);
   } else {
-    // 아직 만들지 않은 새 wepic — 이름을 자동으로 제안하고 고칠 수 있게 열어둔다.
-    if (!frameNameInput().value.trim()) frameNameInput().value = randomFrameName();
     setShareLinkState(false, '');
     setSharePin('');
     publicBox.checked = false;
@@ -1095,31 +1071,12 @@ async function loadFrames() {
   } catch { /* 로그인 전이거나 세션이 없으면 조용히 무시 */ }
 }
 
-// "+" — 새 wepic 시작. 현재 선택을 풀고 이름을 새로 뽑는다(서버에 빈 액자를 미리
-// 만들지는 않는다 — 사진을 올려 실제로 만들 때 생성된다).
-document.getElementById('btn-frame-new').addEventListener('click', async () => {
-  try {
-    await api('/api/frames/deselect', { method: 'POST' });
-  } catch { /* 로그인 전이면 무시 — 화면 상태만 새 wepic으로 돌린다 */ }
-  currentFrameId = null;
-  frameNameInput().value = randomFrameName();
-  applyCurrentFrameToShareUI();
-  showToast(`새 wepic "${frameNameInput().value}" — 사진을 고르고 아래 버튼을 누르면 만들어집니다.`);
-});
-
-// 연필 — 이름 고치기. 아직 만들지 않은 wepic에서만 눌린다(만든 뒤에는 disabled).
-document.getElementById('btn-frame-rename').addEventListener('click', () => {
-  const el = frameNameInput();
-  if (el.disabled) return;
-  el.focus();
-  el.select();
-});
-
 // 현재 화면의 사진·제목·음악·전환설정을 서버에 올린다.
 // 서버는 세션마다 같은 shareId를 재사용하므로, 다시 올리면 "같은 링크"의 내용이 갱신된다.
-// mode: 'create'(팝업으로 링크 안내) | 'update'(조용히 반영 후 토스트)
-async function pushShare(mode) {
-  const btn = document.getElementById(mode === 'update' ? 'btn-update-share' : 'btn-make-share');
+// 버튼은 "공유하기" 하나뿐이고, 이미 만든 wepic이 있으면(update) 같은 링크에 반영한다.
+async function pushShare() {
+  const mode = currentShareUrl ? 'update' : 'create';
+  const btn = document.getElementById('btn-share');
   // 사진과 동영상을 모두 공유한다. 다만 구글 포토 "공유"로 받은 사진(isSharedMode)은
   // 브라우저가 든 파일을 올리는 방식이라 동영상을 지원하지 않아 그때만 제외한다.
   const sharePhotos = isSharedMode ? allPhotos.filter((p) => p.type !== 'video') : allPhotos;
@@ -1184,14 +1141,14 @@ async function pushShare(mode) {
       });
     }
     setSharePin(r.pin || ''); // 전체공유면 서버가 pin을 null로 돌려주므로 PIN 행이 사라진다
-    // wepic이 생겼으니 "만들기" 대신 "반영"만 남기고 복사·삭제 아이콘과 주소를 띄운다.
+    // wepic이 생겼으니 링크 복사·삭제 아이콘과 주소를 띄운다("공유하기"를 누르면 링크가 보인다).
     setShareLinkState(true, r.url);
     await loadFrames(); // 액자 이름·설정 갱신(자동 생성된 첫 액자 포함)
     if (mode === 'update') {
       const pinNote = r.isPublic ? '전체공유(PIN 없음)' : `PIN ${r.pin || '없음'}`;
       showToast(`사진·제목·배경음악·PIN을 모두 반영했습니다. (사진 ${r.count}장, ${pinNote})`);
     } else {
-      // 팝업 없이 토스트로만 알린다 — 주소는 바로 위 "wepic 주소" 줄에 표시된다.
+      // 팝업 없이 토스트로만 알린다 — 주소는 버튼 바로 아래 "wepic 주소" 줄에 나타난다.
       const pinNote = r.isPublic ? '전체공유(PIN 없음)' : `PIN ${r.pin || '없음'}`;
       showToast(`wepic을 만들었습니다. (사진 ${r.count}장, ${pinNote}) 주소는 아래에서 복사할 수 있습니다.`);
       if (excludedVideos) showToast(`동영상 ${excludedVideos}개는 공유 링크에서 제외되었습니다.`);
@@ -1209,14 +1166,13 @@ async function pushShare(mode) {
   }
 }
 
-document.getElementById('btn-make-share').addEventListener('click', () => pushShare('create'));
-document.getElementById('btn-update-share').addEventListener('click', () => pushShare('update'));
+document.getElementById('btn-share').addEventListener('click', () => pushShare());
 
-// wepic 이름 옆 아이콘 ① 주소 복사하기
+// 아이콘 줄 ① 링크 복사하기
 document.getElementById('btn-frame-copy').addEventListener('click', async () => {
   if (await copyShareUrl()) showToast('공유 주소를 복사했습니다.');
 });
-// wepic 이름 옆 아이콘 ② 링크 삭제하기
+// 아이콘 줄 ② 링크 삭제하기
 document.getElementById('btn-frame-delete').addEventListener('click', (e) =>
   revokeCurrentShare(e.currentTarget));
 
@@ -1226,9 +1182,9 @@ async function revokeCurrentShare(btn) {
   if (btn) btn.disabled = true;
   try {
     await api('/api/share', { method: 'DELETE' });
-    setShareLinkState(false, ''); // 반영할 링크가 없어짐 → 다시 "만들기"만 보인다
+    setShareLinkState(false, ''); // 링크가 없어짐 → 주소 줄과 복사·삭제 아이콘이 사라진다
     setSharePin('');
-    frameNameInput().value = randomFrameName(); // 다음 wepic 이름을 새로 제안
+    renewFrameName(); // 다음 wepic에 붙일 이름을 새로 뽑아둔다
     await loadFrames();
     showToast('공유 링크를 삭제했습니다.');
   } catch (err) {
@@ -1323,13 +1279,26 @@ let isSharedMode = false; // 구글 포토 "공유"로 사진을 받아 로그�
 let isFrameMode = false;
 let frameManifest = null;
 
-// "사진 보기" 카드를 누르면 **wepic 공유화면**(/f/<id>)으로 이동한다.
-// 예전에는 메인화면 슬라이드쇼로 재생했는데, 메인화면은 "내 사진을 편집하는 화면"이라
-// 남의 공개 wepic을 볼 자리가 아니다(설정 패널·액자 선택이 같이 보여 혼란스럽다).
-// 공유화면은 로그인 없이 보도록 만든 화면이고 전체공유는 PIN도 없어 그대로 열린다.
-function viewPublicShare(id) {
-  location.href = `/f/${encodeURIComponent(id)}`;
+// "사진 보기" 카드를 누르면 **wepic 공유화면**(/f/<id>)을 홈페이지 안에서 그대로 띄운다.
+// - 보여주는 화면은 공유화면이어야 한다(메인화면은 내 사진을 편집하는 곳이라 맞지 않는다).
+// - 그렇다고 페이지를 통째로 옮기면 홈페이지 상단 메뉴가 사라진다.
+// → iframe으로 하위 프레임에 끼워 넣어 둘 다 만족시킨다.
+function viewPublicShare(id, title) {
+  const frame = document.getElementById('feed-frame');
+  frame.src = `/f/${encodeURIComponent(id)}`;
+  document.getElementById('feed-viewer-title').textContent = title || '';
+  document.getElementById('feed-viewer-open').href = `/f/${encodeURIComponent(id)}`;
+  document.getElementById('feed-browse').classList.add('hidden');
+  document.getElementById('feed-viewer').classList.remove('hidden');
 }
+// 목록으로 돌아가기 — iframe을 비워 뒤에서 음악이 계속 흐르지 않게 한다.
+function closePublicViewer() {
+  const frame = document.getElementById('feed-frame');
+  frame.removeAttribute('src');
+  document.getElementById('feed-viewer').classList.add('hidden');
+  document.getElementById('feed-browse').classList.remove('hidden');
+}
+document.getElementById('btn-feed-back').addEventListener('click', closePublicViewer);
 
 // ---------- "사진 보기" 카드 목록 (전체공유 피드) ----------
 // 서버가 한 번에 전체 목록을 내려주고(개인 프로젝트 규모라 페이지네이션까지는 과함),
@@ -1340,6 +1309,7 @@ const FEED_BATCH = 9;
 let feedObserver = null;
 
 async function loadPublicFeed() {
+  closePublicViewer(); // 메뉴를 다시 누르면 항상 목록부터 보여준다
   const listEl = document.getElementById('feed-list');
   const emptyEl = document.getElementById('feed-empty');
   const loadingEl = document.getElementById('feed-loading');
@@ -1417,7 +1387,7 @@ function feedCard(s) {
   body.appendChild(likeBtn);
 
   card.appendChild(body);
-  card.addEventListener('click', () => viewPublicShare(s.id));
+  card.addEventListener('click', () => viewPublicShare(s.id, s.title));
   return card;
 }
 
@@ -2190,10 +2160,10 @@ function applyLoginState(status) {
   photosNote.classList.toggle('hidden', isLoggedIn);
 
   // "사진선택" 섹션의 사진 고르기 아이콘도 같은 기준으로 나눈다.
-  // 구글 전용(포토 다시 선택·추가·계정 다시 연결)은 구글 로그인일 때만 보인다.
+  // 구글 전용(포토 다시 선택·추가)은 구글 로그인일 때만 보인다.
+  // ("계정 다시 연결하기" 링크는 없앴다 — 토큰이 만료되면 어차피 로그인 화면으로 보낸다)
   document.getElementById('google-only-links').classList.toggle('hidden', !canUseGooglePhotos);
   document.getElementById('local-only-links').classList.toggle('hidden', canUseGooglePhotos || !isLoggedIn);
-  document.getElementById('btn-reconnect').classList.toggle('hidden', !canUseGooglePhotos);
 
   // 회원정보 패널 채우기
   fillMeForm(status.me, status.provider);

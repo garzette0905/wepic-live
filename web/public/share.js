@@ -418,11 +418,18 @@ function resumeMusicAfterVideo() {
 document.getElementById('btn-music').addEventListener('click', () => (soundOn ? muteSound() : playSound()));
 
 // ---- 홈으로 이동 ----
-document.getElementById('btn-home').addEventListener('click', () => {
-  try { ytPlayer?.pauseVideo(); } catch {}
-  stopPreviewMusic();
-  location.href = '/';
-});
+// 홈페이지의 "사진 보기" 안에 iframe으로 끼워져 열린 경우에는 이미 홈페이지 위에 있는
+// 셈이라 "홈으로"가 의미가 없다(눌러도 iframe 안에 홈페이지가 또 열릴 뿐). → 그때는 숨긴다.
+const embeddedInHome = window.top !== window.self;
+if (embeddedInHome) {
+  document.getElementById('btn-home').style.display = 'none';
+} else {
+  document.getElementById('btn-home').addEventListener('click', () => {
+    try { ytPlayer?.pauseVideo(); } catch {}
+    stopPreviewMusic();
+    location.href = '/';
+  });
+}
 
 // ---- 다운로드 (이 사진만 / 전체) ----
 let toastHandle = null;

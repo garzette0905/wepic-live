@@ -811,6 +811,22 @@ select optgroup {
 .feed-like-btn.liked { color: #ff6b7a; border-color: rgba(255,107,122,0.45); background: rgba(255,107,122,0.14); }
 .feed-like-heart { font-size: 14px; line-height: 1; }
 #feed-sentinel { height: 1px; }
+
+/* 카드를 누르면 홈페이지 하위 프레임 안에서 wepic 공유화면을 그대로 보여준다.
+   (페이지를 통째로 옮기면 상단 메뉴가 사라지므로 iframe으로 끼워 넣는다) */
+.feed-viewer { display: flex; flex-direction: column; gap: 10px; }
+.feed-viewer-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.feed-viewer-title { flex: 1; min-width: 0; font-weight: 700; color: #fff; font-size: 15px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.feed-frame {
+  width: 100%; aspect-ratio: 16 / 10; min-height: 320px;
+  border: 1px solid var(--border); border-radius: 12px; background: #000; display: block;
+}
+@media (max-width: 768px) {
+  .feed-frame { aspect-ratio: 4 / 3; min-height: 260px; }
+}
+/* 아이콘 줄에서 "사진 고르기"와 "링크 다루기"를 눈으로 구분해주는 얇은 구분선 */
+.pick-divider { width: 1px; height: 18px; background: var(--border); margin: 0 2px; }
 .admin-preview { display: flex; align-items: center; gap: 10px; margin: 6px 0 14px; }
 .title-overlay-preview { color: #fff; }
 
