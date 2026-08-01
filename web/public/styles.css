@@ -23,6 +23,10 @@ html, body {
   color: var(--text-main);
   font-family: "Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
   overflow: hidden;
+  /* 모바일에서 화면을 아래로 당기면 브라우저가 새로고침(pull-to-refresh)을 해버려
+     보고 있던 상태가 날아가고 홈으로 돌아간다. 페이지 자체는 스크롤하지 않고
+     내부 컨테이너만 스크롤하는 구조이므로, 당김 동작을 아예 막는다. */
+  overscroll-behavior: none;
 }
 
 .hidden { display: none !important; }
@@ -370,23 +374,39 @@ select optgroup {
 
 /* ---------- 모바일 (세로 스택 + 스크롤 허용) ---------- */
 @media (max-width: 768px) {
-  /* 화면이 잘리면 스크롤해서 전부 볼 수 있도록 세로 스크롤 허용 */
-  html, body { overflow-y: auto; overflow-x: hidden; height: auto; min-height: 100%; }
-
-  /* 사진 위 / 정보 패널 아래로 세로 배치 */
-  .slideshow { flex-direction: column; height: auto; min-height: 100vh; }
+  /* 사진 위 / 정보 패널 아래로 세로 배치.
+     ⚠️ 예전에는 html·body가 스크롤되도록 두고 정보 패널을 그냥 늘렸다(overflow: visible).
+     지금은 슬라이드쇼가 position:fixed인 .home-shell 안(하위 프레임)에 있어 **페이지가
+     스크롤될 수 없다** → 늘어난 패널이 잘려서 스크롤이 아예 안 되는 문제가 있었다.
+     그래서 이 요소 자체를 스크롤 컨테이너로 만든다(.home-frame이 쓰는 방식과 동일). */
+  .slideshow {
+    flex-direction: column;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain; /* 끝까지 내려도 페이지로 스크롤이 번지지 않게 */
+  }
   .photo-pane { flex: none; width: 100%; height: 60vh; }
   .info-pane {
+    /* 내용만큼 늘어나고, 스크롤은 위의 .slideshow가 담당한다 */
     flex: none; width: 100%; height: auto; overflow: visible;
     border-left: none; border-top: 1px solid var(--border);
+  }
+
+  /* 사진 선택(QR)·동기화 화면도 내용이 길면 이 컨테이너 안에서 스크롤되게 한다.
+     예전에는 body가 스크롤돼서 넘치는 내용을 볼 수 있었지만, 이제 body는 스크롤하지
+     않으므로(당김 새로고침 방지) 여기서 직접 스크롤을 받아야 잘리지 않는다.
+     내용이 화면보다 길 때 가운데 정렬이면 위쪽이 잘려 닿을 수 없으므로 위 정렬로 바꾼다. */
+  .onboarding-shell {
+    justify-content: flex-start;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
   }
 
   /* 손가락 터치 대비 살짝 크게 + 항상 잘 보이게 */
   .photo-pane .icon-btn { width: 44px; height: 44px; opacity: 0.85; }
 
   /* 전체화면일 때는 사진이 화면을 꽉 채우고 스크롤 없이 */
-  body.fullscreen { overflow: hidden; }
-  body.fullscreen .slideshow { height: 100vh; min-height: 100vh; }
+  body.fullscreen .slideshow { height: 100vh; overflow: hidden; }
   body.fullscreen .photo-pane { height: 100vh; }
 }
 

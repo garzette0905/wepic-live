@@ -39,13 +39,22 @@ function showSlideshow() {
   document.getElementById('admin-side-menu').classList.add('hidden');
   document.getElementById('my-side-menu').classList.add('hidden');
   slideshowEl.classList.remove('hidden');
-  // 모바일에서는 사진 아래로 설정 패널이 이어지는 세로 배치라, 진입 시 스크롤이 아래에
-  // 남아 있으면 사진이 안 보인다 → 항상 맨 위(사진)부터 보이도록 되돌린다.
-  requestAnimationFrame(() => {
-    slideshowEl.scrollTop = 0;
-    document.querySelector('.info-pane')?.scrollTo?.({ top: 0 });
+  resetSlideshowScroll();
+}
+
+// 모바일에서는 사진 아래로 설정 패널이 이어지는 세로 배치라, 진입 시 스크롤이 아래에
+// 남아 있으면 사진이 안 보인다 → 항상 맨 위(사진)부터 보이도록 되돌린다.
+// 사진 목록이 그려진 뒤에 높이가 바뀌므로 즉시 + 다음 프레임 + 짧은 지연에서 각각 되돌린다
+// (한 번만 하면 렌더링 전에 실행돼 효과가 없을 수 있다).
+function resetSlideshowScroll() {
+  const doReset = () => {
+    slideshowEl.scrollTop = 0;               // 모바일: 슬라이드쇼가 스크롤 컨테이너
+    document.querySelector('.info-pane')?.scrollTo?.({ top: 0 }); // 데스크톱: 설정 패널이 스크롤
     homeBodyEl.scrollTop = 0;
-  });
+  };
+  doReset();
+  requestAnimationFrame(doReset);
+  setTimeout(doReset, 120);
 }
 
 // ---------- 홈 상단 메뉴 / 관리자·My사진관리 좌측 메뉴 / 패널 ----------
@@ -83,9 +92,11 @@ function selectPanel(name) {
   if (name === 'photos') {
     document.getElementById('btn-pick-local-add').classList.toggle('hidden', allPhotos.length === 0);
   }
-  // Demo는 안내창 없이 곧바로 하위 프레임에서 재생한다(요청). 이미 데모를 보고 있으면
-  // 다시 처음부터 불러오지 않는다.
-  if (name === 'demo' && !isDemoMode) startDemo();
+  // Demo는 안내창 없이 곧바로 하위 프레임에서 재생한다(요청).
+  // 이미 데모를 본 뒤 홈에 갔다가 다시 누른 경우에도 **다시 재생**해야 한다 —
+  // 예전에는 isDemoMode로 걸러서 startDemo를 건너뛰었더니 슬라이드쇼가 표시되지 않고
+  // 빈 화면(안내 패널 자리)만 남았다. 데모 데이터는 정적 파일이라 다시 불러도 부담이 없다.
+  if (name === 'demo') startDemo();
 }
 // data-panel이 있는 항목만 클릭으로 이동한다(로그인 상태 표시는 data-panel이 없어 제외됨).
 document.querySelectorAll(
@@ -1540,6 +1551,9 @@ function boot(photos) {
   }
   showSlideshow();
   recomputeFiltered();
+  // 사진 목록·설정 패널이 그려진 **뒤에** 한 번 더 맨 위로 되돌린다
+  // (showSlideshow 시점에는 아직 내용이 없어 스크롤 높이가 정해지지 않았다).
+  resetSlideshowScroll();
 }
 
 let loggedInName = null;
