@@ -135,6 +135,17 @@ function updateProgress() {
 const isVideoItem = (p) => !!(p && p.type === 'video' && p.videoUrl);
 
 function advance() { if (photos.length) { idx = (idx + 1) % photos.length; show(); } }
+
+// 사용자가 직접 이전(-1)/다음(+1)으로 넘긴다. 자동 전환 타이머는 처음부터 다시 세어,
+// 방금 넘긴 사진이 곧바로 지나가 버리지 않게 한다. (멈춤 상태면 멈춘 채로 한 장만 이동)
+function step(delta) {
+  if (!photos.length) return;
+  idx = (idx + delta + photos.length) % photos.length;
+  if (timer) { clearInterval(timer); timer = null; }
+  show();
+  resetTimer();
+}
+
 function resetTimer() {
   if (timer) clearInterval(timer);
   timer = null;
@@ -355,6 +366,8 @@ function setSlidePaused(paused) {
   updateSlideBtn();
 }
 document.getElementById('btn-slide').addEventListener('click', () => setSlidePaused(!slidePaused));
+document.getElementById('btn-prev').addEventListener('click', () => step(-1));
+document.getElementById('btn-next').addEventListener('click', () => step(1));
 
 // ---- 매니페스트 적용 (최초 로드 / 변경 반영 공용) ----
 let lastUpdatedAt = null;

@@ -677,6 +677,29 @@ document.getElementById('btn-music-clear').addEventListener('click', () => {
 // ---------- 실시간 공유 링크 ----------
 const shareModal = document.getElementById('share-modal');
 
+// 공유 버튼은 언제나 하나만 보인다. 링크가 없으면 "실시간 공유 링크 만들기", 링크가 생기면
+// "링크변경 반영"만 남기고, 액자 이름 리스트박스 옆에 주소 복사·링크 삭제 아이콘을 띄운다.
+// (예전에는 두 버튼이 같이 보여서 어느 쪽을 눌러야 하는지 헷갈렸다)
+function setShareLinkState(hasLink) {
+  const has = !!hasLink;
+  document.getElementById('btn-make-share').classList.toggle('hidden', has);
+  document.getElementById('btn-update-share').classList.toggle('hidden', !has);
+  document.getElementById('btn-frame-copy').classList.toggle('hidden', !has);
+  document.getElementById('btn-frame-delete').classList.toggle('hidden', !has);
+}
+
+// 공유 주소를 클립보드로. (구형 브라우저·비보안 컨텍스트에서는 선택+복사로 폴백)
+async function copyShareUrl() {
+  const input = document.getElementById('share-url');
+  if (!input.value) { showToast('아직 공유 링크가 없습니다.'); return false; }
+  try {
+    await navigator.clipboard.writeText(input.value);
+  } catch {
+    input.select(); document.execCommand('copy');
+  }
+  return true;
+}
+
 // 공유 열람용 PIN(4자리). 링크를 만들면 서버가 발급해 내려주고, 사용자가 직접 고칠 수도 있다.
 // 고친 뒤 "링크변경 반영"을 누르면 서버에 새 PIN이 저장된다.
 function setSharePin(pin) {
@@ -751,15 +774,14 @@ function applyFrameSettingsToUI(m) {
 // (다른 액자를 편집하던 값이 이어지지 않도록).
 function applyCurrentFrameToShareUI() {
   const f = frames.find((x) => x.id === currentFrameId);
-  const btnUpdate = document.getElementById('btn-update-share');
   if (f && f.hasContent) {
-    btnUpdate.classList.remove('hidden');
+    setShareLinkState(true);
     document.getElementById('share-url').value = f.url || '';
     document.getElementById('btn-open-share').href = f.url || '#';
     if (f.pin) setSharePin(f.pin); else setSharePin('');
     applyFrameSettingsToUI(f);
   } else {
-    btnUpdate.classList.add('hidden');
+    setShareLinkState(false);
     setSharePin('');
     document.getElementById('share-url').value = '';
     resetTitleAndMusicToDefault();
@@ -887,11 +909,11 @@ async function pushShare(mode) {
     document.getElementById('share-url').value = r.url;
     document.getElementById('btn-open-share').href = r.url;
     if (r.pin) setSharePin(r.pin); // 서버가 확정한 PIN을 화면에 표시
-    // 링크가 생겼으면 "링크변경 반영" 버튼을 노출한다.
-    document.getElementById('btn-update-share').classList.remove('hidden');
+    // 링크가 생겼으니 "만들기" 대신 "반영"만 남기고 복사·삭제 아이콘을 띄운다.
+    setShareLinkState(true);
     await loadFrames(); // 액자 목록·이름표 갱신(자동 생성된 첫 액자 포함)
     if (mode === 'update') {
-      showToast(`공유 링크에 반영되었습니다. (사진 ${r.count}장, PIN ${r.pin || '없음'})`);
+      showToast(`사진·제목·배경음악·PIN을 모두 반영했습니다. (사진 ${r.count}장, PIN ${r.pin || '없음'})`);
     } else {
       document.getElementById('share-copied').classList.add('hidden');
       shareModal.classList.remove('hidden');
@@ -909,35 +931,41 @@ document.getElementById('btn-make-share').addEventListener('click', () => pushSh
 document.getElementById('btn-update-share').addEventListener('click', () => pushShare('update'));
 
 document.getElementById('btn-copy-share').addEventListener('click', async () => {
-  const input = document.getElementById('share-url');
-  try {
-    await navigator.clipboard.writeText(input.value);
-  } catch {
-    input.select(); document.execCommand('copy'); // 폴백
-  }
-  document.getElementById('share-copied').classList.remove('hidden');
+  if (await copyShareUrl()) document.getElementById('share-copied').classList.remove('hidden');
 });
+
+// 액자 이름 옆 아이콘 ① 주소 복사하기
+document.getElementById('btn-frame-copy').addEventListener('click', async () => {
+  if (await copyShareUrl()) showToast('공유 주소를 복사했습니다.');
+});
+// 액자 이름 옆 아이콘 ② 링크 삭제하기
+document.getElementById('btn-frame-delete').addEventListener('click', (e) =>
+  revokeCurrentShare(e.currentTarget));
 document.getElementById('btn-share-close').addEventListener('click', (e) => {
   e.preventDefault(); shareModal.classList.add('hidden');
 });
 shareModal.addEventListener('click', (e) => { if (e.target === shareModal) shareModal.classList.add('hidden'); });
 
-document.getElementById('btn-revoke-share').addEventListener('click', async () => {
-  if (!confirm('공유 링크를 지금 폐기할까요? 이후 이 링크로는 접속할 수 없습니다.')) return;
-  const btn = document.getElementById('btn-revoke-share');
-  btn.disabled = true;
+// 현재 액자의 공유 링크를 삭제한다. 안내 팝업의 "링크 폐기"와 액자 이름 옆 🗑 아이콘이 함께 쓴다.
+async function revokeCurrentShare(btn) {
+  if (!confirm('공유 링크를 지금 삭제할까요? 이후 이 링크로는 접속할 수 없습니다.')) return;
+  if (btn) btn.disabled = true;
   try {
     await api('/api/share', { method: 'DELETE' });
     shareModal.classList.add('hidden');
-    document.getElementById('btn-update-share').classList.add('hidden'); // 반영할 링크가 없어짐
+    setShareLinkState(false); // 반영할 링크가 없어짐 → 다시 "만들기"만 보인다
+    document.getElementById('share-url').value = '';
+    setSharePin('');
     await loadFrames(); // 삭제된 액자를 목록에서 제거
-    showToast('공유 링크를 폐기했습니다.');
+    showToast('공유 링크를 삭제했습니다.');
   } catch (err) {
-    showToast('폐기 실패: ' + err.message);
+    showToast('삭제 실패: ' + err.message);
   } finally {
-    btn.disabled = false;
+    if (btn) btn.disabled = false;
   }
-});
+}
+document.getElementById('btn-revoke-share').addEventListener('click', (e) =>
+  revokeCurrentShare(e.currentTarget));
 
 // ---------- 하단 링크 ----------
 document.getElementById('btn-reselect').addEventListener('click', (e) => {
@@ -1608,7 +1636,7 @@ function applyLoginState(status) {
   isLoggedIn = !!status.loggedIn;
   // 이전에 만든 공유 링크가 있으면 "링크변경 반영"을 바로 쓸 수 있게 노출
   if (status.hasShare) {
-    document.getElementById('btn-update-share').classList.remove('hidden');
+    setShareLinkState(true);
     if (status.sharePin) setSharePin(status.sharePin); // 기존 공유의 PIN 표시
   }
   // wepic 관리자 화면 진입 메뉴는 관리자(role='admin')로 로그인했을 때만 노출

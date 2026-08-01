@@ -457,10 +457,15 @@
           <select id="frame-select" class="mini-select"></select>
           <button id="btn-frame-new" class="mini-btn" title="새 액자 추가">+</button>
           <button id="btn-frame-rename" class="mini-btn" title="이름 바꾸기">✎</button>
+          <!-- 링크가 만들어진 액자에서만 쓰는 두 가지: 주소 복사 / 링크 삭제 -->
+          <button id="btn-frame-copy" class="mini-btn hidden" title="주소 복사하기">📋</button>
+          <button id="btn-frame-delete" class="mini-btn hidden" title="링크 삭제하기">🗑</button>
         </div>
+        <!-- 버튼은 언제나 하나만 보인다: 링크가 없으면 "만들기", 있으면 "반영".
+             "반영"은 사진 추가·삭제, 제목, 배경음악, 전환설정, PIN을 한 번에 저장한다. -->
         <div class="share-btn-row">
           <button id="btn-make-share" class="secondary slim share-btn">실시간 공유 링크 만들기</button>
-          <button id="btn-update-share" class="secondary slim share-btn hidden" title="지금 화면의 사진·제목·음악을 기존 공유 링크에 반영">링크변경 반영</button>
+          <button id="btn-update-share" class="secondary slim share-btn hidden" title="사진 추가·삭제, 제목, 배경음악, PIN을 한 번에 저장합니다">링크변경 반영</button>
         </div>
         <!-- 공유 링크 열람용 PIN(4자리). 수정 후 "링크변경 반영"을 누르면 새 PIN이 적용된다. -->
         <div id="share-pin-row" class="share-pin-row hidden">
@@ -538,8 +543,8 @@
         <a href="#" id="btn-open-share" class="text-link small" target="_blank">링크 열어보기</a>
         <a href="#" id="btn-share-close" class="text-link small">닫기</a>
       </div>
-      <button id="btn-revoke-share" class="secondary slim revoke-btn">링크 지금 폐기하기</button>
-      <p class="hint" style="margin:6px 0 0;">폐기하면 이 링크는 즉시 만료되어 더 이상 열리지 않습니다.</p>
+      <button id="btn-revoke-share" class="secondary slim revoke-btn">링크 삭제하기</button>
+      <p class="hint" style="margin:6px 0 0;">삭제하면 이 링크는 즉시 만료되어 더 이상 열리지 않습니다.</p>
     </div>
   </div>
 
