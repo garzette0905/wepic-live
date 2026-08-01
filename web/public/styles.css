@@ -156,26 +156,41 @@ video.photo-layer { background: #000; }
 }
 .icon-btn:hover { opacity: 1; background: rgba(0,0,0,0.7); filter: none; }
 .photo-actions { position: absolute; left: 16px; bottom: 16px; display: flex; gap: 8px; z-index: 5; }
-/* 사진 저장(다운로드)은 PC에서만 노출한다. 폰·태블릿의 인앱 브라우저는 다운로드가 막히거나
-   불안정한 경우가 많아 오해를 부르므로, 마우스가 있는 기기(hover+정밀 포인터)에서만 보인다. */
+/* 사진 저장(다운로드)만 PC 전용이다. 폰·태블릿의 인앱 브라우저는 다운로드가 막히거나
+   불안정한 경우가 많아 오해를 부르므로, 마우스가 있는 기기(hover+정밀 포인터)에서만 보인다.
+   전체화면·홈·음악·이전/다음·멈춤 아이콘은 wepic 공유화면과 마찬가지로 모바일에서도 보인다. */
 @media (hover: none), (pointer: coarse) {
-  .photo-actions { display: none; }
+  #btn-download { display: none; }
 }
 
 /* 저장할 수 없을 때(동영상 등) 다운로드 아이콘 비활성 표시 */
 .icon-btn:disabled { opacity: 0.25; cursor: not-allowed; }
 .icon-btn:disabled:hover { opacity: 0.25; background: rgba(0,0,0,0.45); }
+/* 기본은 share.html처럼 독립적으로 우측에 뜨는 버튼이지만, 메인 슬라이드쇼에서는
+   .photo-actions 아이콘 줄의 맨 앞자리로 들어가므로 그 안에서는 static으로 되돌린다. */
 .fullscreen-btn { position: absolute; right: 16px; z-index: 5; }
-.fullscreen-btn.fs-bottom { bottom: 16px; }
+.photo-actions .fullscreen-btn { position: static; }
 .fullscreen-btn .icon-shrink { display: none; }
 body.fullscreen .fullscreen-btn .icon-expand { display: none; }
 body.fullscreen .fullscreen-btn .icon-shrink { display: block; }
 body.fullscreen .info-pane { display: none; }
 
+/* 배경음악 재생/일시정지 아이콘 — 곡이 준비되기 전에는 숨겨둔다(HTML의 hidden 클래스).
+   재생 중(기본)에는 음표만, 멈췄을 때만 사선이 그어진 음표로 바뀐다. */
+.icon-music-paused { display: none; }
+#btn-photo-music.paused .icon-music-playing { display: none; }
+#btn-photo-music.paused .icon-music-paused { display: block; }
+
+/* 사진 슬라이드 멈춤/재개 — wepic 공유화면과 같은 방식(기본은 ⏸, 멈추면 ▶) */
+#btn-photo-pause .icon-play { display: none; }
+#btn-photo-pause.paused .icon-pause { display: none; }
+#btn-photo-pause.paused .icon-play { display: block; }
+
+/* wepic 공유화면과 동일한 폰트·색상(share.html의 .share-caption) */
 .fullscreen-caption {
-  display: none; position: absolute; right: 64px; bottom: 24px; text-align: right;
-  color: rgba(255,255,255,0.88); font-size: 12px; line-height: 1.5;
-  text-shadow: 0 1px 4px rgba(0,0,0,0.85); z-index: 5; pointer-events: none;
+  display: none; position: absolute; right: 20px; bottom: 68px; text-align: right;
+  color: rgba(200,200,200,0.55); font-size: 13px; line-height: 1.5;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.6); z-index: 5; pointer-events: none;
 }
 body.fullscreen .fullscreen-caption { display: block; }
 

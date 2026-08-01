@@ -17,6 +17,17 @@ const homeFrameEl = document.querySelector('.home-frame');
 // 강하다). 전체화면은 이 요소 자체를 대상으로 하므로 메뉴 없이 사진만 꽉 찬다.
 homeBodyEl.appendChild(slideshowEl);
 
+// 슬라이드쇼 재생을 멈춘다(타이머·동영상·배경음악). 홈으로 나가는 모든 경로가 이걸 거치므로
+// Demo든 실제 액자든 어떤 경로로 나가도 사운드가 뒤에서 계속 흐르는 일이 없다.
+function stopSlideshowPlayback() {
+  if (intervalHandle) { clearInterval(intervalHandle); intervalHandle = null; }
+  const v = document.getElementById('video-layer');
+  try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* 무시 */ }
+  v.classList.remove('active');
+  try { ytPlayer?.pauseVideo?.(); } catch { /* 무시 */ }
+  musicPlaying = false;
+  syncMusicButton();
+}
 function showHome() {
   pickerShell.classList.add('hidden');
   slideshowEl.classList.add('hidden');
@@ -24,6 +35,7 @@ function showHome() {
   homeFrameEl.classList.remove('hidden'); // 패널 영역 복귀
   homeShell.classList.remove('hidden');
   setWakeLock(false);                     // 사진을 안 보는 화면에서는 절전을 막지 않는다
+  stopSlideshowPlayback();                // 재생 중이던 동영상·배경음악도 함께 멈춘다
 }
 function showPicker(name) {
   // QR·동기화는 짧게 지나가는 중간 단계라 지금처럼 전체 화면으로 둔다.
@@ -516,6 +528,16 @@ function advance() {
   showCurrent();
   resetTimer(); // 새 항목이 사진이면 다음 전환 타이머를, 동영상이면 재생 종료 대기로 전환
 }
+
+// 사용자가 좌측 아이콘으로 직접 이전(-1)/다음(+1)으로 넘긴다. wepic 공유화면의 step()과 동일하게,
+// 자동 전환 타이머를 끊고 처음부터 다시 걸어 방금 넘긴 사진이 곧바로 지나가지 않게 한다.
+function goToPhoto(delta) {
+  if (!filteredPhotos.length) return;
+  if (intervalHandle) { clearInterval(intervalHandle); intervalHandle = null; }
+  currentIndex = (currentIndex + delta + filteredPhotos.length) % filteredPhotos.length;
+  showCurrent();
+  resetTimer();
+}
 function resetTimer() {
   if (intervalHandle) clearInterval(intervalHandle);
   intervalHandle = null;
@@ -530,6 +552,12 @@ function setSlideshowPaused(paused) {
   slideshowPaused = paused;
   const btn = document.getElementById('btn-pause');
   btn.textContent = paused ? '▶ 화면 재개' : '⏸ 화면 잠시멈춤';
+  // 사진 위 좌측 아이콘 줄의 멈춤/재개 버튼도 같은 상태를 보여준다(설정 패널 버튼과 동기화)
+  const iconBtn = document.getElementById('btn-photo-pause');
+  if (iconBtn) {
+    iconBtn.classList.toggle('paused', paused);
+    iconBtn.title = paused ? '사진 슬라이드 재개' : '사진 슬라이드 멈춤';
+  }
   const video = document.getElementById('video-layer');
   const cur = filteredPhotos[currentIndex];
   if (paused) {
@@ -543,6 +571,10 @@ function setSlideshowPaused(paused) {
   }
 }
 document.getElementById('btn-pause').addEventListener('click', () => setSlideshowPaused(!slideshowPaused));
+document.getElementById('btn-photo-pause').addEventListener('click', () => setSlideshowPaused(!slideshowPaused));
+document.getElementById('btn-photo-prev').addEventListener('click', () => goToPhoto(-1));
+document.getElementById('btn-photo-next').addEventListener('click', () => goToPhoto(1));
+document.getElementById('btn-photo-home').addEventListener('click', stopEverythingAndGoHome);
 
 // ---------- 방향 필터 ----------
 let orientationMode = 'all'; // 'all' | 'landscape' | 'portrait'
@@ -653,6 +685,19 @@ let musicLoaded = false;
 let musicPlaying = false;
 let musicTitle = '';
 
+// 설정 패널의 "▶/⏸ 재생하기" 텍스트 버튼과, 사진 위 좌측 아이콘 줄의 음악 아이콘은
+// 같은 상태(musicLoaded·musicPlaying)를 보여주는 두 개의 표시일 뿐이다 — 한 곳에서 갱신한다.
+function syncMusicButton() {
+  const textBtn = document.getElementById('btn-music-load');
+  if (textBtn) textBtn.textContent = musicPlaying ? '⏸' : '▶';
+  const iconBtn = document.getElementById('btn-photo-music');
+  if (iconBtn) {
+    iconBtn.classList.toggle('hidden', !musicLoaded); // 곡이 준비되기 전에는 숨긴다(공유화면과 동일)
+    iconBtn.classList.toggle('paused', !musicPlaying);
+    iconBtn.title = musicPlaying ? '배경음악 일시정지' : '배경음악 재생';
+  }
+}
+
 // 유튜브 곡 제목은 매우 길 때가 많아(가수·앨범·태그까지 붙음) 화면을 밀어낸다.
 // 20자까지만 보여주고 넘치면 …로 줄인다.
 const MUSIC_TITLE_MAX = 20;
@@ -683,7 +728,6 @@ let loadedVideoId = null;
 
 async function loadBgMusic(url) {
   const videoId = extractYouTubeId(url);
-  const playBtn = document.getElementById('btn-music-load');
   const titleEl = document.getElementById('music-title');
   if (!videoId) { showToast('올바른 YouTube 링크가 아닙니다.'); return; }
 
@@ -700,10 +744,11 @@ async function loadBgMusic(url) {
           onStateChange: (e) => {
             // 재생/일시정지 버튼을 하나로 통합: 재생 중이면 일시정지, 아니면 재생하기
             if (e.data === YT.PlayerState.PLAYING) {
-              playBtn.textContent = '⏸'; musicPlaying = true;
+              musicPlaying = true;
               muteVideoForBackgroundMusic();
             }
-            else if (e.data === YT.PlayerState.PAUSED) { playBtn.textContent = '▶'; musicPlaying = false; }
+            else if (e.data === YT.PlayerState.PAUSED) { musicPlaying = false; }
+            syncMusicButton();
             refreshCaption();
           },
           onError: () => showToast('이 영상은 재생할 수 없습니다 (퍼가기 금지 등).'),
@@ -716,7 +761,7 @@ async function loadBgMusic(url) {
   musicLoaded = true;
   musicPlaying = true;
   musicTitle = '';
-  playBtn.textContent = '⏸';
+  syncMusicButton();
   setTimeout(() => {
     try {
       musicTitle = shortMusicTitle(ytPlayer.getVideoData()?.title || '');
@@ -735,6 +780,13 @@ document.getElementById('btn-music-load').addEventListener('click', () => {
     else showToast('YouTube 링크를 입력하세요.');
     return;
   }
+  if (ytPlayer.getPlayerState() === YT.PlayerState.PLAYING) ytPlayer.pauseVideo();
+  else ytPlayer.playVideo();
+});
+// 사진 위 좌측 아이콘 줄의 음악 아이콘 — 곡이 이미 준비된 뒤에만 보이므로 재생↔일시정지만 토글한다
+// (링크 입력·최초 로드는 설정 패널의 "▶ 재생하기"에서 한다).
+document.getElementById('btn-photo-music').addEventListener('click', () => {
+  if (!musicLoaded || !ytPlayer) return;
   if (ytPlayer.getPlayerState() === YT.PlayerState.PLAYING) ytPlayer.pauseVideo();
   else ytPlayer.playVideo();
 });
@@ -1061,19 +1113,9 @@ document.getElementById('btn-logout').addEventListener('click', async (e) => {
   location.href = '/';
 });
 
-// 슬라이드쇼(사진 전환·동영상·배경음악)를 전부 멈추고 홈 화면으로 되돌린다.
-// 홈으로만 이동하고 음악을 끄지 않으면 보이지 않는 곳에서 계속 재생돼 혼란스럽다.
+// 전체화면을 해제하고 홈(소개)으로 이동한다. 재생 중이던 동영상·배경음악은
+// selectPanel → showHome()이 stopSlideshowPlayback()으로 함께 멈춰준다.
 function stopEverythingAndGoHome() {
-  if (intervalHandle) { clearInterval(intervalHandle); intervalHandle = null; }
-  // 재생 중인 동영상 정지
-  const v = document.getElementById('video-layer');
-  try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* 무시 */ }
-  v.classList.remove('active');
-  // 배경음악 정지
-  try { ytPlayer?.pauseVideo?.(); } catch { /* 무시 */ }
-  musicPlaying = false;
-  const playBtn = document.getElementById('btn-music-load');
-  if (playBtn) playBtn.textContent = '▶';
   exitFullscreenIfAny();
   selectPanel('about');
 }
