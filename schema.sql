@@ -34,3 +34,17 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
 -- 관리자 화면의 회원 목록은 최근 가입순으로 보여준다.
 CREATE INDEX IF NOT EXISTS idx_users_created_at ON users (created_at);
+
+-- "전체공유"(PIN 없이 누구나 볼 수 있는 공유)에 붙는 좋아요.
+-- share_id는 R2의 액자(공유) id를 그대로 쓴다 — R2가 원본이라 D1에 별도 share 테이블을
+-- 두지 않는다. (share_id, user_id) UNIQUE로 "누른 적 있음(행 존재)"만 의미하고,
+-- 취소하면 행을 지운다(카운트는 COUNT(*)로 그때그때 계산).
+-- 향후 댓글 기능을 추가한다면 같은 모양(share_id + user_id + 내용)의 별도 테이블로 두면 된다.
+CREATE TABLE IF NOT EXISTS share_likes (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  share_id   TEXT NOT NULL,
+  user_id    INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (share_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_share_likes_share ON share_likes (share_id);

@@ -107,11 +107,8 @@ function selectPanel(name) {
   if (name === 'photos') {
     document.getElementById('btn-pick-local-add').classList.toggle('hidden', allPhotos.length === 0);
   }
-  // Demo는 안내창 없이 곧바로 하위 프레임에서 재생한다(요청).
-  // 이미 데모를 본 뒤 홈에 갔다가 다시 누른 경우에도 **다시 재생**해야 한다 —
-  // 예전에는 isDemoMode로 걸러서 startDemo를 건너뛰었더니 슬라이드쇼가 표시되지 않고
-  // 빈 화면(안내 패널 자리)만 남았다. 데모 데이터는 정적 파일이라 다시 불러도 부담이 없다.
-  if (name === 'demo') startDemo();
+  // "사진 보기": 전체공유 카드 목록을 매번 새로 불러온다(다른 회원이 그새 새로 공개했을 수 있음).
+  if (name === 'feed') loadPublicFeed();
 }
 // data-panel이 있는 항목만 클릭으로 이동한다(로그인 상태 표시는 data-panel이 없어 제외됨).
 document.querySelectorAll(
@@ -838,6 +835,13 @@ document.getElementById('btn-pin-new').addEventListener('click', () => {
   showToast('새 PIN이 준비됐습니다. "링크변경 반영"을 누르면 적용됩니다.');
 });
 
+// 전체공유: 체크하면 PIN이 필요 없으므로 그 자리에서 바로 PIN 행을 숨긴다
+// (저장 결과를 기다리지 않고 즉시 피드백). 실제 PIN 제거는 다음 저장 때 서버가 처리한다.
+document.getElementById('share-public').addEventListener('change', (e) => {
+  if (e.target.checked) document.getElementById('share-pin-row').classList.add('hidden');
+  else setSharePin(document.getElementById('share-pin').value.trim());
+});
+
 // ---------- 세션당 액자 목록 (다중 액자) ----------
 // 한 세션이 여러 액자(공유 링크)를 만들고, 이름 붙여 전환하며 각각 계속 갱신할 수 있다.
 // 관리자가 "wepic 메인화면 열기"(isFrameMode)로 연 액자도 서버가 currentFrameId로 선택해
@@ -895,15 +899,19 @@ function applyFrameSettingsToUI(m) {
 // (다른 액자를 편집하던 값이 이어지지 않도록).
 function applyCurrentFrameToShareUI() {
   const f = frames.find((x) => x.id === currentFrameId);
+  const publicBox = document.getElementById('share-public');
   if (f && f.hasContent) {
     setShareLinkState(true);
     document.getElementById('share-url').value = f.url || '';
     document.getElementById('btn-open-share').href = f.url || '#';
+    publicBox.checked = !!f.isPublic;
+    // 전체공유면 서버가 애초에 pin을 두지 않으므로 f.pin이 없다 — setSharePin이 알아서 숨긴다.
     if (f.pin) setSharePin(f.pin); else setSharePin('');
     applyFrameSettingsToUI(f);
   } else {
     setShareLinkState(false);
     setSharePin('');
+    publicBox.checked = false;
     document.getElementById('share-url').value = '';
     resetTitleAndMusicToDefault();
   }
@@ -993,6 +1001,8 @@ async function pushShare(mode) {
     const intervalSec = Math.round(slideIntervalMs / 1000);
     // 화면에 표시/수정된 PIN을 함께 보낸다(비어 있으면 서버가 기존 유지 또는 새로 발급).
     const pin = getSharePin();
+    // 전체공유: 체크하면 서버가 PIN 없이 저장한다(기존 PIN이 있었다면 지운다).
+    const isPublic = document.getElementById('share-public').checked;
     let r;
     if (isSharedMode || isLocalMode) {
       // 구글 포토 "공유"로 받은 사진(isSharedMode)이나 기기 갤러리에서 고른 사진
@@ -1011,6 +1021,7 @@ async function pushShare(mode) {
       form.append('title', title);
       form.append('intervalSec', String(intervalSec));
       form.append('effect', slideEffect);
+      form.append('isPublic', isPublic ? '1' : '0');
       if (pin) form.append('pin', pin);
       r = await api('/api/share/blob', { method: 'POST', body: form });
     } else {
@@ -1024,17 +1035,18 @@ async function pushShare(mode) {
       r = await api('/api/share', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items, musicUrl, title, intervalSec, effect: slideEffect, pin }),
+        body: JSON.stringify({ items, musicUrl, title, intervalSec, effect: slideEffect, pin, isPublic }),
       });
     }
     document.getElementById('share-url').value = r.url;
     document.getElementById('btn-open-share').href = r.url;
-    if (r.pin) setSharePin(r.pin); // 서버가 확정한 PIN을 화면에 표시
+    setSharePin(r.pin || ''); // 전체공유면 서버가 pin을 null로 돌려주므로 PIN 행이 사라진다
     // 링크가 생겼으니 "만들기" 대신 "반영"만 남기고 복사·삭제 아이콘을 띄운다.
     setShareLinkState(true);
     await loadFrames(); // 액자 목록·이름표 갱신(자동 생성된 첫 액자 포함)
     if (mode === 'update') {
-      showToast(`사진·제목·배경음악·PIN을 모두 반영했습니다. (사진 ${r.count}장, PIN ${r.pin || '없음'})`);
+      const pinNote = r.isPublic ? '전체공유(PIN 없음)' : `PIN ${r.pin || '없음'}`;
+      showToast(`사진·제목·배경음악·PIN을 모두 반영했습니다. (사진 ${r.count}장, ${pinNote})`);
     } else {
       document.getElementById('share-copied').classList.add('hidden');
       shareModal.classList.remove('hidden');
@@ -1151,8 +1163,8 @@ document.getElementById('btn-exclude-apply').addEventListener('click', () => {
   recomputeFiltered();
 });
 
-// ---------- 데모 (계정 없이 보기) ----------
-let isDemoMode = false;
+// ---------- "사진 보기" 피드에서 남의 공개 공유를 보는 상태(로그인 없이 가능) ----------
+let isPublicViewMode = false;
 let isSharedMode = false; // 구글 포토 "공유"로 사진을 받아 로그인 없이 보는 상태(PWA 공유 타깃)
 // 관리자 모드: 관리자가 특정 액자를 wepic 메인화면으로 열어(/?frame=<id>) 자기 세션에
 // 편입시킨 상태. frameManifest는 최초 진입 시 제목·전환설정 초기값을 채우는 용도일 뿐,
@@ -1160,19 +1172,142 @@ let isSharedMode = false; // 구글 포토 "공유"로 사진을 받아 로그�
 let isFrameMode = false;
 let frameManifest = null;
 
-async function startDemo() {
+// "사진 보기" 카드를 눌러 특정 공개 공유를 같은 화면 안에서 재생한다.
+// 전체공유는 PIN이 없으므로 photos.json을 로그인 없이 그대로 받아올 수 있다.
+async function viewPublicShare(id, author, title) {
   try {
-    const res = await fetch('/demo/photos.json');
-    if (!res.ok) throw new Error(`데모 데이터를 불러오지 못했습니다 (${res.status})`);
+    const res = await fetch(`/shares/${id}/photos.json`, { cache: 'no-store' });
+    if (!res.ok) throw new Error('공유를 불러오지 못했습니다.');
     const data = await res.json();
-    isDemoMode = true;
-    if (data.musicUrl) document.getElementById('music-url').value = data.musicUrl;
-    boot(data.items || []);
+    // 제목은 boot()가 loadDisplaySettings()로 Default 값으로 리셋한 "다음"에 적용해야 한다
+    // (frameManifest의 제목도 같은 이유로 boot() 안에서 뒤늦게 적용된다) — 그래서 여기서
+    // 직접 applyTitle을 부르지 않고 publicView에 실어 boot()에 맡긴다.
+    boot(data.items || [], {
+      author: author || '위픽 사용자',
+      title: title || data.title || '',
+      musicUrl: data.musicUrl || '',
+    });
   } catch (err) {
-    alert(err.message);
+    showToast(err.message || '불러오기에 실패했습니다.');
   }
 }
-document.getElementById('btn-demo').addEventListener('click', startDemo);
+
+// ---------- "사진 보기" 카드 목록 (전체공유 피드) ----------
+// 서버가 한 번에 전체 목록을 내려주고(개인 프로젝트 규모라 페이지네이션까지는 과함),
+// 화면에는 배치 단위로만 그려서 아래로 스크롤할수록 계속 나오는 것처럼 보이게 한다.
+let feedCache = [];
+let feedShown = 0;
+const FEED_BATCH = 9;
+let feedObserver = null;
+
+async function loadPublicFeed() {
+  const listEl = document.getElementById('feed-list');
+  const emptyEl = document.getElementById('feed-empty');
+  const loadingEl = document.getElementById('feed-loading');
+  if (feedObserver) { feedObserver.disconnect(); feedObserver = null; }
+  listEl.innerHTML = '';
+  emptyEl.classList.add('hidden');
+  loadingEl.classList.remove('hidden');
+  feedShown = 0;
+  try {
+    const r = await fetch('/api/public/shares', { credentials: 'same-origin' }).then((res) => res.json());
+    feedCache = r.shares || [];
+  } catch {
+    feedCache = [];
+  }
+  loadingEl.classList.add('hidden');
+  if (!feedCache.length) { emptyEl.classList.remove('hidden'); return; }
+  renderNextFeedBatch();
+}
+
+function renderNextFeedBatch() {
+  const listEl = document.getElementById('feed-list');
+  const next = feedCache.slice(feedShown, feedShown + FEED_BATCH);
+  next.forEach((s) => listEl.appendChild(feedCard(s)));
+  feedShown += next.length;
+  if (feedShown >= feedCache.length) {
+    if (feedObserver) { feedObserver.disconnect(); feedObserver = null; }
+    return;
+  }
+  if (!feedObserver) {
+    feedObserver = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) renderNextFeedBatch();
+    }, { rootMargin: '300px' });
+  }
+  feedObserver.observe(document.getElementById('feed-sentinel'));
+}
+
+function feedDateLabel(iso) {
+  if (!iso) return '';
+  return new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date(iso));
+}
+
+function feedCard(s) {
+  const card = document.createElement('div');
+  card.className = 'feed-card';
+
+  const img = document.createElement('img');
+  img.className = 'feed-card-thumb';
+  img.loading = 'lazy';
+  img.alt = '';
+  if (s.thumbUrl) img.src = s.thumbUrl;
+  card.appendChild(img);
+
+  const body = document.createElement('div');
+  body.className = 'feed-card-body';
+
+  const title = document.createElement('div');
+  title.className = 'feed-card-title';
+  title.textContent = s.title || '(제목 없음)';
+  body.appendChild(title);
+
+  const meta = document.createElement('div');
+  meta.className = 'feed-card-meta';
+  meta.textContent = `${s.author} · ${feedDateLabel(s.updatedAt)} · 사진 ${s.count}장`;
+  body.appendChild(meta);
+
+  const likeBtn = document.createElement('button');
+  likeBtn.type = 'button';
+  likeBtn.className = 'feed-like-btn';
+  likeBtn.classList.toggle('liked', !!s.likedByMe);
+  setFeedLikeBtnContent(likeBtn, s.likedByMe, s.likeCount);
+  likeBtn.addEventListener('click', (e) => {
+    e.stopPropagation(); // 카드 클릭(재생)으로 번지지 않게
+    toggleFeedLike(s, likeBtn);
+  });
+  body.appendChild(likeBtn);
+
+  card.appendChild(body);
+  card.addEventListener('click', () => viewPublicShare(s.id, s.author, s.title));
+  return card;
+}
+
+function setFeedLikeBtnContent(btn, liked, count) {
+  btn.innerHTML = '';
+  const heart = document.createElement('span');
+  heart.className = 'feed-like-heart';
+  heart.textContent = liked ? '♥' : '♡';
+  btn.appendChild(heart);
+  btn.appendChild(document.createTextNode(String(count)));
+}
+
+// 비로그인 상태에서 누르면 안내 후 로그인 화면으로 보낸다. 로그인 상태면 서버에 토글 요청.
+async function toggleFeedLike(s, btn) {
+  if (!isLoggedIn) {
+    showToast('로그인한 사용자만 좋아요와 댓글을 남길 수 있습니다.');
+    selectPanel('login');
+    return;
+  }
+  try {
+    const r = await api(`/api/public/shares/${encodeURIComponent(s.id)}/like`, { method: 'POST' });
+    s.likedByMe = r.liked;
+    s.likeCount = r.likeCount;
+    btn.classList.toggle('liked', r.liked);
+    setFeedLikeBtnContent(btn, r.liked, r.likeCount);
+  } catch (err) {
+    showToast('좋아요 처리 실패: ' + err.message);
+  }
+}
 
 // ---------- 기기 갤러리에서 사진 직접 올리기 ----------
 // 구글 포토 Picker를 쓸 수 없는 로그인(카카오·네이버)의 사진 업로드 경로.
@@ -1564,6 +1699,7 @@ function shareRow(s, scope, pinMode) {
   line1.appendChild(t);
   if (s.frameName) line1.appendChild(document.createTextNode(`  [${s.frameName}]`));
   line1.appendChild(document.createTextNode(`  ·  사진 ${s.count}장`));
+  if (s.isPublic) line1.appendChild(document.createTextNode('  ·  🌐 전체공유'));
   const line2 = document.createElement('div');
   line2.className = 'dim';
   line2.textContent = pinMode
@@ -1633,37 +1769,59 @@ function shareRow(s, scope, pinMode) {
 }
 
 document.getElementById('admin-shares-reload').addEventListener('click', () => loadShareList('admin-shares-list', 'admin'));
+document.getElementById('admin-seed-showcase').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  try {
+    const r = await api('/api/admin/seed-showcase', { method: 'POST' });
+    showToast(r.alreadySeeded ? '이미 등록되어 있습니다.' : '"사진 보기" 예시를 등록했습니다.');
+    loadShareList('admin-shares-list', 'admin'); // 방금 만든 예시가 목록에 보이도록 갱신
+  } catch (err) {
+    showToast('등록 실패: ' + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
 document.getElementById('admin-pins-reload').addEventListener('click', () => loadShareList('admin-pins-list', 'admin'));
 document.getElementById('my-shares-reload').addEventListener('click', () => loadShareList('my-shares-list', 'my'));
 document.getElementById('my-pins-reload').addEventListener('click', () => loadShareList('my-pins-list', 'my'));
 
 // ---------- 부팅 ----------
-function boot(photos) {
+// publicView: {author} — "사진 보기" 카드로 남의 공개 공유를 열 때만 넘어온다.
+// 넘어오지 않으면(기본) isPublicViewMode는 false로 리셋된다 — 다른 모든 진입 경로
+// (구글 포토 선택, 기기 갤러리, 공유로 받은 사진)는 이 값을 신경 쓸 필요가 없다.
+function boot(photos, publicView) {
   allPhotos = photos;
   currentIndex = 0;
+  isPublicViewMode = !!publicView;
   // 방향 필터는 새로 시작할 때 항상 전체보기로 초기화
   orientationMode = 'all';
   const allRadio = document.querySelector('#orientation-radios input[value="all"]');
   if (allRadio) allRadio.checked = true;
-  // 데모는 항상 게스트 취급. 공유(shared) 유입은 실제로 로그인하지 않은 경우만 게스트다 —
-  // 로그인한 회원이 공유로 받은 사진을 여는 경우도 있어(그때는 업로드 가능).
-  const guest = isDemoMode || (isSharedMode && !isLoggedIn);
+  // 남의 공개 공유를 보는 중이면 항상 게스트 취급(편집 불가). 공유(shared) 유입은 실제로
+  // 로그인하지 않은 경우만 게스트다 — 로그인한 회원이 공유로 받은 사진을 여는 경우도
+  // 있어(그때는 업로드 가능).
+  const guest = isPublicViewMode || (isSharedMode && !isLoggedIn);
   // 배경음악: 관리자 Default 설정 > 앱 기본곡. 이전에 듣던 곡을 브라우저에서 이어받지 않는다.
-  // (데모·액자 데이터에 musicUrl이 있으면 호출부가 이미 채워두므로 비어있을 때만 건드린다)
+  // (공개 공유·액자 데이터에 musicUrl이 있으면 호출부가 이미 채워두므로 비어있을 때만 건드린다)
   const musicEl = document.getElementById('music-url');
   if (!musicEl.value.trim()) {
     musicEl.value = globalSettings.musicUrl || DEFAULT_MUSIC_URL;
   }
-  document.getElementById('demo-badge').classList.toggle('hidden', !isDemoMode);
+  const viewBadge = document.getElementById('public-view-badge');
+  viewBadge.textContent = publicView ? `공개 공유 · ${publicView.author}` : '';
+  viewBadge.classList.toggle('hidden', !publicView);
   document.getElementById('account-links').classList.toggle('hidden', guest);
   document.getElementById('demo-links').classList.toggle('hidden', !guest);
   // 사진 업로드·공유 링크 생성은 로그인한 Wepic 회원만 가능하다(서버가 requireMember로 막음).
-  // 구글 포토 "공유"로 받은 사진(isSharedMode)도 예외 없이 로그인이 필요하므로, 데모와
-  // 마찬가지로 게스트 상태에서는 공유 블록을 숨기고 위 demo-links의 로그인 유도만 보여준다.
+  // 구글 포토 "공유"로 받은 사진(isSharedMode)도 예외 없이 로그인이 필요하므로, 남의 공개
+  // 공유를 보는 중과 마찬가지로 게스트 상태에서는 공유 블록을 숨기고 위 demo-links의
+  // 로그인 유도만 보여준다.
   document.getElementById('share-block').classList.toggle('hidden', guest);
-  // 세션당 액자 목록: 데모가 아니면 불러온다. 관리자가 액자를 열었을 때(isFrameMode)도
-  // 서버가 이미 그 액자를 currentFrameId로 선택해 두었으므로 그대로 반영된다.
-  if (!isDemoMode) {
+  // 세션당 액자 목록: 남의 공개 공유를 보는 중이 아니면 불러온다. 관리자가 액자를
+  // 열었을 때(isFrameMode)도 서버가 이미 그 액자를 currentFrameId로 선택해 두었으므로
+  // 그대로 반영된다.
+  if (!isPublicViewMode) {
     loadFrames();
   } else {
     frames = [];
@@ -1687,6 +1845,13 @@ function boot(photos) {
       const r = document.querySelector(`#effect-radios input[value="${frameManifest.effect}"]`);
       if (r) { r.checked = true; applyEffect(frameManifest.effect); }
     }
+  } else if (publicView) {
+    // "사진 보기" 카드로 남의 공개 공유를 열 때: 제목·배경음악을 그 공유의 값으로 맞춘다.
+    // loadDisplaySettings()가 이미 Default 값으로 리셋한 "다음"에 덮어써야 유지된다
+    // (프레임 모드의 제목 재적용과 같은 이유).
+    applyTitle(publicView.title || '');
+    document.getElementById('title-input').value = publicView.title || '';
+    if (publicView.musicUrl) document.getElementById('music-url').value = publicView.musicUrl;
   }
   showSlideshow();
   recomputeFiltered();
@@ -1749,6 +1914,7 @@ function applyLoginState(status) {
   if (status.hasShare) {
     setShareLinkState(true);
     if (status.sharePin) setSharePin(status.sharePin); // 기존 공유의 PIN 표시
+    document.getElementById('share-public').checked = !!status.sharePublic;
   }
   // wepic 관리자 화면 진입 메뉴는 관리자(role='admin')로 로그인했을 때만 노출
   document.getElementById('menu-admin').classList.toggle('hidden', !status.isAdmin);

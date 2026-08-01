@@ -31,7 +31,7 @@
       <!-- 메뉴는 아이콘·이모지 없이 이름만 -->
       <div class="menu-links">
         <button class="menu-item" data-panel="photos">사진 선택</button>
-        <button class="menu-item" data-panel="demo">Demo</button>
+        <button class="menu-item" data-panel="feed">사진 보기</button>
         <!-- 로그인했을 때만 -->
         <button class="menu-item hidden" data-panel="me" id="menu-me">정보수정</button>
         <!-- 로그인 전에는 "로그인" 버튼, 로그인 후에는 "Google 이름"처럼 상태만 표시(누를 수 없음) -->
@@ -223,11 +223,15 @@
           <p style="margin:12px 0 0;"><a href="#" id="btn-logout-me" class="text-link small">로그아웃</a></p>
         </div>
 
-        <!-- 데모 -->
-        <div class="panel hidden" id="panel-demo">
-          <h2>데모로 보기</h2>
-          <p>계정 연결 없이 샘플 사진으로 앱을 먼저 둘러볼 수 있습니다.</p>
-          <button id="btn-demo" class="btn-primary">데모 슬라이드쇼 시작</button>
+        <!-- 사진 보기: 전체공유(PIN 없이 공개)로 설정된 액자들을 카드로 모아 보여준다.
+             로그인 없이도 볼 수 있다. 카드를 누르면 같은 화면 안에서 바로 슬라이드쇼가 재생된다. -->
+        <div class="panel panel-wide hidden" id="panel-feed">
+          <h2>사진 보기</h2>
+          <p>회원들이 "전체공유"로 공개한 사진들입니다. 카드를 누르면 바로 재생됩니다.</p>
+          <div id="feed-list" class="feed-list"></div>
+          <p id="feed-empty" class="panel-muted hidden">아직 공개된 사진이 없습니다.</p>
+          <p id="feed-loading" class="panel-muted hidden">불러오는 중...</p>
+          <div id="feed-sentinel"></div>
         </div>
 
         <!-- 피드백 — 상단 메뉴에서는 감췄다(요청). 패널은 남겨두었으니 다시 노출하려면
@@ -247,6 +251,9 @@
           <p class="panel-muted">공유 폴더별 정보입니다. 폴더를 삭제하면 해당 공유 링크는 즉시 열리지 않습니다.</p>
           <div class="admin-toolbar">
             <button id="admin-shares-reload" class="secondary slim">새로 고침</button>
+            <!-- "사진 보기"가 처음부터 비어있지 않도록, 예전 데모 사진을 전체공개 예시로
+                 1회 등록한다(이미 등록돼 있으면 다시 만들지 않음). -->
+            <button id="admin-seed-showcase" class="secondary slim">사진 보기 예시 등록</button>
             <span id="admin-shares-count" class="panel-muted"></span>
           </div>
           <div id="admin-shares-list" class="admin-list">불러오는 중...</div>
@@ -374,9 +381,10 @@
       <img class="photo-layer" id="photo-a" />
       <img class="photo-layer" id="photo-b" />
       <video class="photo-layer" id="video-layer" playsinline muted preload="metadata"></video>
-      <div id="demo-badge" class="demo-badge hidden">DEMO — 샘플 사진</div>
+      <!-- "사진 보기" 피드에서 카드를 눌러 남의 공개 공유를 보고 있을 때 표시 -->
+      <div id="public-view-badge" class="screen-badge hidden"></div>
       <!-- 관리자가 특정 액자(공유)를 메인화면으로 열어본 상태임을 표시 -->
-      <div id="frame-badge" class="demo-badge frame-badge hidden"></div>
+      <div id="frame-badge" class="screen-badge frame-badge hidden"></div>
       <div id="title-overlay" class="title-overlay hidden"></div>
       <div id="ambient-widget" class="ambient-widget hidden">
         <div id="amb-time" class="amb-time"></div>
@@ -534,7 +542,13 @@
           <button id="btn-make-share" class="secondary slim share-btn">실시간 공유 링크 만들기</button>
           <button id="btn-update-share" class="secondary slim share-btn hidden" title="사진 추가·삭제, 제목, 배경음악, PIN을 한 번에 저장합니다">링크변경 반영</button>
         </div>
-        <!-- 공유 링크 열람용 PIN(4자리). 수정 후 "링크변경 반영"을 누르면 새 PIN이 적용된다. -->
+        <!-- 전체공유: 체크하면 PIN 없이 누구나 볼 수 있고, "사진 보기" 피드에도 올라간다. -->
+        <label class="public-share-row">
+          <input type="checkbox" id="share-public" />
+          <span>전체공유 (PIN 없이 누구나 보기 · "사진 보기"에 공개)</span>
+        </label>
+        <!-- 공유 링크 열람용 PIN(4자리). 수정 후 "링크변경 반영"을 누르면 새 PIN이 적용된다.
+             전체공유를 체크하면 PIN이 필요 없으므로 이 행 자체를 숨긴다. -->
         <div id="share-pin-row" class="share-pin-row hidden">
           <span class="setting-label">PIN</span>
           <input type="text" id="share-pin" class="pin-input" maxlength="4" inputmode="numeric" pattern="[0-9]*" />

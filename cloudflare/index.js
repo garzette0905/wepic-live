@@ -179,6 +179,7 @@ async function frameInfo(env, data, f) {
     intervalSec: m?.intervalSec || null,
     effect: m?.effect || null,
     pin: m?.pin || null,
+    isPublic: !!m?.isPublic, // "전체공유" 체크 상태 — 액자를 전환할 때 화면에 그대로 복원한다
     count: m?.items?.length || 0,
     thumbUrl: m?.items?.[0]?.thumbUrl || null,
     url: m ? `${env.BASE_URL}/f/${f.id}` : null,
@@ -546,6 +547,7 @@ async function apiStatus(request, env) {
     canPickGooglePhotos: loggedIn && canUseGooglePhotos(data),
     hasShare: !!manifest,
     sharePin: manifest ? manifest.pin || null : null, // 현재 공유의 PIN(메인화면 표시용)
+    sharePublic: manifest ? !!manifest.isPublic : false, // 전체공유 체크박스 초기 상태용
     isAdmin: loggedIn && user.role === 'admin',       // Admin 메뉴 노출 여부
     // 회원정보 화면에서 쓸 값(가입일·최근 로그인). 로그인 안 했으면 null.
     me: loggedIn ? meInfo(user, data.provider) : null,
@@ -677,6 +679,10 @@ async function listShares(env, filterFn) {
         title: m.title || '',
         pin: m.pin || null,
         owner: m.owner || null,
+        // 전체공유 피드용 표시 이름(이메일 없이 이름만). 관리자 목록의 owner(이메일)와는
+        // 용도가 달라 별도 필드로 둔다 — 회원 이름이 준비돼 있지 않던 예전 공유는 null이다.
+        authorName: m.authorName || null,
+        isPublic: !!m.isPublic,
         frameName: m.frameName || null,
         updatedAt: m.updatedAt || null,
         expiresAt: m.expiresAt || null,
@@ -698,6 +704,103 @@ async function adminShares(env) {
 // — 이메일이 없거나(카카오 등) 나중에 바뀌어도 정확히 본인 것만 보이게 하기 위함이다.
 async function myShares(env, userId) {
   return json({ shares: await listShares(env, (m) => m.ownerUserId === userId) });
+}
+
+// ---------- "사진 보기" 전체공유 피드 ----------
+// 로그인 없이도 볼 수 있다("Wepic 조회자" 대상). isPublic인 액자만 모아 대표사진·작성자·
+// 좋아요 수를 붙여 돌려준다. 좋아요는 D1(share_likes)에 있으므로 여기서만 조인한다
+// (R2 매니페스트에는 좋아요를 두지 않는다 — 매번 늘어나는 값을 JSON 파일에 담으면 매
+// 좋아요 클릭마다 photos.json 전체를 다시 쓰게 되어 낭비다).
+async function publicShares(request, env) {
+  const shares = await listShares(env, (m) => m.isPublic === true);
+  const ids = shares.map((s) => s.id);
+  const likeCounts = {};
+  let likedByMe = new Set();
+  if (ids.length) {
+    const ph = ids.map(() => '?').join(',');
+    const countRows = await env.DB.prepare(
+      `SELECT share_id, COUNT(*) as cnt FROM share_likes WHERE share_id IN (${ph}) GROUP BY share_id`
+    ).bind(...ids).all();
+    for (const r of countRows.results || []) likeCounts[r.share_id] = r.cnt;
+
+    const sess = await getSession(request, env);
+    const userId = sess.data?.userId;
+    if (userId) {
+      const likedRows = await env.DB.prepare(
+        `SELECT share_id FROM share_likes WHERE user_id = ? AND share_id IN (${ph})`
+      ).bind(userId, ...ids).all();
+      likedByMe = new Set((likedRows.results || []).map((r) => r.share_id));
+    }
+  }
+  return json({
+    shares: shares.map((s) => ({
+      id: s.id,
+      title: s.title || s.frameName || '',
+      author: s.authorName || '위픽 사용자', // 이메일(owner)은 여기서 절대 내려주지 않는다
+      thumbUrl: s.thumbUrl,
+      count: s.count,
+      updatedAt: s.updatedAt,
+      likeCount: likeCounts[s.id] || 0,
+      likedByMe: likedByMe.has(s.id),
+    })),
+  });
+}
+
+// 좋아요 토글(있으면 취소, 없으면 추가). 전체공유가 아닌 액자에는 걸 수 없다.
+async function togglePublicLike(env, id, userId) {
+  if (!/^[\w-]{6,}$/.test(id)) return json({ error: '잘못된 id' }, 400);
+  const m = await readManifest(env, id);
+  if (!m || !m.isPublic) return json({ error: '없는 공유입니다.' }, 404);
+  const existing = await env.DB.prepare(
+    'SELECT id FROM share_likes WHERE share_id = ?1 AND user_id = ?2'
+  ).bind(id, userId).first();
+  if (existing) {
+    await env.DB.prepare('DELETE FROM share_likes WHERE share_id = ?1 AND user_id = ?2').bind(id, userId).run();
+  } else {
+    await env.DB.prepare(
+      'INSERT INTO share_likes (share_id, user_id, created_at) VALUES (?1, ?2, ?3)'
+    ).bind(id, userId, new Date().toISOString()).run();
+  }
+  const row = await env.DB.prepare('SELECT COUNT(*) as cnt FROM share_likes WHERE share_id = ?1').bind(id).first();
+  return json({ ok: true, liked: !existing, likeCount: row?.cnt || 0 });
+}
+
+// "사진 보기" 예시 콘텐츠 등록(관리자 전용, 1회성). 원래 있던 데모 사진(web/public/demo/)을
+// 실제 R2 공유로 복사해 isPublic:true로 만든다 — 이러면 "사진 보기"를 처음 눌러도 빈
+// 화면이 아니라 예시가 보인다. 이미 등록되어 있으면 다시 만들지 않는다(멱등).
+const SHOWCASE_ID = 'wepic-showcase';
+async function seedShowcase(env) {
+  const already = await readManifest(env, SHOWCASE_ID);
+  if (already) return json({ ok: true, alreadySeeded: true, url: `${env.BASE_URL}/f/${SHOWCASE_ID}` });
+
+  const srcRes = await env.ASSETS.fetch(new Request(env.BASE_URL + '/demo/photos.json'));
+  if (!srcRes.ok) return json({ error: '예시 원본(web/public/demo)을 찾지 못했습니다.' }, 500);
+  const src = await srcRes.json();
+
+  const items = [];
+  for (const it of src.items || []) {
+    const [fullRes, thumbRes] = await Promise.all([
+      env.ASSETS.fetch(new Request(env.BASE_URL + '/' + it.fullUrl)),
+      env.ASSETS.fetch(new Request(env.BASE_URL + '/' + it.thumbUrl)),
+    ]);
+    if (!fullRes.ok || !thumbRes.ok) continue;
+    const fullKey = `${SHOWCASE_ID}/photos/${it.id}_full.jpg`;
+    const thumbKey = `${SHOWCASE_ID}/photos/${it.id}_thumb.jpg`;
+    await env.SHARES.put(fullKey, new Uint8Array(await fullRes.arrayBuffer()), { httpMetadata: { contentType: 'image/jpeg' } });
+    await env.SHARES.put(thumbKey, new Uint8Array(await thumbRes.arrayBuffer()), { httpMetadata: { contentType: 'image/jpeg' } });
+    items.push({
+      id: it.id, createTime: it.createTime, width: it.width || null, height: it.height || null,
+      fullUrl: `/shares/${fullKey}`, thumbUrl: `/shares/${thumbKey}`,
+    });
+  }
+  if (!items.length) return json({ error: '예시 사진을 하나도 옮기지 못했습니다.' }, 500);
+
+  await writeManifest(env, SHOWCASE_ID, {
+    title: 'Wepic 사진 보기 예시', musicUrl: src.musicUrl || '', intervalSec: 8, effect: 'fade',
+    pin: null, isPublic: true, owner: null, authorName: 'Wepic', ownerUserId: null,
+    frameName: 'Wepic 예시', items,
+  });
+  return json({ ok: true, url: `${env.BASE_URL}/f/${SHOWCASE_ID}` });
 }
 
 // PIN 수정 (만료시각은 유지하고 pin만 교체)
@@ -975,6 +1078,7 @@ async function shareCreate(request, env, token, sess) {
   const title = typeof body.title === 'string' ? body.title.slice(0, 40) : '';
   const intervalSec = Math.min(60, Math.max(3, Number(body.intervalSec) || 10));
   const effect = ['fade', 'slide', 'kenburns'].includes(body.effect) ? body.effect : 'fade';
+  const isPublic = !!body.isPublic; // "전체공유" 체크 — 켜면 PIN 없이 누구나 볼 수 있게 만든다
   if (!items.length) return json({ error: '공유할 사진이 없습니다.' }, 400);
 
   ensureFrames(sess.data);
@@ -1067,18 +1171,21 @@ async function shareCreate(request, env, token, sess) {
   const stale = (old.objects || []).map((o) => o.key).filter((k) => !keepKeys.has(k));
   if (stale.length) await env.SHARES.delete(stale);
   manifestItems.sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
-  // PIN: 클라이언트가 보낸 값이 유효하면 그것(=링크변경 반영 시 수정된 PIN), 없으면 기존 유지,
-  // 그것도 없으면 새로 4자리 발급.
+  // PIN: 전체공유(isPublic)면 PIN을 아예 두지 않는다(비공개→공개로 바꾼 경우 기존 PIN도
+  // 씻어낸다). 전체공유가 아니면 기존 로직 그대로 — 클라이언트가 보낸 값이 유효하면 그것
+  // (=링크변경 반영 시 수정된 PIN), 없으면 기존 유지, 그것도 없으면 새로 4자리 발급.
   const prev = await readManifest(env, shareId);
-  const pin = normalizePin(body.pin) || (prev && prev.pin) || genPin();
+  const pin = isPublic ? null : (normalizePin(body.pin) || (prev && prev.pin) || genPin());
   const owner = sess.data?.email || sess.data?.name || null;
+  // 전체공유 피드에는 이메일을 노출하지 않는다 — 이름만 스냅샷해 둔다.
+  const authorName = sess.data?.name || '위픽 사용자';
   const curFrameName = frameNameOf(sess.data, shareId);
   await writeManifest(env, shareId, {
-    musicUrl, title, intervalSec, effect, pin, owner,
+    musicUrl, title, intervalSec, effect, pin, owner, authorName, isPublic,
     ownerUserId: sess.data?.userId || null, // "My사진관리"에서 본인 소유만 걸러낼 고유 키(D1 회원 id)
     frameName: curFrameName, items: manifestItems,
   });
-  return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, frameId: shareId, frameName: curFrameName });
+  return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, isPublic, frameId: shareId, frameName: curFrameName });
 }
 
 // 구글 포토 "공유"로 받은 사진 등: 브라우저가 가진 파일(blob)을 그대로 올려 공유 링크 생성.
@@ -1093,6 +1200,7 @@ async function shareBlob(request, env, sess, user) {
   const title = String(form.get('title') || '').slice(0, 40);
   const intervalSec = Math.min(60, Math.max(3, Number(form.get('intervalSec')) || 10));
   const effect = ['fade', 'slide', 'kenburns'].includes(form.get('effect')) ? form.get('effect') : 'fade';
+  const isPublic = ['true', '1', 'on'].includes(String(form.get('isPublic') || '').toLowerCase());
 
   const { sid: ssid, data: sdata } = sess;
   ensureFrames(sdata);
@@ -1135,15 +1243,16 @@ async function shareBlob(request, env, sess, user) {
   if (stale.length) await env.SHARES.delete(stale);
 
   const prev = await readManifest(env, shareId);
-  const pin = normalizePin(form.get('pin')) || (prev && prev.pin) || genPin();
+  const pin = isPublic ? null : (normalizePin(form.get('pin')) || (prev && prev.pin) || genPin());
   const owner = user.email || user.name || null;
+  const authorName = user.name || '위픽 사용자';
   const curFrameName = frameNameOf(sdata, shareId);
   await writeManifest(env, shareId, {
-    musicUrl, title, intervalSec, effect, pin, owner,
+    musicUrl, title, intervalSec, effect, pin, owner, authorName, isPublic,
     ownerUserId: user.id, // "My사진관리"에서 본인 소유만 걸러낼 고유 키(D1 회원 id)
     frameName: curFrameName, items: manifestItems,
   });
-  return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, frameId: shareId, frameName: curFrameName });
+  return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, isPublic, frameId: shareId, frameName: curFrameName });
 }
 
 // 공유 링크 즉시 폐기: "현재 액자"를 목록에서 완전히 제거한다.
@@ -1360,6 +1469,17 @@ export default {
       const mAdminPin = p.match(/^\/api\/admin\/shares\/([\w-]{6,})\/pin$/);
       if (mAdminPin && m === 'PUT') {
         return requireAdmin(request, env, (rq, en) => adminSetPin(rq, en, mAdminPin[1]));
+      }
+      // "사진 보기" 예시 콘텐츠 등록(1회성, 멱등) — 관리자 화면의 버튼이 호출한다.
+      if (p === '/api/admin/seed-showcase' && m === 'POST') {
+        return requireAdmin(request, env, (rq, en) => seedShowcase(en));
+      }
+
+      // "사진 보기": 전체공유(isPublic) 액자 피드. 로그인 없이도 볼 수 있다(Wepic 조회자 대상).
+      if (p === '/api/public/shares' && m === 'GET') return publicShares(request, env);
+      const mPubLike = p.match(/^\/api\/public\/shares\/([\w-]{6,})\/like$/);
+      if (mPubLike && m === 'POST') {
+        return requireMember(request, env, (rq, en, sess, user) => togglePublicLike(en, mPubLike[1], user.id));
       }
 
       // 내 회원정보: 표시 이름만 수정 가능(제공자·이메일·가입일은 읽기 전용)

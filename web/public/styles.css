@@ -274,7 +274,7 @@ button.preset.active { background: var(--accent-strong); color: #fff; }
 .settings-block .dot { color: var(--text-muted); font-size: 12px; }
 .account-links { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 8px; }
 
-.demo-badge {
+.screen-badge {
   position: absolute;
   left: 16px;
   top: 16px;
@@ -287,8 +287,8 @@ button.preset.active { background: var(--accent-strong); color: #fff; }
   padding: 5px 10px;
   border-radius: 20px;
 }
-/* 데모 배지와 제목이 겹치지 않도록, 제목이 있으면 배지를 아래로 */
-body.has-title .demo-badge { top: 50px; }
+/* 배지와 제목이 겹치지 않도록, 제목이 있으면 배지를 아래로 */
+body.has-title .screen-badge { top: 50px; }
 /* 액자 보기(관리자가 특정 공유를 메인화면으로 열어본 상태) */
 .frame-badge { background: rgba(224, 50, 47, 0.92); }
 
@@ -706,6 +706,39 @@ select optgroup {
   border-radius: 8px; padding: 7px 8px; font-family: inherit;
 }
 .share-pin-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+/* 전체공유 체크박스 — PIN 행 바로 위에 둔다(체크하면 그 아래 PIN 행이 사라진다) */
+.public-share-row {
+  display: flex; align-items: flex-start; gap: 8px; margin-top: 10px;
+  font-size: 12.5px; color: var(--text-muted); cursor: pointer; line-height: 1.5;
+}
+.public-share-row input { flex: none; margin-top: 2px; width: 15px; height: 15px; accent-color: var(--accent-strong); }
+
+/* ---------- "사진 보기" 카드 피드 ---------- */
+.feed-list {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px;
+  margin-top: 8px;
+}
+.feed-card {
+  background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-radius: 12px;
+  overflow: hidden; cursor: pointer; transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.feed-card:hover { border-color: rgba(138,180,255,0.6); transform: translateY(-2px); }
+.feed-card-thumb { display: block; width: 100%; aspect-ratio: 4/3; object-fit: cover; background: rgba(0,0,0,0.3); }
+.feed-card-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 4px; }
+.feed-card-title {
+  font-weight: 700; font-size: 14px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.feed-card-meta { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.feed-like-btn {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; margin-top: 4px;
+  background: rgba(255,255,255,0.06); border: 1px solid transparent; border-radius: 20px;
+  padding: 5px 11px; font-size: 12.5px; font-weight: 700; color: var(--text-muted);
+  cursor: pointer; transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.feed-like-btn:hover { background: rgba(255,255,255,0.14); filter: none; color: var(--text-main); }
+.feed-like-btn.liked { color: #ff6b7a; border-color: rgba(255,107,122,0.45); background: rgba(255,107,122,0.14); }
+.feed-like-heart { font-size: 14px; line-height: 1; }
+#feed-sentinel { height: 1px; }
 .admin-preview { display: flex; align-items: center; gap: 10px; margin: 6px 0 14px; }
 .title-overlay-preview { color: #fff; }
 
