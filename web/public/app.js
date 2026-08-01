@@ -1730,7 +1730,7 @@ function applyLoginState(status) {
   if (isLoggedIn) {
     // "Google 홍길동" / "카카오 홍길동" 처럼 어느 계정으로 들어왔는지 함께 보여준다.
     const via = PROVIDER_LABELS[status.provider] || status.provider || '';
-    menuWhoami.textContent = `👤 ${via ? via + ' ' : ''}${loggedInName || '사용자'}`;
+    menuWhoami.textContent = `${via ? via + ' ' : ''}${loggedInName || '사용자'}`;
   }
 
   const providers = document.getElementById('login-providers');

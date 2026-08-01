@@ -16,39 +16,56 @@
 
   <!-- ===== 홈(랜딩) ===== -->
   <div id="home-shell" class="home-shell">
-    <!-- 상단 가로 메뉴 (로고 위쪽) -->
+    <!-- 배경 사진 위에 얹는 시네마틱 스크림 + 필름 그레인 (위·아래를 눌러 글씨 가독성 확보) -->
+    <div class="home-scrim" aria-hidden="true"></div>
+
+    <!-- 상단 바: [아이콘 + Wepic Live] · 메뉴명만 · (우측) 인스타그램
+         유리 바를 없애고 배경 사진 위에 글자만 얹는다(참고 디자인과 동일한 구성). -->
     <nav class="top-menu" id="home-menu">
-      <!-- 홈(소개)으로 가는 아이콘 버튼 — 예전 "🏠 홈 · 소개" 자리를 대신한다 -->
-      <button class="menu-home" data-panel="about" id="menu-home" title="홈 · 소개" aria-label="홈 · 소개">
+      <!-- 로고 = 좌측 상단. 아이콘이 왼쪽, 그 오른쪽에 흰색 워드마크. 누르면 홈(소개)으로 간다. -->
+      <button class="menu-home brand" data-panel="about" id="menu-home" title="홈 · 소개">
         <img src="favicon.svg" alt="" />
+        <span class="brand-word">Wepic Live</span>
       </button>
-      <button class="menu-item" data-panel="photos">🖼️ 사진 선택</button>
-      <button class="menu-item" data-panel="demo">▶ Demo</button>
-      <!-- 로그인했을 때만 -->
-      <button class="menu-item hidden" data-panel="me" id="menu-me">⚙️ 정보수정</button>
-      <!-- 로그인 전에는 "로그인" 버튼, 로그인 후에는 "Google 이름"처럼 상태만 표시(누를 수 없음) -->
-      <button class="menu-item" data-panel="login" id="menu-login">🔑 로그인</button>
-      <span class="menu-item menu-status hidden" id="menu-whoami"></span>
-      <!-- 로그인 후에는 가입할 이유가 없어 숨긴다 -->
-      <button class="menu-item" data-panel="signup" id="menu-signup">✍️ 회원가입</button>
-      <!-- 로그인한 Wepic 사용자에게만 노출. 누르면 좌측에 My사진관리 하위 메뉴가 펼쳐진다 -->
-      <button class="menu-item hidden" data-panel="my-screens" id="menu-my">📂 My사진관리</button>
-      <!-- wepic 관리자만 노출. 누르면 좌측에 관리자 하위 메뉴가 펼쳐진다 -->
-      <button class="menu-item menu-admin hidden" data-panel="admin-screens" id="menu-admin">🛠 관리자 화면</button>
+
+      <!-- 메뉴는 아이콘·이모지 없이 이름만 -->
+      <div class="menu-links">
+        <button class="menu-item" data-panel="photos">사진 선택</button>
+        <button class="menu-item" data-panel="demo">Demo</button>
+        <!-- 로그인했을 때만 -->
+        <button class="menu-item hidden" data-panel="me" id="menu-me">정보수정</button>
+        <!-- 로그인 전에는 "로그인" 버튼, 로그인 후에는 "Google 이름"처럼 상태만 표시(누를 수 없음) -->
+        <button class="menu-item" data-panel="login" id="menu-login">로그인</button>
+        <span class="menu-item menu-status hidden" id="menu-whoami"></span>
+        <!-- 로그인 후에는 가입할 이유가 없어 숨긴다 -->
+        <button class="menu-item" data-panel="signup" id="menu-signup">회원가입</button>
+        <!-- 로그인한 Wepic 사용자에게만 노출. 누르면 좌측에 My사진관리 하위 메뉴가 펼쳐진다 -->
+        <button class="menu-item hidden" data-panel="my-screens" id="menu-my">My사진관리</button>
+        <!-- wepic 관리자만 노출. 누르면 좌측에 관리자 하위 메뉴가 펼쳐진다 -->
+        <button class="menu-item menu-admin hidden" data-panel="admin-screens" id="menu-admin">관리자 화면</button>
+      </div>
+
+      <!-- 우측 소셜. 링크가 정해지면 href만 바꾸면 된다. -->
+      <div class="menu-social">
+        <a class="social-btn" id="link-instagram" href="#" aria-label="Instagram"
+           title="Instagram (링크 준비 중)">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor"
+               stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="5" />
+            <circle cx="12" cy="12" r="4" />
+            <circle cx="17.2" cy="6.8" r="1.1" fill="currentColor" stroke="none" />
+          </svg>
+        </a>
+      </div>
     </nav>
 
+    <!-- 히어로: 로고가 좌측 상단으로 올라갔으므로 여기서는 문구만 왼쪽에 크게 둔다 -->
     <header class="hero">
-      <div class="hero-scrim"></div>
       <!-- 관리자 메뉴를 보고 있을 때만 좌측 상단에 눈에 띄게 표시 -->
-      <div id="admin-badge" class="admin-badge hidden">🛠 ADMIN</div>
+      <div id="admin-badge" class="admin-badge hidden">ADMIN</div>
 
       <div class="hero-inner">
-        <div class="hero-brand">
-          <img class="hero-logo" src="favicon.svg" alt="Wepic Live" />
-          <span class="hero-word">Wepic <b>Live</b></span>
-          <span class="live-badge">LIVE</span>
-        </div>
-        <div class="hero-tagline">capture moments, real-time joy</div>
+        <div class="hero-tagline">capture moments,<br /><b>real-time joy</b></div>
       </div>
     </header>
 
