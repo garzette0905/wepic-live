@@ -86,6 +86,10 @@
 </head>
 <body>
   <div class="share-view">
+    <!-- 세로 사진 등으로 생기는 검은 여백을 메우는 흐린 배경(styles.css의 .photo-backdrop).
+         사진 레이어보다 뒤에 깔리도록 DOM에서 먼저 둔다. -->
+    <img class="photo-backdrop" id="photo-a-bg" alt="" aria-hidden="true" />
+    <img class="photo-backdrop" id="photo-b-bg" alt="" aria-hidden="true" />
     <img class="photo-layer" id="photo-a" />
     <img class="photo-layer" id="photo-b" />
     <!-- 동영상 항목 재생용 레이어 (사진과 같은 자리에 겹쳐 표시) -->

@@ -23,11 +23,13 @@ function showHome() {
   heroEl.classList.remove('hidden');      // 로고 배너 복귀
   homeFrameEl.classList.remove('hidden'); // 패널 영역 복귀
   homeShell.classList.remove('hidden');
+  setWakeLock(false);                     // 사진을 안 보는 화면에서는 절전을 막지 않는다
 }
 function showPicker(name) {
   // QR·동기화는 짧게 지나가는 중간 단계라 지금처럼 전체 화면으로 둔다.
   homeShell.classList.add('hidden');
   slideshowEl.classList.add('hidden');
+  setWakeLock(false);
   pickerShell.classList.remove('hidden');
   Object.entries(pickerScreens).forEach(([k, el]) => el.classList.toggle('hidden', k !== name));
 }
@@ -39,6 +41,7 @@ function showSlideshow() {
   document.getElementById('admin-side-menu').classList.add('hidden');
   document.getElementById('my-side-menu').classList.add('hidden');
   slideshowEl.classList.remove('hidden');
+  setWakeLock(true);                      // 액자로 보는 화면이므로 자동으로 꺼지지 않게 한다
   resetSlideshowScroll();
 }
 
@@ -332,14 +335,73 @@ function jumpTo(id) {
   resetTimer();
 }
 
+// 로드된 Image를 그대로 넘겨준다(naturalWidth/Height로 화면비를 판단하기 위해).
 function preload(url) {
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload = resolve;
-    img.onerror = resolve;
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(img);
     img.src = url;
   });
 }
+
+// ---------- 세로 사진 배경 채우기 (가우시안 블러) ----------
+// 사진 화면비가 화면과 5% 이상 다르면 object-fit:contain 때문에 양옆(또는 위아래)에 검은
+// 여백이 생긴다. 그럴 때만 같은 사진을 흐리게 깔아 여백을 메운다(여백이 없는 사진에는
+// 불필요한 blur 연산을 하지 않는다).
+let lastShownImg = null;
+function needsBackdrop(im) {
+  if (!im || !im.naturalWidth || !im.naturalHeight) return false;
+  const box = document.querySelector('.photo-pane');
+  const w = box?.clientWidth, h = box?.clientHeight;
+  if (!w || !h) return false;
+  const screenRatio = w / h;
+  return Math.abs(im.naturalWidth / im.naturalHeight - screenRatio) / screenRatio > 0.05;
+}
+function applyBackdrop(layer, im, url) {
+  const bg = document.getElementById(`photo-${layer}-bg`);
+  if (im && needsBackdrop(im)) {
+    bg.src = url;
+    bg.classList.add('active');
+  } else {
+    bg.classList.remove('active');
+  }
+}
+function clearBackdrops() {
+  document.getElementById('photo-a-bg').classList.remove('active');
+  document.getElementById('photo-b-bg').classList.remove('active');
+}
+// 전체화면 전환·창 크기 변경으로 화면비가 바뀌면 여백 여부도 달라진다 → 지금 보이는 사진만 다시 판단.
+function refreshBackdrop() {
+  if (!lastShownImg) return;
+  applyBackdrop(activeLayer, lastShownImg, lastShownImg.src);
+}
+window.addEventListener('resize', refreshBackdrop);
+
+// ---------- 화면 자동 꺼짐 방지 (Screen Wake Lock) ----------
+// 액자로 세워둔 태블릿·PC가 절전으로 화면을 끄면 사진이 안 보인다 → 슬라이드쇼를 보는 동안은
+// 화면을 깨워 둔다. 지원하지 않는 브라우저(iOS 사파리 등)나 사용자가 막은 경우에는 조용히
+// 넘어가고 기능만 없이 정상 동작한다.
+let wakeLock = null;
+let wantWakeLock = false;
+async function acquireWakeLock() {
+  if (!wantWakeLock || wakeLock || !('wakeLock' in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    // 다른 탭·앱으로 넘어가면 브라우저가 알아서 해제한다 → 참조를 비워 다시 잡을 수 있게 한다.
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch { wakeLock = null; }
+}
+function setWakeLock(on) {
+  wantWakeLock = !!on;
+  if (on) { acquireWakeLock(); return; }
+  const l = wakeLock; wakeLock = null;
+  try { l?.release(); } catch { /* 무시 */ }
+}
+// 돌아왔을 때는 잠금이 풀려 있으므로 다시 잡는다.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') acquireWakeLock();
+});
 
 // 현재 재생 중인 동영상을 멈추고 정리한다.
 function stopVideo() {
@@ -383,6 +445,8 @@ async function showCurrent() {
     stopVideo();
     document.getElementById('photo-a').classList.remove('active');
     document.getElementById('photo-b').classList.remove('active');
+    lastShownImg = null;
+    clearBackdrops(); // 동영상은 원본 그대로 재생한다(흐린 배경을 깔지 않는다)
     video.poster = photo.fullUrl;
     if (videoSoundOn) {
       video.muted = false;
@@ -412,14 +476,18 @@ async function showCurrent() {
   // 사진: 기존 두 레이어 크로스페이드
   stopVideo();
   resumeMusicAfterVideo(); // 동영상 → 사진 전환 시 정지했던 배경음악 복귀
-  const nextLayer = document.getElementById(activeLayer === 'a' ? 'photo-b' : 'photo-a');
-  const prevLayer = document.getElementById(activeLayer === 'a' ? 'photo-a' : 'photo-b');
-  await preload(photo.fullUrl);
+  const nextName = activeLayer === 'a' ? 'b' : 'a';
+  const nextLayer = document.getElementById('photo-' + nextName);
+  const prevLayer = document.getElementById('photo-' + activeLayer);
+  const im = await preload(photo.fullUrl);
   if (requested !== currentIndex) return;
   nextLayer.src = photo.fullUrl;
+  applyBackdrop(nextName, im, photo.fullUrl);    // 여백이 생기는 사진이면 흐린 배경을 함께 띄운다
+  document.getElementById(`photo-${activeLayer}-bg`).classList.remove('active');
   nextLayer.classList.add('active');
   prevLayer.classList.remove('active');
-  activeLayer = activeLayer === 'a' ? 'b' : 'a';
+  lastShownImg = im;
+  activeLayer = nextName;
   updateMeta(photo);
 }
 
@@ -523,6 +591,7 @@ document.getElementById('btn-fullscreen').addEventListener('click', toggleFullsc
 document.addEventListener('fullscreenchange', () => {
   // 사용자가 F11/Esc로 직접 빠져나온 경우 상태 동기화
   document.body.classList.toggle('fullscreen', !!document.fullscreenElement);
+  refreshBackdrop(); // 화면비가 바뀌므로 흐린 배경이 필요한지 다시 판단
 });
 
 let toastHandle = null;

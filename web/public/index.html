@@ -350,6 +350,10 @@
   <!-- 슬라이드쇼 -->
   <div id="screen-slideshow" class="slideshow hidden">
     <div class="photo-pane fx-fade">
+      <!-- 세로 사진 등으로 생기는 검은 여백을 메우는 흐린 배경. 사진 레이어보다 뒤에 깔리도록
+           DOM에서 먼저 둔다(z-index를 쓰면 제목·시계 오버레이까지 덮어버린다). -->
+      <img class="photo-backdrop" id="photo-a-bg" alt="" aria-hidden="true" />
+      <img class="photo-backdrop" id="photo-b-bg" alt="" aria-hidden="true" />
       <img class="photo-layer" id="photo-a" />
       <img class="photo-layer" id="photo-b" />
       <video class="photo-layer" id="video-layer" playsinline muted preload="metadata"></video>

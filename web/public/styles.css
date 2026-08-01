@@ -123,6 +123,20 @@ button.secondary.slim { padding: 8px 12px; font-size: 12.5px; font-weight: 500; 
 .photo-layer.active { opacity: 1; }
 video.photo-layer { background: #000; }
 
+/* 세로 사진처럼 화면비가 다른 사진은 object-fit:contain 때문에 양옆(또는 위아래)에 검은
+   여백이 남아 가전제품 액자 느낌이 떨어진다 → 같은 사진을 화면에 꽉 채워(cover) 크게 흐린
+   뒤 그 여백 자리에 깔아준다. 사진 자체가 계속 주인공이어야 하므로 어둡게 눌러 둔다.
+   쌓임 순서는 z-index를 쓰지 않고 DOM 순서로 잡는다(배경 <img>를 사진 레이어보다 먼저
+   두었다). z-index를 주면 제목·시계 같은 오버레이보다 위로 올라와 버린다. */
+.photo-backdrop {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+  opacity: 0; transition: opacity 1.4s ease-in-out;
+  /* blur는 요소 경계에서 잘려 테두리가 비어 보인다 → 살짝 확대해 경계를 화면 밖으로 밀어낸다 */
+  transform: scale(1.14);
+  filter: blur(26px) brightness(0.5) saturate(1.15);
+}
+.photo-backdrop.active { opacity: 1; }
+
 /* 전환 효과: .photo-pane의 fx-* 클래스로 전환 */
 .photo-pane.fx-slide .photo-layer { transition: opacity 1s ease, transform 1s ease; transform: translateX(6%); }
 .photo-pane.fx-slide .photo-layer.active { transform: translateX(0); }

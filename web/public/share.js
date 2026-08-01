@@ -19,9 +19,47 @@ function formatDate(iso) {
   return `${date} · ${time}`;
 }
 
+// 로드된 Image를 그대로 넘겨준다(naturalWidth/Height로 화면비를 판단하기 위해).
 function preload(url) {
-  return new Promise((resolve) => { const im = new Image(); im.onload = resolve; im.onerror = resolve; im.src = url; });
+  return new Promise((resolve) => {
+    const im = new Image();
+    im.onload = () => resolve(im);
+    im.onerror = () => resolve(im);
+    im.src = url;
+  });
 }
+
+// ---- 세로 사진 배경 채우기 (가우시안 블러) ----
+// 사진 화면비가 화면과 5% 이상 다르면 양옆(또는 위아래)에 검은 여백이 생긴다. 그럴 때만
+// 같은 사진을 흐리게 깔아 여백을 메운다(여백이 없는 사진에 불필요한 blur 연산을 하지 않도록).
+let lastShownImg = null;
+function needsBackdrop(im) {
+  if (!im || !im.naturalWidth || !im.naturalHeight) return false;
+  const box = document.querySelector('.share-view');
+  const w = box?.clientWidth, h = box?.clientHeight;
+  if (!w || !h) return false;
+  const screenRatio = w / h;
+  return Math.abs(im.naturalWidth / im.naturalHeight - screenRatio) / screenRatio > 0.05;
+}
+function applyBackdrop(layer, im, url) {
+  const bg = document.getElementById(`photo-${layer}-bg`);
+  if (im && needsBackdrop(im)) {
+    bg.src = url;
+    bg.classList.add('active');
+  } else {
+    bg.classList.remove('active');
+  }
+}
+function clearBackdrops() {
+  document.getElementById('photo-a-bg').classList.remove('active');
+  document.getElementById('photo-b-bg').classList.remove('active');
+}
+// 전체화면 전환·화면 회전으로 화면비가 바뀌면 여백 여부도 달라진다 → 지금 보이는 사진만 다시 판단.
+function refreshBackdrop() {
+  if (!lastShownImg) return;
+  applyBackdrop(activeLayer, lastShownImg, lastShownImg.src);
+}
+window.addEventListener('resize', refreshBackdrop);
 
 let videoStallTimer = null;
 
@@ -92,19 +130,25 @@ async function show() {
   const req = idx;
   if (p.type === 'video' && p.videoUrl) {
     showVideo(p);
+    lastShownImg = null;
+    clearBackdrops(); // 동영상은 원본 그대로 재생한다(흐린 배경을 깔지 않는다)
     renderCaption();
     updateProgress();
     return;
   }
   stopVideo();
-  const next = document.getElementById(activeLayer === 'a' ? 'photo-b' : 'photo-a');
-  const prev = document.getElementById(activeLayer === 'a' ? 'photo-a' : 'photo-b');
-  await preload(p.fullUrl);
+  const nextLayer = activeLayer === 'a' ? 'b' : 'a';
+  const next = document.getElementById('photo-' + nextLayer);
+  const prev = document.getElementById('photo-' + activeLayer);
+  const im = await preload(p.fullUrl);
   if (req !== idx) return;
   next.src = p.fullUrl;
+  applyBackdrop(nextLayer, im, p.fullUrl);       // 여백이 생기는 사진이면 흐린 배경을 함께 띄운다
+  document.getElementById(`photo-${activeLayer}-bg`).classList.remove('active');
   next.classList.add('active');
   prev.classList.remove('active');
-  activeLayer = activeLayer === 'a' ? 'b' : 'a';
+  lastShownImg = im;
+  activeLayer = nextLayer;
   renderCaption();
   updateProgress();
   // 동영상 다음에 온 사진이면 멈춰 있던 자동 전환 타이머를 다시 걸어준다.
@@ -155,6 +199,31 @@ function resetTimer() {
   timer = setInterval(advance, intervalMs);
 }
 
+// ---- 화면 자동 꺼짐 방지 (Screen Wake Lock) ----
+// 액자로 세워둔 태블릿·PC가 절전으로 화면을 끄면 사진이 안 보인다 → 사진이 재생되는 동안은
+// 화면을 깨워 둔다. 지원하지 않는 브라우저(iOS 사파리 등)나 사용자가 막은 경우에는
+// 조용히 넘어가고 기능만 없이 정상 동작한다.
+let wakeLock = null;
+let wantWakeLock = false;
+async function acquireWakeLock() {
+  if (!wantWakeLock || wakeLock || !('wakeLock' in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    // 다른 탭·앱으로 넘어가면 브라우저가 알아서 해제한다 → 참조를 비워 다시 잡을 수 있게 한다.
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch { wakeLock = null; }
+}
+function setWakeLock(on) {
+  wantWakeLock = !!on;
+  if (on) { acquireWakeLock(); return; }
+  const l = wakeLock; wakeLock = null;
+  try { l?.release(); } catch { /* 무시 */ }
+}
+// 돌아왔을 때는 잠금이 풀려 있으므로 다시 잡는다.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') acquireWakeLock();
+});
+
 // ---- 전체화면 ----
 function setFullscreen(on) {
   document.body.classList.toggle('fullscreen', on);
@@ -163,8 +232,10 @@ function setFullscreen(on) {
 }
 document.getElementById('btn-fullscreen').addEventListener('click', () =>
   setFullscreen(!document.body.classList.contains('fullscreen')));
-document.addEventListener('fullscreenchange', () =>
-  document.body.classList.toggle('fullscreen', !!document.fullscreenElement));
+document.addEventListener('fullscreenchange', () => {
+  document.body.classList.toggle('fullscreen', !!document.fullscreenElement);
+  refreshBackdrop(); // 화면비가 바뀌므로 흐린 배경이 필요한지 다시 판단
+});
 
 // ---- 배경음악 (선택) ----
 // 기본은 "무음": 음소거 자동재생으로 곡 제목만 얻어 캡션에 표시하고, ▶ 버튼을 눌러야 소리가 난다.
@@ -376,6 +447,8 @@ function applyManifest(data) {
   const view = document.querySelector('.share-view');
   photos = data.items || [];
   lastUpdatedAt = data.updatedAt || null;
+  // 볼 사진이 실제로 있는 시점부터 화면이 꺼지지 않게 잡는다(PIN 게이트를 통과한 뒤).
+  if (photos.length) setWakeLock(true);
 
   // 제목 (공유에 제목이 없으면 관리자 Default 타이틀을 쓴다)
   const t = document.getElementById('share-title');
