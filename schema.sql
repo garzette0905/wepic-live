@@ -27,8 +27,17 @@ CREATE TABLE IF NOT EXISTS users (
   created_at    TEXT NOT NULL,                      -- ISO8601
   last_login_at TEXT,
 
+  -- 저장용량 한도(바이트). NULL이면 기본값(100MB)을 쓴다 — 기본값을 바꾸고 싶을 때
+  -- 이미 가입한 회원 전체를 UPDATE하지 않아도 되도록 NULL을 "기본값 따름"으로 둔다.
+  -- 관리자가 개별로 늘려주면 그때 값이 채워진다.
+  quota_bytes   INTEGER,
+
   UNIQUE (provider, provider_sub)
 );
+-- ⚠️ users 테이블이 이미 있는 DB에는 위 CREATE가 건너뛰어지므로 quota_bytes가 생기지 않는다.
+--    그런 DB에는 migrations/002_add_quota.sql을 한 번 실행해야 한다(아래 파일 참고).
+--    SQLite에는 ALTER TABLE ... ADD COLUMN IF NOT EXISTS가 없어서 이 파일에 넣으면
+--    재실행할 때마다 "duplicate column" 오류로 멈춘다 → 별도 파일로 분리했다.
 
 -- 관리자 판정·회원 검색에서 이메일로 찾는 경우가 있어 인덱스를 둔다.
 CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);

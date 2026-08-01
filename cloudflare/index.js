@@ -351,12 +351,77 @@ async function upsertUser(env, { provider, sub, email, name }) {
 async function getUserById(env, id) {
   if (!id) return null;
   return env.DB.prepare(
-    `SELECT id, provider, provider_sub, email, name, role, status, created_at, last_login_at
+    `SELECT id, provider, provider_sub, email, name, role, status, created_at, last_login_at, quota_bytes
      FROM users WHERE id = ?1`
   )
     .bind(id)
     .first();
 }
+
+// ---------- 회원별 저장용량(Quota) ----------
+// 기본 100MB. users.quota_bytes가 NULL이면 이 값을 쓴다(기본값을 바꿀 때 기존 회원을
+// 전부 UPDATE하지 않아도 되도록). 관리자가 개별로 늘려주면 그 값이 우선한다.
+const DEFAULT_QUOTA_BYTES = 100 * 1024 * 1024;
+const quotaOf = (user) => {
+  const v = Number(user?.quota_bytes);
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_QUOTA_BYTES;
+};
+
+// 이 회원이 R2에서 실제로 쓰고 있는 바이트 수. 액자(공유) 폴더를 훑어 소유자가 맞는 것만
+// 더한다 — 별도 집계 테이블을 두지 않는 대신, 업로드할 때와 관리자 화면에서만 계산한다.
+// (photos.json 자체도 저장 공간을 쓰지만 수 KB라 사진·동영상 크기에 비해 무시할 수준이다.)
+async function usedBytesOf(env, userId) {
+  if (!userId) return 0;
+  let total = 0;
+  let cursor;
+  do {
+    const list = await env.SHARES.list({ cursor, delimiter: '/' });
+    for (const pfx of list.delimitedPrefixes || []) {
+      const id = pfx.replace(/\/$/, '');
+      const m = await readManifest(env, id);
+      if (!m || m.ownerUserId !== userId) continue;
+      let inner;
+      do {
+        inner = await env.SHARES.list({ prefix: id + '/', cursor: inner?.truncated ? inner.cursor : undefined });
+        for (const o of inner.objects || []) total += o.size || 0;
+      } while (inner.truncated);
+    }
+    cursor = list.truncated ? list.cursor : null;
+  } while (cursor);
+  return total;
+}
+
+const fmtBytes = (n) => {
+  const mb = (Number(n) || 0) / (1024 * 1024);
+  return mb >= 1024 ? `${(mb / 1024).toFixed(2)}GB` : `${mb.toFixed(1)}MB`;
+};
+// 한 액자(공유) 폴더가 차지하는 바이트.
+async function shareBytes(env, shareId) {
+  let total = 0;
+  let inner;
+  do {
+    inner = await env.SHARES.list({ prefix: shareId + '/', cursor: inner?.truncated ? inner.cursor : undefined });
+    for (const o of inner.objects || []) total += o.size || 0;
+  } while (inner.truncated);
+  return total;
+}
+
+// 업로드 전 확인용. 이번에 올릴 크기(addBytes)를 더해도 한도를 넘지 않는지 본다.
+// replaceShareId를 주면 그 액자의 현재 용량은 빼고 계산한다 — "링크변경 반영"은 기존 파일을
+// 지우고 다시 올리는 것이라, 빼지 않으면 같은 사진을 다시 올릴 때 두 배로 계산돼 억울하게 막힌다.
+async function quotaCheck(env, user, addBytes, replaceShareId) {
+  const limit = quotaOf(user);
+  const all = await usedBytesOf(env, user.id);
+  const freed = replaceShareId ? await shareBytes(env, replaceShareId) : 0;
+  const used = Math.max(0, all - freed);
+  return { ok: used + addBytes <= limit, limit, used, addBytes };
+}
+const quotaExceeded = (q) =>
+  json({
+    error: `저장용량을 초과했습니다. (사용 ${fmtBytes(q.used)} / 한도 ${fmtBytes(q.limit)}, `
+      + `이번 업로드 ${fmtBytes(q.addBytes)}) 사진을 줄이거나 기존 wepic을 삭제한 뒤 다시 시도해주세요.`,
+    quotaExceeded: true, used: q.used, limit: q.limit,
+  }, 413);
 
 // ---------- 내 회원정보 ----------
 // 회원이 직접 고칠 수 있는 것은 **이름과 이메일**이다. 제공자·권한·가입일은 읽기 전용.
@@ -375,6 +440,7 @@ function meInfo(user, provider) {
     status: user.status,
     createdAt: user.created_at || null,
     lastLoginAt: user.last_login_at || null,
+    quotaBytes: quotaOf(user), // 사용량(usedBytes)은 계산 비용이 있어 /api/me/usage에서 따로 준다
   };
 }
 // 아주 느슨한 형식 검사(로컬@도메인.tld). 실제 도달 여부는 확인하지 않는다.
@@ -548,6 +614,8 @@ async function apiStatus(request, env) {
     hasShare: !!manifest,
     sharePin: manifest ? manifest.pin || null : null, // 현재 공유의 PIN(메인화면 표시용)
     sharePublic: manifest ? !!manifest.isPublic : false, // 전체공유 체크박스 초기 상태용
+    // 만들어 둔 wepic 주소 — 메인화면이 "링크변경 반영" 위에 바로 보여준다.
+    shareUrl: manifest ? `${env.BASE_URL}/f/${data.currentFrameId}` : null,
     isAdmin: loggedIn && user.role === 'admin',       // Admin 메뉴 노출 여부
     // 회원정보 화면에서 쓸 값(가입일·최근 로그인). 로그인 안 했으면 null.
     me: loggedIn ? meInfo(user, data.provider) : null,
@@ -839,6 +907,169 @@ async function myDeleteShare(env, userId, id) {
   return json({ ok: true });
 }
 
+// 내 저장용량 사용 현황(회원정보 화면에서 표시). R2를 훑으므로 필요할 때만 호출한다.
+async function apiMeUsage(env, user) {
+  const used = await usedBytesOf(env, user.id);
+  const limit = quotaOf(user);
+  return json({ used, limit, usedText: fmtBytes(used), limitText: fmtBytes(limit) });
+}
+
+// ---------- 회원탈퇴 ----------
+// 탈퇴하면 (1) 이 회원이 만든 wepic 컨텐츠(R2 폴더)를 모두 지우고, (2) 좋아요 기록을 지우고,
+// (3) users 행을 지우고, (4) 세션을 없앤다. 되돌릴 수 없다.
+// 확인 대화상자는 화면에서 띄우고, 서버는 confirm 필드로 한 번 더 방어한다(실수 호출 방지).
+async function apiWithdraw(request, env, sess, user) {
+  const body = await request.json().catch(() => ({}));
+  if (body.confirm !== 'DELETE') {
+    return json({ error: '탈퇴 확인이 필요합니다.' }, 400);
+  }
+  // (1) 내가 만든 wepic 전부 삭제 — ownerUserId로 판별한다(이름·이메일이 아니라 고유 id).
+  const mine = [];
+  let cursor;
+  do {
+    const list = await env.SHARES.list({ cursor, delimiter: '/' });
+    for (const pfx of list.delimitedPrefixes || []) {
+      const id = pfx.replace(/\/$/, '');
+      const m = await readManifest(env, id);
+      if (m && m.ownerUserId === user.id) mine.push(id);
+    }
+    cursor = list.truncated ? list.cursor : null;
+  } while (cursor);
+  for (const id of mine) await deleteShare(env, id);
+
+  // (2) 좋아요 기록 (남의 공유에 눌러둔 것도 함께 정리)
+  await env.DB.prepare('DELETE FROM share_likes WHERE user_id = ?1').bind(user.id).run();
+  // (3) 회원 행
+  await env.DB.prepare('DELETE FROM users WHERE id = ?1').bind(user.id).run();
+  // (4) 세션 — 쿠키까지 지워 즉시 로그아웃 상태가 되게 한다.
+  await delSession(env, sess.sid);
+  return json({ ok: true, deletedShares: mine.length }, 200, { 'Set-Cookie': clearCookie() });
+}
+
+// 탈퇴 전에 "무엇이 지워지는지" 미리 보여주기 위한 요약(팝업에서 사용).
+async function apiWithdrawPreview(env, user) {
+  const shares = await listShares(env, (m) => m.ownerUserId === user.id);
+  const used = await usedBytesOf(env, user.id);
+  const photos = shares.reduce((n, s) => n + (s.count || 0), 0);
+  return json({ shareCount: shares.length, photoCount: photos, usedText: fmtBytes(used) });
+}
+
+// ---------- 관리자: 회원관리 ----------
+// 회원 목록 + 개인별 Quota·현재 사용량. 사용량은 R2를 훑어 계산하므로 회원 수가 많아지면
+// 느려질 수 있다 — 지금 규모(수십 명)에서는 충분하고, 커지면 집계 테이블로 옮기면 된다.
+async function adminMembers(env) {
+  const rows = await env.DB.prepare(
+    `SELECT id, provider, provider_sub, email, name, role, status, created_at, last_login_at, quota_bytes
+     FROM users ORDER BY created_at DESC`
+  ).all();
+  const users = rows.results || [];
+
+  // 회원별 사용량을 한 번의 R2 순회로 모아 계산한다(회원마다 훑으면 N배 느려진다).
+  const usedByUser = new Map();
+  let cursor;
+  do {
+    const list = await env.SHARES.list({ cursor, delimiter: '/' });
+    for (const pfx of list.delimitedPrefixes || []) {
+      const id = pfx.replace(/\/$/, '');
+      const m = await readManifest(env, id);
+      if (!m || !m.ownerUserId) continue;
+      let sum = 0;
+      let inner;
+      do {
+        inner = await env.SHARES.list({ prefix: id + '/', cursor: inner?.truncated ? inner.cursor : undefined });
+        for (const o of inner.objects || []) sum += o.size || 0;
+      } while (inner.truncated);
+      usedByUser.set(m.ownerUserId, (usedByUser.get(m.ownerUserId) || 0) + sum);
+    }
+    cursor = list.truncated ? list.cursor : null;
+  } while (cursor);
+
+  return json({
+    defaultQuotaBytes: DEFAULT_QUOTA_BYTES,
+    members: users.map((u) => {
+      const used = usedByUser.get(u.id) || 0;
+      const limit = quotaOf(u);
+      return {
+        id: u.id, provider: u.provider, email: u.email || null, name: u.name || null,
+        role: u.role, status: u.status, createdAt: u.created_at || null, lastLoginAt: u.last_login_at || null,
+        quotaBytes: limit,
+        isDefaultQuota: !(Number(u.quota_bytes) > 0), // 기본값을 따르는 중인지(관리자 화면 표시용)
+        usedBytes: used,
+        usedText: fmtBytes(used), quotaText: fmtBytes(limit),
+        usedPercent: limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0,
+      };
+    }),
+  });
+}
+
+// 관리자: 특정 회원의 Quota 변경. quotaMb를 비우거나 0으로 보내면 기본값(NULL)으로 돌린다.
+async function adminSetQuota(request, env, id) {
+  const target = await getUserById(env, Number(id));
+  if (!target) return json({ error: '없는 회원입니다.' }, 404);
+  const body = await request.json().catch(() => ({}));
+  const mb = Number(body.quotaMb);
+  if (body.quotaMb !== null && body.quotaMb !== '' && !(Number.isFinite(mb) && mb >= 0)) {
+    return json({ error: '용량(MB)은 0 이상의 숫자여야 합니다.' }, 400);
+  }
+  // 0이나 빈 값 → NULL(기본값 따름). 그 외에는 MB를 바이트로 바꿔 저장한다.
+  const bytes = Number.isFinite(mb) && mb > 0 ? Math.round(mb * 1024 * 1024) : null;
+  await env.DB.prepare('UPDATE users SET quota_bytes = ?1 WHERE id = ?2').bind(bytes, target.id).run();
+  return json({ ok: true, quotaBytes: bytes || DEFAULT_QUOTA_BYTES, isDefaultQuota: bytes === null });
+}
+
+// ---------- Spotify (30초 미리듣기) ----------
+// Client Credentials 플로우로 앱 토큰을 받아 곡을 검색한다(사용자 Spotify 로그인 불필요).
+// 반환하는 preview_url은 Spotify가 제공하는 **30초 미리듣기 MP3**다 — 전체 곡 재생은
+// Spotify 정책상 웹 임베드/SDK로만 가능하고 유료 계정이 필요해서, 여기서는 미리듣기만 쓴다.
+let spotifyToken = null; // { value, expiresAt } — Worker 인스턴스 메모리에 잠깐 캐시
+const spotifyConfigured = (env) => !!(env.SPOTIFY_CLIENT_ID && env.SPOTIFY_CLIENT_SECRET);
+async function spotifyAccessToken(env) {
+  if (spotifyToken && spotifyToken.expiresAt > Date.now() + 10_000) return spotifyToken.value;
+  const basic = btoa(`${env.SPOTIFY_CLIENT_ID}:${env.SPOTIFY_CLIENT_SECRET}`);
+  const r = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: { Authorization: 'Basic ' + basic, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=client_credentials',
+  });
+  if (!r.ok) throw new Error(`Spotify 토큰 요청 실패 (${r.status})`);
+  const d = await r.json();
+  spotifyToken = { value: d.access_token, expiresAt: Date.now() + (d.expires_in || 3600) * 1000 };
+  return spotifyToken.value;
+}
+
+async function spotifySearch(env, url) {
+  const q = (url.searchParams.get('q') || '').trim();
+  if (!q) return json({ error: '검색어를 입력하세요.' }, 400);
+  // 키가 없으면 "서버 오류"가 아니라 아직 준비되지 않았다고 분명히 알려준다
+  // (YouTube는 그대로 쓸 수 있으므로 치명적 오류가 아니다).
+  if (!spotifyConfigured(env)) {
+    return json({ error: 'Spotify 연동이 아직 설정되지 않았습니다. 배경음악은 YouTube 링크를 써주세요.' }, 503);
+  }
+  let token;
+  try {
+    token = await spotifyAccessToken(env);
+  } catch (err) {
+    return json({ error: 'Spotify 인증에 실패했습니다: ' + err.message }, 502);
+  }
+  const api = new URL('https://api.spotify.com/v1/search');
+  api.searchParams.set('q', q);
+  api.searchParams.set('type', 'track');
+  api.searchParams.set('limit', '20');
+  const r = await fetch(api.toString(), { headers: { Authorization: 'Bearer ' + token } });
+  if (!r.ok) return json({ error: `Spotify 검색 실패 (${r.status})` }, 502);
+  const d = await r.json();
+  const tracks = (d.tracks?.items || []).map((t) => ({
+    id: t.id,
+    name: t.name,
+    artist: (t.artists || []).map((a) => a.name).join(', '),
+    // preview_url이 없는 곡도 많다(권리사 정책·앱 등록 시점에 따라 다름) → 화면에서 걸러 표시한다.
+    previewUrl: t.preview_url || null,
+    image: t.album?.images?.[t.album.images.length - 1]?.url || null,
+  }));
+  const playable = tracks.filter((t) => t.previewUrl);
+  return json({ tracks: playable, totalFound: tracks.length, playableCount: playable.length });
+}
+
 // PIN 입력 → 맞으면 열람 쿠키 발급(24시간)
 async function verifyPin(request, env, id) {
   if (!/^[\w-]{6,}$/.test(id)) return json({ error: '잘못된 링크입니다.' }, 404);
@@ -1058,11 +1289,12 @@ async function downloadImage(base, sz, token) {
 // 동영상 원본(=dv)을 R2에 그대로 저장한다. 공유 화면은 로그인이 없어 구글 원본 URL
 // (/video 프록시)을 쓸 수 없으므로, 파일 자체를 저장해야 재생할 수 있다.
 // 응답 본문을 스트림으로 그대로 넘겨 메모리에 다 올리지 않는다(큰 파일 대비).
-async function putVideoToR2(env, base, token, key) {
+// budgetBytes를 주면 "남은 저장용량"으로도 함께 제한한다(넘으면 throw → 호출부가 포스터만 남긴다).
+async function putVideoToR2(env, base, token, key, budgetBytes) {
   const r = await fetchGoogleAsset(`${base}=dv`, token);
   if (!r.ok) throw new Error('video fetch ' + r.status);
   const len = Number(r.headers.get('content-length') || 0);
-  const max = maxShareVideoBytes(env);
+  const max = Math.min(maxShareVideoBytes(env), Number.isFinite(budgetBytes) ? budgetBytes : Infinity);
   if (len > max) throw new Error('video too large');
   // content-length가 없으면 크기를 미리 알 수 없다 → R2가 거부할 수 있으므로 그대로 시도한다.
   await env.SHARES.put(key, r.body, {
@@ -1075,6 +1307,8 @@ async function shareCreate(request, env, token, sess) {
   const body = await request.json().catch(() => ({}));
   const items = Array.isArray(body.items) ? body.items : [];
   const musicUrl = typeof body.musicUrl === 'string' ? body.musicUrl : '';
+  // Spotify 미리듣기는 주소만으로 곡목을 알 수 없어 화면이 보내준 값을 저장한다.
+  const musicTitle = typeof body.musicTitle === 'string' ? body.musicTitle.slice(0, 60) : '';
   const title = typeof body.title === 'string' ? body.title.slice(0, 40) : '';
   const intervalSec = Math.min(60, Math.max(3, Number(body.intervalSec) || 10));
   const effect = ['fade', 'slide', 'kenburns'].includes(body.effect) ? body.effect : 'fade';
@@ -1089,6 +1323,19 @@ async function shareCreate(request, env, token, sess) {
   }
   const shareId = sess.data.currentFrameId;
   await putSession(env, sess.sid, sess.data);
+
+  // 저장용량: 구글에서 받아오는 방식은 **미리 크기를 알 수 없다**(파일이 아니라 URL을 받는다).
+  // 그래서 (1) 시작 전에 이미 한도를 넘었는지 보고, (2) 한 장씩 저장하면서 누적 크기를 재
+  // 한도에 닿으면 그 시점에서 멈춘다. 멈췄으면 응답에 몇 장만 저장됐는지 알려준다.
+  const quotaUser = await getUserById(env, sess.data?.userId);
+  const quotaLimit = quotaOf(quotaUser);
+  // 이 액자는 아래에서 덮어쓰므로(기존 파일 정리) 현재 용량은 빼고 시작점을 잡는다.
+  const quotaBase = Math.max(0, (await usedBytesOf(env, sess.data?.userId)) - (await shareBytes(env, shareId)));
+  if (quotaBase >= quotaLimit) {
+    return quotaExceeded({ used: quotaBase, limit: quotaLimit, addBytes: 0 });
+  }
+  let quotaRunning = 0;   // 이번에 새로 저장한 바이트 누적
+  let quotaStopped = false; // 한도 때문에 중단했는지
 
   // 이미 이 액자에 저장된 파일(관리자가 액자를 열어 몇 장만 추가/제외한 경우)은 구글에서
   // 다시 받을 수 없다(원본 URL이 없음). 그래서 **키를 바꾸지 않고 그대로 재사용**한다
@@ -1132,6 +1379,7 @@ async function shareCreate(request, env, token, sess) {
       continue;
     }
     // (2) 새 항목 → 구글에서 내려받아 저장
+    if (quotaStopped) break; // 한도에 닿았으면 더 받아오지 않는다
     const base = baseUrlFromImgPath(it.fullUrl || '');
     if (!base) continue;
     const n = String(++maxIdx).padStart(3, '0');
@@ -1139,6 +1387,13 @@ async function shareCreate(request, env, token, sess) {
       // 동영상도 정지 프레임(포스터)은 항상 저장한다 — 재생 전 표시 및 재생 실패 시 대체용.
       const full = await downloadImage(base, 'w1920-h1080', token);
       const thumb = await downloadImage(base, 'w300-h300-c', token);
+      // 받아온 실제 크기로 한도를 확인한다. 넘으면 이 사진은 저장하지 않고 여기서 멈춘다.
+      if (quotaBase + quotaRunning + full.byteLength + thumb.byteLength > quotaLimit) {
+        quotaStopped = true;
+        maxIdx--; // 쓰지 않은 번호는 돌려놓는다
+        break;
+      }
+      quotaRunning += full.byteLength + thumb.byteLength;
       await env.SHARES.put(`${shareId}/photos/${n}_full.jpg`, full, { httpMetadata: { contentType: 'image/jpeg' } });
       await env.SHARES.put(`${shareId}/photos/${n}_thumb.jpg`, thumb, { httpMetadata: { contentType: 'image/jpeg' } });
       keepKeys.add(`${shareId}/photos/${n}_full.jpg`);
@@ -1153,10 +1408,14 @@ async function shareCreate(request, env, token, sess) {
         // 동영상 원본까지 저장되면 공유 화면에서 재생된다. 너무 크거나 실패하면
         // 포스터만 남겨 사진으로 표시한다(공유가 통째로 실패하지 않도록).
         try {
-          await putVideoToR2(env, base, token, `${shareId}/photos/${n}_video.mp4`);
+          const budget = quotaLimit - (quotaBase + quotaRunning);
+          await putVideoToR2(env, base, token, `${shareId}/photos/${n}_video.mp4`, budget);
           keepKeys.add(`${shareId}/photos/${n}_video.mp4`);
           entry.type = 'video';
           entry.videoUrl = `/shares/${shareId}/photos/${n}_video.mp4`;
+          // 스트리밍으로 올렸으므로 실제 저장된 크기를 다시 읽어 누적한다.
+          const head = await env.SHARES.head(`${shareId}/photos/${n}_video.mp4`);
+          quotaRunning += head?.size || 0;
         } catch (err) {
           console.warn(`동영상 저장 실패(${it.id}): ${err.message} → 정지 이미지로 대체`);
         }
@@ -1164,7 +1423,11 @@ async function shareCreate(request, env, token, sess) {
       manifestItems.push(entry);
     } catch { /* 개별 실패는 건너뜀 */ }
   }
-  if (!manifestItems.length) return json({ error: '사진을 저장하지 못했습니다. 다시 시도해주세요.' }, 500);
+  if (!manifestItems.length) {
+    // 한 장도 못 넣은 이유가 용량이면 그렇게 알려준다(원인을 알 수 없는 500보다 낫다).
+    if (quotaStopped) return quotaExceeded({ used: quotaBase, limit: quotaLimit, addBytes: 0 });
+    return json({ error: '사진을 저장하지 못했습니다. 다시 시도해주세요.' }, 500);
+  }
 
   // 이번에 쓰이지 않는 예전 파일 정리(제외된 사진·동영상)
   const old = await env.SHARES.list({ prefix: `${shareId}/` });
@@ -1181,11 +1444,16 @@ async function shareCreate(request, env, token, sess) {
   const authorName = sess.data?.name || '위픽 사용자';
   const curFrameName = frameNameOf(sess.data, shareId);
   await writeManifest(env, shareId, {
-    musicUrl, title, intervalSec, effect, pin, owner, authorName, isPublic,
+    musicUrl, musicTitle, title, intervalSec, effect, pin, owner, authorName, isPublic,
     ownerUserId: sess.data?.userId || null, // "My사진관리"에서 본인 소유만 걸러낼 고유 키(D1 회원 id)
     frameName: curFrameName, items: manifestItems,
   });
-  return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, isPublic, frameId: shareId, frameName: curFrameName });
+  return json({
+    url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, isPublic,
+    frameId: shareId, frameName: curFrameName,
+    // 용량 때문에 일부만 저장했으면 화면에서 안내할 수 있게 알려준다.
+    ...(quotaStopped ? { quotaStopped: true, quotaLimitText: fmtBytes(quotaLimit) } : {}),
+  });
 }
 
 // 구글 포토 "공유"로 받은 사진 등: 브라우저가 가진 파일(blob)을 그대로 올려 공유 링크 생성.
@@ -1197,6 +1465,7 @@ async function shareBlob(request, env, sess, user) {
   let meta = [];
   try { meta = JSON.parse(form.get('meta') || '[]'); } catch { /* 무시 */ }
   const musicUrl = typeof form.get('musicUrl') === 'string' ? form.get('musicUrl') : '';
+  const musicTitle = String(form.get('musicTitle') || '').slice(0, 60);
   const title = String(form.get('title') || '').slice(0, 40);
   const intervalSec = Math.min(60, Math.max(3, Number(form.get('intervalSec')) || 10));
   const effect = ['fade', 'slide', 'kenburns'].includes(form.get('effect')) ? form.get('effect') : 'fade';
@@ -1211,6 +1480,12 @@ async function shareBlob(request, env, sess, user) {
   }
   const shareId = sdata.currentFrameId;
   await putSession(env, ssid, sdata);
+
+  // 저장용량 확인 — 실제로 R2에 쓰기 전에 막는다(쓰고 나서 되돌리면 이미 용량을 쓴 상태가 된다).
+  // 이 액자를 덮어쓰는 것이므로 기존 용량은 빼고 계산한다.
+  const incomingBytes = files.reduce((n, f) => n + (f.size || 0), 0);
+  const quota = await quotaCheck(env, user, incomingBytes, shareId);
+  if (!quota.ok) return quotaExceeded(quota);
 
   // 기존 공유를 먼저 지우지 않고 새 파일부터 저장한다. 재업로드한 파일이 전부
   // 걸러지거나(이미지가 아님) 저장에 실패해도 기존 공유가 지워지지 않도록 하기 위함 —
@@ -1248,7 +1523,7 @@ async function shareBlob(request, env, sess, user) {
   const authorName = user.name || '위픽 사용자';
   const curFrameName = frameNameOf(sdata, shareId);
   await writeManifest(env, shareId, {
-    musicUrl, title, intervalSec, effect, pin, owner, authorName, isPublic,
+    musicUrl, musicTitle, title, intervalSec, effect, pin, owner, authorName, isPublic,
     ownerUserId: user.id, // "My사진관리"에서 본인 소유만 걸러낼 고유 키(D1 회원 id)
     frameName: curFrameName, items: manifestItems,
   });
@@ -1473,6 +1748,30 @@ export default {
       // "사진 보기" 예시 콘텐츠 등록(1회성, 멱등) — 관리자 화면의 버튼이 호출한다.
       if (p === '/api/admin/seed-showcase' && m === 'POST') {
         return requireAdmin(request, env, (rq, en) => seedShowcase(en));
+      }
+      // 관리자: 회원관리 (목록 + 개인별 Quota·사용량)
+      if (p === '/api/admin/members' && m === 'GET') {
+        return requireAdmin(request, env, (rq, en) => adminMembers(en));
+      }
+      const mAdminQuota = p.match(/^\/api\/admin\/members\/(\d+)\/quota$/);
+      if (mAdminQuota && m === 'PUT') {
+        return requireAdmin(request, env, (rq, en) => adminSetQuota(rq, en, mAdminQuota[1]));
+      }
+
+      // Spotify 곡 검색 (30초 미리듣기 URL을 돌려준다). 로그인한 회원만.
+      if (p === '/api/spotify/search' && m === 'GET') {
+        return requireMember(request, env, (rq, en) => spotifySearch(en, url));
+      }
+
+      // 내 저장용량 사용 현황 / 회원탈퇴
+      if (p === '/api/me/usage' && m === 'GET') {
+        return requireMember(request, env, (rq, en, sess, user) => apiMeUsage(en, user));
+      }
+      if (p === '/api/me/withdraw-preview' && m === 'GET') {
+        return requireMember(request, env, (rq, en, sess, user) => apiWithdrawPreview(en, user));
+      }
+      if (p === '/api/me/withdraw' && m === 'POST') {
+        return requireMember(request, env, (rq, en, sess, user) => apiWithdraw(rq, en, sess, user));
       }
 
       // "사진 보기": 전체공유(isPublic) 액자 피드. 로그인 없이도 볼 수 있다(Wepic 조회자 대상).

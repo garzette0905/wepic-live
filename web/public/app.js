@@ -25,6 +25,7 @@ function stopSlideshowPlayback() {
   try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* 무시 */ }
   v.classList.remove('active');
   try { ytPlayer?.pauseVideo?.(); } catch { /* 무시 */ }
+  try { previewAudio?.pause?.(); } catch { /* 무시 */ } // Spotify 미리듣기도 함께 멈춘다
   musicPlaying = false;
   syncMusicButton();
 }
@@ -100,6 +101,7 @@ function selectPanel(name) {
   if (name === 'admin-screens') loadShareList('admin-shares-list', 'admin');
   if (name === 'admin-pins') loadShareList('admin-pins-list', 'admin');
   if (name === 'admin-defaults') fillDefaultsForm();
+  if (name === 'admin-members') loadMemberList();
   if (name === 'my-screens') loadShareList('my-shares-list', 'my');
   if (name === 'my-pins') loadShareList('my-pins-list', 'my');
   if (name === 'signup') refreshSignupGate(); // 동의 상태에 맞춰 가입 버튼 활성/비활성
@@ -768,29 +770,162 @@ async function loadBgMusic(url) {
   }, 900);
 }
 
+// ---------- Spotify 30초 미리듣기 ----------
+// Spotify는 웹에서 전체 곡을 틀려면 유료 계정 + Web Playback SDK가 필요하다. 여기서는
+// 공개 API가 주는 **30초 미리듣기 MP3**(p.scdn.co)를 <audio>로 반복 재생한다.
+// musicUrl 한 칸에 YouTube 링크와 Spotify 미리듣기 URL이 모두 들어올 수 있어, 주소를 보고
+// 어느 쪽인지 판단한다(별도 필드를 두지 않아 기존 액자·공유화면과 그대로 호환된다).
+const isSpotifyPreview = (u) => /^https?:\/\/p\.scdn\.co\//i.test(String(u || ''));
+let previewAudio = null;
+function ensurePreviewAudio() {
+  if (!previewAudio) {
+    previewAudio = new Audio();
+    previewAudio.loop = true; // 30초뿐이라 계속 반복해야 배경음악 구실을 한다
+    previewAudio.addEventListener('play', () => { musicPlaying = true; syncMusicButton(); refreshCaption(); });
+    previewAudio.addEventListener('pause', () => { musicPlaying = false; syncMusicButton(); refreshCaption(); });
+  }
+  return previewAudio;
+}
+// 지금 로드된 배경음악이 Spotify 미리듣기인가(=YouTube 플레이어가 아니라 <audio>를 쓰는가)
+const musicIsPreview = () => !!(previewAudio && previewAudio.src && musicLoaded && isSpotifyPreview(previewAudio.src));
+
+async function loadSpotifyPreview(url, title) {
+  const a = ensurePreviewAudio();
+  a.src = url;
+  a.volume = Number(document.getElementById('music-volume').value) / 100;
+  // 다른 쪽(YouTube)이 울리고 있으면 멈춘다 — 둘이 동시에 나면 안 된다.
+  try { ytPlayer?.pauseVideo?.(); } catch { /* 무시 */ }
+  loadedVideoId = null;
+  musicLoaded = true;
+  musicTitle = shortMusicTitle(title || 'Spotify 미리듣기');
+  document.getElementById('music-title').textContent = musicTitle + ' (30초 미리듣기)';
+  try {
+    await a.play();
+  } catch {
+    // 사용자 조작 없이 자동재생이 막힌 경우 — 버튼을 눌러 재생하도록 상태만 맞춘다.
+    musicPlaying = false;
+  }
+  syncMusicButton();
+  refreshCaption();
+}
+
+// 재생/일시정지 토글 — YouTube든 Spotify 미리듣기든 같은 버튼으로 다룬다.
+function toggleMusicPlayback() {
+  if (musicIsPreview()) {
+    const a = ensurePreviewAudio();
+    if (a.paused) a.play().catch(() => showToast('재생할 수 없습니다.'));
+    else a.pause();
+    return;
+  }
+  if (!ytPlayer) return;
+  if (ytPlayer.getPlayerState() === YT.PlayerState.PLAYING) ytPlayer.pauseVideo();
+  else ytPlayer.playVideo();
+}
+
 // "▶ 재생하기" 버튼: 처음이거나 링크가 바뀌었으면 로드/재생, 이미 로드됐으면 재생↔일시정지 토글
 document.getElementById('btn-music-load').addEventListener('click', () => {
   const url = document.getElementById('music-url').value.trim();
-  const id = url ? extractYouTubeId(url) : null;
-  if (!musicLoaded || (id && id !== loadedVideoId)) {
-    if (url) loadBgMusic(url);
-    else showToast('YouTube 링크를 입력하세요.');
+  // Spotify 미리듣기 주소가 들어와 있으면 그것으로 재생한다(팝업에서 고르면 이 칸이 채워진다).
+  if (isSpotifyPreview(url)) {
+    if (previewAudio && previewAudio.src === url && musicLoaded) toggleMusicPlayback();
+    else loadSpotifyPreview(url, musicTitle);
     return;
   }
-  if (ytPlayer.getPlayerState() === YT.PlayerState.PLAYING) ytPlayer.pauseVideo();
-  else ytPlayer.playVideo();
+  const id = url ? extractYouTubeId(url) : null;
+  if (!musicLoaded || musicIsPreview() || (id && id !== loadedVideoId)) {
+    if (!url) { showToast('음악 링크를 입력하거나 Spotify 버튼으로 곡을 고르세요.'); return; }
+    if (!id) { showToast('YouTube 링크가 아닙니다. Spotify 곡은 옆의 Spotify 버튼으로 골라주세요.'); return; }
+    loadBgMusic(url);
+    return;
+  }
+  toggleMusicPlayback();
 });
 // 사진 위 좌측 아이콘 줄의 음악 아이콘 — 곡이 이미 준비된 뒤에만 보이므로 재생↔일시정지만 토글한다
 // (링크 입력·최초 로드는 설정 패널의 "▶ 재생하기"에서 한다).
 document.getElementById('btn-photo-music').addEventListener('click', () => {
-  if (!musicLoaded || !ytPlayer) return;
-  if (ytPlayer.getPlayerState() === YT.PlayerState.PLAYING) ytPlayer.pauseVideo();
-  else ytPlayer.playVideo();
+  if (!musicLoaded) return;
+  toggleMusicPlayback();
 });
-document.getElementById('music-volume').addEventListener('input', (e) => ytPlayer?.setVolume(Number(e.target.value)));
+document.getElementById('music-volume').addEventListener('input', (e) => {
+  const v = Number(e.target.value);
+  ytPlayer?.setVolume(v);
+  if (previewAudio) previewAudio.volume = v / 100;
+});
 document.getElementById('btn-music-clear').addEventListener('click', () => {
   const i = document.getElementById('music-url'); i.value = ''; i.focus();
 });
+
+// ---------- Spotify 곡 찾기 팝업 ----------
+const spotifyModal = document.getElementById('spotify-modal');
+document.getElementById('btn-music-spotify').addEventListener('click', () => {
+  spotifyModal.classList.remove('hidden');
+  document.getElementById('spotify-q').focus();
+});
+document.getElementById('btn-spotify-close').addEventListener('click', (e) => {
+  e.preventDefault(); spotifyModal.classList.add('hidden');
+});
+spotifyModal.addEventListener('click', (e) => { if (e.target === spotifyModal) spotifyModal.classList.add('hidden'); });
+document.getElementById('spotify-q').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); searchSpotify(); }
+});
+document.getElementById('btn-spotify-search').addEventListener('click', searchSpotify);
+
+async function searchSpotify() {
+  const q = document.getElementById('spotify-q').value.trim();
+  const statusEl = document.getElementById('spotify-status');
+  const listEl = document.getElementById('spotify-results');
+  if (!q) { statusEl.textContent = '검색어를 입력하세요.'; return; }
+  listEl.innerHTML = '';
+  statusEl.textContent = '검색 중...';
+  try {
+    const r = await api(`/api/spotify/search?q=${encodeURIComponent(q)}`);
+    if (!r.tracks.length) {
+      // 미리듣기가 없는 곡은 배경음악으로 쓸 수 없어 서버에서 걸러진다 → 왜 비었는지 알려준다.
+      statusEl.textContent = r.totalFound
+        ? `${r.totalFound}곡을 찾았지만 30초 미리듣기를 제공하는 곡이 없습니다. 다른 검색어로 시도해보세요.`
+        : '검색 결과가 없습니다.';
+      return;
+    }
+    statusEl.textContent = `미리듣기 가능한 ${r.tracks.length}곡`;
+    r.tracks.forEach((t) => listEl.appendChild(spotifyRow(t)));
+  } catch (err) {
+    statusEl.textContent = '검색 실패: ' + err.message;
+  }
+}
+
+function spotifyRow(t) {
+  const row = document.createElement('div');
+  row.className = 'spotify-row';
+  if (t.image) {
+    const img = document.createElement('img');
+    img.className = 'spotify-cover';
+    img.src = t.image;
+    img.alt = '';
+    row.appendChild(img);
+  }
+  const meta = document.createElement('div');
+  meta.className = 'spotify-meta';
+  const name = document.createElement('div');
+  name.className = 'spotify-name';
+  name.textContent = t.name;
+  const artist = document.createElement('div');
+  artist.className = 'spotify-artist';
+  artist.textContent = t.artist;
+  meta.append(name, artist);
+  row.appendChild(meta);
+
+  const pick = document.createElement('button');
+  pick.className = 'secondary slim';
+  pick.textContent = '이 곡으로';
+  pick.addEventListener('click', () => {
+    document.getElementById('music-url').value = t.previewUrl;
+    loadSpotifyPreview(t.previewUrl, `${t.name} - ${t.artist}`);
+    spotifyModal.classList.add('hidden');
+    showToast('배경음악을 바꿨습니다. 30초 미리듣기가 반복 재생됩니다.');
+  });
+  row.appendChild(pick);
+  return row;
+}
 
 // ---------- 실시간 공유 링크 ----------
 const shareModal = document.getElementById('share-modal');
@@ -804,6 +939,17 @@ function setShareLinkState(hasLink) {
   document.getElementById('btn-update-share').classList.toggle('hidden', !has);
   document.getElementById('btn-frame-copy').classList.toggle('hidden', !has);
   document.getElementById('btn-frame-delete').classList.toggle('hidden', !has);
+  showShareUrlInline(has ? document.getElementById('share-url').value : '');
+}
+
+// wepic이 만들어지면 그 주소를 "링크변경 반영" 버튼 바로 위에 보여준다(눌러서 바로 열 수 있게).
+function showShareUrlInline(url) {
+  const box = document.getElementById('share-url-inline');
+  const link = document.getElementById('share-url-link');
+  const has = !!url;
+  link.textContent = has ? url : '';
+  link.href = has ? url : '#';
+  box.classList.toggle('hidden', !has);
 }
 
 // 공유 주소를 클립보드로. (구형 브라우저·비보안 컨텍스트에서는 선택+복사로 폴백)
@@ -901,8 +1047,9 @@ function applyCurrentFrameToShareUI() {
   const f = frames.find((x) => x.id === currentFrameId);
   const publicBox = document.getElementById('share-public');
   if (f && f.hasContent) {
-    setShareLinkState(true);
+    // share-url을 먼저 채운다 — setShareLinkState가 이 값을 읽어 주소 줄을 그린다.
     document.getElementById('share-url').value = f.url || '';
+    setShareLinkState(true);
     document.getElementById('btn-open-share').href = f.url || '#';
     publicBox.checked = !!f.isPublic;
     // 전체공유면 서버가 애초에 pin을 두지 않으므로 f.pin이 없다 — setSharePin이 알아서 숨긴다.
@@ -1018,6 +1165,9 @@ async function pushShare(mode) {
       }
       form.append('meta', JSON.stringify(meta));
       form.append('musicUrl', musicUrl);
+      // Spotify 미리듣기는 주소만으로 곡 제목을 알 수 없어(YouTube는 플레이어가 알려준다)
+      // 지금 화면에 표시된 제목을 함께 저장한다 → 공유화면에서도 곡목이 보인다.
+      form.append('musicTitle', musicTitle || '');
       form.append('title', title);
       form.append('intervalSec', String(intervalSec));
       form.append('effect', slideEffect);
@@ -1035,7 +1185,10 @@ async function pushShare(mode) {
       r = await api('/api/share', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items, musicUrl, title, intervalSec, effect: slideEffect, pin, isPublic }),
+        body: JSON.stringify({
+          items, musicUrl, title, intervalSec, effect: slideEffect, pin, isPublic,
+          musicTitle: musicTitle || '', // Spotify 미리듣기용 곡목 스냅샷(위 blob 경로 주석 참고)
+        }),
       });
     }
     document.getElementById('share-url').value = r.url;
@@ -1051,6 +1204,11 @@ async function pushShare(mode) {
       document.getElementById('share-copied').classList.add('hidden');
       shareModal.classList.remove('hidden');
       if (excludedVideos) showToast(`동영상 ${excludedVideos}개는 공유 링크에서 제외되었습니다.`);
+    }
+    // 저장용량 한도에 걸려 일부만 저장된 경우 — 조용히 넘기면 사진이 왜 빠졌는지 알 수 없다.
+    if (r.quotaStopped) {
+      showToast(`저장용량 한도(${r.quotaLimitText})에 도달해 ${r.count}장만 저장했습니다. `
+        + '기존 wepic을 삭제하거나 관리자에게 용량 증설을 요청해주세요.');
     }
   } catch (err) {
     showToast((mode === 'update' ? '반영 실패: ' : '공유 링크 생성 실패: ') + err.message);
@@ -1119,10 +1277,20 @@ document.getElementById('btn-local-reselect').addEventListener('click', (e) => {
   if (intervalHandle) clearInterval(intervalHandle);
   document.getElementById('local-file-input').click();
 });
-document.getElementById('btn-logout').addEventListener('click', async (e) => {
-  e.preventDefault();
+// 로그아웃은 여러 곳(슬라이드쇼 하단 링크·회원정보 화면·상단 메뉴의 이름)에서 부른다.
+async function doLogout() {
   await api('/api/logout', { method: 'POST' }).catch(() => {});
   location.href = '/';
+}
+// 상단 메뉴의 로그인 이름 — 예전에는 눌러도 아무 일이 없었다. 확인 후 로그아웃한다.
+document.getElementById('menu-whoami').addEventListener('click', async () => {
+  if (!isLoggedIn) return;
+  if (!confirm('로그아웃하시겠습니까?')) return;
+  await doLogout();
+});
+document.getElementById('btn-logout').addEventListener('click', async (e) => {
+  e.preventDefault();
+  await doLogout();
 });
 
 // 전체화면을 해제하고 홈(소개)으로 이동한다. 재생 중이던 동영상·배경음악은
@@ -1163,8 +1331,6 @@ document.getElementById('btn-exclude-apply').addEventListener('click', () => {
   recomputeFiltered();
 });
 
-// ---------- "사진 보기" 피드에서 남의 공개 공유를 보는 상태(로그인 없이 가능) ----------
-let isPublicViewMode = false;
 let isSharedMode = false; // 구글 포토 "공유"로 사진을 받아 로그인 없이 보는 상태(PWA 공유 타깃)
 // 관리자 모드: 관리자가 특정 액자를 wepic 메인화면으로 열어(/?frame=<id>) 자기 세션에
 // 편입시킨 상태. frameManifest는 최초 진입 시 제목·전환설정 초기값을 채우는 용도일 뿐,
@@ -1172,24 +1338,12 @@ let isSharedMode = false; // 구글 포토 "공유"로 사진을 받아 로그�
 let isFrameMode = false;
 let frameManifest = null;
 
-// "사진 보기" 카드를 눌러 특정 공개 공유를 같은 화면 안에서 재생한다.
-// 전체공유는 PIN이 없으므로 photos.json을 로그인 없이 그대로 받아올 수 있다.
-async function viewPublicShare(id, author, title) {
-  try {
-    const res = await fetch(`/shares/${id}/photos.json`, { cache: 'no-store' });
-    if (!res.ok) throw new Error('공유를 불러오지 못했습니다.');
-    const data = await res.json();
-    // 제목은 boot()가 loadDisplaySettings()로 Default 값으로 리셋한 "다음"에 적용해야 한다
-    // (frameManifest의 제목도 같은 이유로 boot() 안에서 뒤늦게 적용된다) — 그래서 여기서
-    // 직접 applyTitle을 부르지 않고 publicView에 실어 boot()에 맡긴다.
-    boot(data.items || [], {
-      author: author || '위픽 사용자',
-      title: title || data.title || '',
-      musicUrl: data.musicUrl || '',
-    });
-  } catch (err) {
-    showToast(err.message || '불러오기에 실패했습니다.');
-  }
+// "사진 보기" 카드를 누르면 **wepic 공유화면**(/f/<id>)으로 이동한다.
+// 예전에는 메인화면 슬라이드쇼로 재생했는데, 메인화면은 "내 사진을 편집하는 화면"이라
+// 남의 공개 wepic을 볼 자리가 아니다(설정 패널·액자 선택이 같이 보여 혼란스럽다).
+// 공유화면은 로그인 없이 보도록 만든 화면이고 전체공유는 PIN도 없어 그대로 열린다.
+function viewPublicShare(id) {
+  location.href = `/f/${encodeURIComponent(id)}`;
 }
 
 // ---------- "사진 보기" 카드 목록 (전체공유 피드) ----------
@@ -1278,7 +1432,7 @@ function feedCard(s) {
   body.appendChild(likeBtn);
 
   card.appendChild(body);
-  card.addEventListener('click', () => viewPublicShare(s.id, s.author, s.title));
+  card.addEventListener('click', () => viewPublicShare(s.id));
   return card;
 }
 
@@ -1436,15 +1590,20 @@ function applyTitle(text) {
 
 // 배경음악을 "동영상 재생용"으로 잠시 정지 (재생 중일 때만). 나중에 복귀할 수 있게 표시.
 function pauseMusicForVideo() {
-  if (musicPlaying && ytPlayer) {
+  if (!musicPlaying) return;
+  if (musicIsPreview()) {
+    try { previewAudio.pause(); } catch {}
+    musicPausedForVideo = true;
+  } else if (ytPlayer) {
     try { ytPlayer.pauseVideo(); } catch {}
     musicPausedForVideo = true;
   }
 }
 // 동영상 때문에 정지했던 배경음악을 다시 재생.
 function resumeMusicAfterVideo() {
-  if (musicPausedForVideo && ytPlayer) {
-    try { ytPlayer.playVideo(); } catch {}
+  if (musicPausedForVideo) {
+    if (musicIsPreview()) { try { previewAudio.play().catch(() => {}); } catch {} }
+    else if (ytPlayer) { try { ytPlayer.playVideo(); } catch {} }
   }
   musicPausedForVideo = false;
 }
@@ -1577,6 +1736,17 @@ document.querySelectorAll('#effect-radios input').forEach((r) =>
 document.getElementById('title-input').addEventListener('input', (e) => applyTitle(e.target.value));
 document.getElementById('ambient-toggle').addEventListener('change', (e) => applyAmbient(e.target.checked));
 document.getElementById('video-sound-toggle').addEventListener('change', (e) => applyVideoSound(e.target.checked));
+
+// ---------- 추가옵션 접기/펼치기 ----------
+// 사진 방향·재생 설정은 한 번 정하면 자주 바꾸지 않아, 기본은 접어두고 필요할 때만 펼친다.
+document.getElementById('btn-extra-options').addEventListener('click', (e) => {
+  const btn = e.currentTarget;
+  const box = document.getElementById('extra-options');
+  const open = box.classList.contains('hidden'); // 지금 닫혀 있으면 이제 열린다
+  box.classList.toggle('hidden', !open);
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  btn.querySelector('.extra-options-caret').textContent = open ? '▾' : '▸';
+});
 
 // ---------- Default 정보관리 (전역 설정) ----------
 // 모든 화면(데모·wepic 메인화면·wepic 공유화면)이 로딩 시 이 값을 먼저 읽어 적용한다.
@@ -1768,6 +1938,91 @@ function shareRow(s, scope, pinMode) {
   return row;
 }
 
+// ---------- 관리자: 회원관리 (Quota·사용량) ----------
+async function loadMemberList() {
+  const box = document.getElementById('admin-members-list');
+  const countEl = document.getElementById('admin-members-count');
+  box.textContent = '불러오는 중...';
+  countEl.textContent = '';
+  try {
+    const r = await api('/api/admin/members');
+    document.getElementById('admin-default-quota').textContent =
+      Math.round(r.defaultQuotaBytes / (1024 * 1024));
+    box.innerHTML = '';
+    if (!r.members.length) { box.innerHTML = '<div class="admin-empty">회원이 없습니다.</div>'; return; }
+    countEl.textContent = `${r.members.length}명`;
+    r.members.forEach((mem) => box.appendChild(memberRow(mem)));
+  } catch (err) {
+    box.textContent = '불러오지 못했습니다: ' + err.message;
+  }
+}
+
+function memberRow(mem) {
+  const row = document.createElement('div');
+  row.className = 'admin-row';
+
+  const meta = document.createElement('div');
+  meta.className = 'admin-meta';
+  const line1 = document.createElement('div');
+  const nameEl = document.createElement('b');
+  nameEl.textContent = mem.name || '(이름 없음)';
+  line1.appendChild(nameEl);
+  line1.appendChild(document.createTextNode(
+    `  ·  ${PROVIDER_LABELS[mem.provider] || mem.provider}`
+    + `  ·  ${mem.role === 'admin' ? 'Wepic 관리자' : 'Wepic 사용자'}`
+    + (mem.status === 'blocked' ? '  ·  ⛔ 차단됨' : '')
+  ));
+  const line2 = document.createElement('div');
+  line2.className = 'dim';
+  line2.textContent = `${mem.email || '(이메일 없음)'}  ·  가입 ${fmtDateTime(mem.createdAt)}  ·  최근 로그인 ${fmtDateTime(mem.lastLoginAt)}`;
+  // 사용량: 막대 + 숫자. 기본값을 쓰는 회원은 그렇다고 표시해 둔다(관리자가 늘려준 것과 구분).
+  const line3 = document.createElement('div');
+  line3.className = 'dim';
+  line3.textContent = `저장용량 ${mem.usedText} / ${mem.quotaText} (${mem.usedPercent}%)`
+    + (mem.isDefaultQuota ? ' · 기본값' : ' · 개별 지정');
+  const bar = document.createElement('div');
+  bar.className = 'quota-bar';
+  const fill = document.createElement('div');
+  fill.className = 'quota-bar-fill' + (mem.usedPercent >= 90 ? ' over' : '');
+  fill.style.width = mem.usedPercent + '%';
+  bar.appendChild(fill);
+  meta.append(line1, line2, line3, bar);
+  row.appendChild(meta);
+
+  // Quota 변경: MB로 입력받는다. 비우거나 0이면 기본값으로 되돌린다.
+  const actions = document.createElement('div');
+  actions.className = 'admin-actions';
+  const input = document.createElement('input');
+  input.className = 'pin-input quota-input';
+  input.type = 'number';
+  input.min = '0';
+  input.placeholder = 'MB';
+  input.value = mem.isDefaultQuota ? '' : String(Math.round(mem.quotaBytes / (1024 * 1024)));
+  input.title = '저장용량(MB). 비우면 기본값을 따릅니다.';
+  const save = document.createElement('button');
+  save.className = 'secondary slim';
+  save.textContent = '용량 저장';
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      await api(`/api/admin/members/${mem.id}/quota`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quotaMb: input.value.trim() === '' ? null : Number(input.value) }),
+      });
+      showToast(`${mem.name || mem.id} 회원의 저장용량을 변경했습니다.`);
+      loadMemberList();
+    } catch (err) {
+      showToast('변경 실패: ' + err.message);
+      save.disabled = false;
+    }
+  });
+  actions.append(input, save);
+  row.appendChild(actions);
+  return row;
+}
+document.getElementById('admin-members-reload').addEventListener('click', loadMemberList);
+
 document.getElementById('admin-shares-reload').addEventListener('click', () => loadShareList('admin-shares-list', 'admin'));
 document.getElementById('admin-seed-showcase').addEventListener('click', async (e) => {
   const btn = e.currentTarget;
@@ -1787,46 +2042,31 @@ document.getElementById('my-shares-reload').addEventListener('click', () => load
 document.getElementById('my-pins-reload').addEventListener('click', () => loadShareList('my-pins-list', 'my'));
 
 // ---------- 부팅 ----------
-// publicView: {author} — "사진 보기" 카드로 남의 공개 공유를 열 때만 넘어온다.
-// 넘어오지 않으면(기본) isPublicViewMode는 false로 리셋된다 — 다른 모든 진입 경로
-// (구글 포토 선택, 기기 갤러리, 공유로 받은 사진)는 이 값을 신경 쓸 필요가 없다.
-function boot(photos, publicView) {
+function boot(photos) {
   allPhotos = photos;
   currentIndex = 0;
-  isPublicViewMode = !!publicView;
   // 방향 필터는 새로 시작할 때 항상 전체보기로 초기화
   orientationMode = 'all';
   const allRadio = document.querySelector('#orientation-radios input[value="all"]');
   if (allRadio) allRadio.checked = true;
-  // 남의 공개 공유를 보는 중이면 항상 게스트 취급(편집 불가). 공유(shared) 유입은 실제로
-  // 로그인하지 않은 경우만 게스트다 — 로그인한 회원이 공유로 받은 사진을 여는 경우도
-  // 있어(그때는 업로드 가능).
-  const guest = isPublicViewMode || (isSharedMode && !isLoggedIn);
+  // 공유(shared) 유입은 실제로 로그인하지 않은 경우만 게스트다 — 로그인한 회원이 공유로
+  // 받은 사진을 여는 경우도 있어(그때는 업로드 가능).
+  const guest = isSharedMode && !isLoggedIn;
   // 배경음악: 관리자 Default 설정 > 앱 기본곡. 이전에 듣던 곡을 브라우저에서 이어받지 않는다.
-  // (공개 공유·액자 데이터에 musicUrl이 있으면 호출부가 이미 채워두므로 비어있을 때만 건드린다)
+  // (액자 데이터에 musicUrl이 있으면 호출부가 이미 채워두므로 비어있을 때만 건드린다)
   const musicEl = document.getElementById('music-url');
   if (!musicEl.value.trim()) {
     musicEl.value = globalSettings.musicUrl || DEFAULT_MUSIC_URL;
   }
-  const viewBadge = document.getElementById('public-view-badge');
-  viewBadge.textContent = publicView ? `공개 공유 · ${publicView.author}` : '';
-  viewBadge.classList.toggle('hidden', !publicView);
   document.getElementById('account-links').classList.toggle('hidden', guest);
   document.getElementById('demo-links').classList.toggle('hidden', !guest);
   // 사진 업로드·공유 링크 생성은 로그인한 Wepic 회원만 가능하다(서버가 requireMember로 막음).
-  // 구글 포토 "공유"로 받은 사진(isSharedMode)도 예외 없이 로그인이 필요하므로, 남의 공개
-  // 공유를 보는 중과 마찬가지로 게스트 상태에서는 공유 블록을 숨기고 위 demo-links의
-  // 로그인 유도만 보여준다.
+  // 구글 포토 "공유"로 받은 사진(isSharedMode)도 예외 없이 로그인이 필요하므로, 게스트
+  // 상태에서는 공유 블록을 숨기고 위 demo-links의 로그인 유도만 보여준다.
   document.getElementById('share-block').classList.toggle('hidden', guest);
-  // 세션당 액자 목록: 남의 공개 공유를 보는 중이 아니면 불러온다. 관리자가 액자를
-  // 열었을 때(isFrameMode)도 서버가 이미 그 액자를 currentFrameId로 선택해 두었으므로
-  // 그대로 반영된다.
-  if (!isPublicViewMode) {
-    loadFrames();
-  } else {
-    frames = [];
-    currentFrameId = null;
-  }
+  // 세션당 액자 목록. 관리자가 액자를 열었을 때(isFrameMode)도 서버가 이미 그 액자를
+  // currentFrameId로 선택해 두었으므로 그대로 반영된다.
+  loadFrames();
   loadDisplaySettings();
   // 관리자가 액자를 열었을 때: 그 액자에 저장된 제목·전환설정을 초기값으로 재현한다
   // (이후에는 일반 메인화면처럼 자유롭게 사진 추가·제외, PIN 변경, 링크변경 반영이 가능하다).
@@ -1845,13 +2085,6 @@ function boot(photos, publicView) {
       const r = document.querySelector(`#effect-radios input[value="${frameManifest.effect}"]`);
       if (r) { r.checked = true; applyEffect(frameManifest.effect); }
     }
-  } else if (publicView) {
-    // "사진 보기" 카드로 남의 공개 공유를 열 때: 제목·배경음악을 그 공유의 값으로 맞춘다.
-    // loadDisplaySettings()가 이미 Default 값으로 리셋한 "다음"에 덮어써야 유지된다
-    // (프레임 모드의 제목 재적용과 같은 이유).
-    applyTitle(publicView.title || '');
-    document.getElementById('title-input').value = publicView.title || '';
-    if (publicView.musicUrl) document.getElementById('music-url').value = publicView.musicUrl;
   }
   showSlideshow();
   recomputeFiltered();
@@ -1912,6 +2145,10 @@ function applyLoginState(status) {
   isLoggedIn = !!status.loggedIn;
   // 이전에 만든 공유 링크가 있으면 "링크변경 반영"을 바로 쓸 수 있게 노출
   if (status.hasShare) {
+    if (status.shareUrl) {
+      document.getElementById('share-url').value = status.shareUrl;
+      document.getElementById('btn-open-share').href = status.shareUrl;
+    }
     setShareLinkState(true);
     if (status.sharePin) setSharePin(status.sharePin); // 기존 공유의 PIN 표시
     document.getElementById('share-public').checked = !!status.sharePublic;
@@ -1939,6 +2176,7 @@ function applyLoginState(status) {
     // "Google 홍길동" / "카카오 홍길동" 처럼 어느 계정으로 들어왔는지 함께 보여준다.
     const via = PROVIDER_LABELS[status.provider] || status.provider || '';
     menuWhoami.textContent = `${via ? via + ' ' : ''}${loggedInName || '사용자'}`;
+    menuWhoami.title = '누르면 로그아웃합니다';
   }
 
   const providers = document.getElementById('login-providers');
@@ -1995,6 +2233,28 @@ function fillMeForm(me, provider) {
     me.role === 'admin' ? 'Wepic 관리자' : 'Wepic 사용자';
   document.getElementById('me-created').textContent = fmtDateTime(me.createdAt);
   document.getElementById('me-last').textContent = fmtDateTime(me.lastLoginAt);
+  // 저장용량: 한도는 /api/status(me)가 알려주고, 실제 사용량은 R2를 훑어야 해서 따로 받아온다.
+  document.getElementById('me-quota').textContent = `한도 ${fmtMb(me.quotaBytes)} · 사용량 확인 중...`;
+  loadMyUsage();
+}
+
+const fmtMb = (n) => {
+  const mb = (Number(n) || 0) / (1024 * 1024);
+  return mb >= 1024 ? `${(mb / 1024).toFixed(2)}GB` : `${mb.toFixed(1)}MB`;
+};
+async function loadMyUsage() {
+  const el = document.getElementById('me-quota');
+  const fill = document.getElementById('me-quota-fill');
+  try {
+    const r = await api('/api/me/usage');
+    const pct = r.limit > 0 ? Math.min(100, Math.round((r.used / r.limit) * 100)) : 0;
+    el.textContent = `${r.usedText} / ${r.limitText} (${pct}%)`;
+    fill.style.width = pct + '%';
+    fill.classList.toggle('over', pct >= 90);
+  } catch {
+    el.textContent = '사용량을 불러오지 못했습니다.';
+    fill.style.width = '0%';
+  }
 }
 
 document.getElementById('me-save').addEventListener('click', async () => {
@@ -2029,8 +2289,48 @@ document.getElementById('me-save').addEventListener('click', async () => {
 });
 document.getElementById('btn-logout-me').addEventListener('click', async (e) => {
   e.preventDefault();
-  await api('/api/logout', { method: 'POST' }).catch(() => {});
-  location.href = '/';
+  await doLogout();
+});
+
+// ---------- 회원탈퇴 ----------
+// 계정과 이 회원이 만든 wepic 컨텐츠가 모두 지워지는 되돌릴 수 없는 작업이라,
+// (1) 무엇이 지워지는지 먼저 보여주고 (2) 팝업에서 한 번 더 확인받은 뒤에 실행한다.
+const withdrawModal = document.getElementById('withdraw-modal');
+document.getElementById('btn-withdraw').addEventListener('click', async (e) => {
+  e.preventDefault();
+  const summary = document.getElementById('withdraw-summary');
+  summary.textContent = '삭제될 내용을 확인하는 중...';
+  withdrawModal.classList.remove('hidden');
+  try {
+    const r = await api('/api/me/withdraw-preview');
+    summary.textContent = `삭제 대상 — 만든 wepic ${r.shareCount}개 · 사진 ${r.photoCount}장 (${r.usedText})`;
+  } catch {
+    summary.textContent = '삭제될 내용을 확인하지 못했습니다. 계속하면 계정과 만든 wepic이 모두 지워집니다.';
+  }
+});
+document.getElementById('btn-withdraw-cancel').addEventListener('click', (e) => {
+  e.preventDefault();
+  withdrawModal.classList.add('hidden');
+});
+withdrawModal.addEventListener('click', (e) => { if (e.target === withdrawModal) withdrawModal.classList.add('hidden'); });
+document.getElementById('btn-withdraw-confirm').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  btn.textContent = '탈퇴 처리 중...';
+  try {
+    // confirm 값은 서버에서도 한 번 더 검사한다(실수로 호출되는 것을 막기 위한 방어).
+    const r = await api('/api/me/withdraw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: 'DELETE' }),
+    });
+    alert(`탈퇴가 완료되었습니다. (삭제된 wepic ${r.deletedShares}개)`);
+    location.href = '/';
+  } catch (err) {
+    showToast('탈퇴 실패: ' + err.message);
+    btn.disabled = false;
+    btn.textContent = '확인 — 탈퇴하겠습니다';
+  }
 });
 
 // ---------- 촬영일시 읽기 (EXIF) ----------

@@ -76,6 +76,7 @@
         <button class="menu-item admin-sub" data-panel="admin-screens">📁 화면관리</button>
         <button class="menu-item admin-sub" data-panel="admin-pins">🔢 PIN번호관리</button>
         <button class="menu-item admin-sub" data-panel="admin-defaults">⚙️ Default 정보관리</button>
+        <button class="menu-item admin-sub" data-panel="admin-members">👥 회원관리</button>
       </nav>
 
       <!-- My사진관리 화면을 보고 있을 때만 좌측에 나타나는 하위 메뉴 (관리자 메뉴와 동일한 구조) -->
@@ -217,10 +218,17 @@
             <div><span class="me-key">권한</span><span id="me-role" class="me-val">-</span></div>
             <div><span class="me-key">가입일</span><span id="me-created" class="me-val">-</span></div>
             <div><span class="me-key">최근 로그인</span><span id="me-last" class="me-val">-</span></div>
+            <!-- 저장용량: 기본 100MB. 더 필요하면 관리자가 늘려준다. -->
+            <div><span class="me-key">저장용량</span><span id="me-quota" class="me-val">-</span></div>
           </div>
+          <div class="quota-bar"><div id="me-quota-fill" class="quota-bar-fill"></div></div>
           <button id="me-save" class="btn-primary">저장</button>
           <p id="me-saved" class="share-copied hidden">저장되었습니다.</p>
-          <p style="margin:12px 0 0;"><a href="#" id="btn-logout-me" class="text-link small">로그아웃</a></p>
+          <p style="margin:12px 0 0;">
+            <a href="#" id="btn-logout-me" class="text-link small">로그아웃</a>
+            <span class="dot">·</span>
+            <a href="#" id="btn-withdraw" class="text-link small danger-link">회원탈퇴</a>
+          </p>
         </div>
 
         <!-- 사진 보기: 전체공유(PIN 없이 공개)로 설정된 액자들을 카드로 모아 보여준다.
@@ -307,6 +315,20 @@
           <p id="def-saved" class="share-copied hidden">저장되었습니다.</p>
         </div>
 
+        <!-- ===== wepic 관리자: 회원관리 (Quota·사용량) ===== -->
+        <div class="panel panel-wide hidden" id="panel-admin-members">
+          <h2>회원관리</h2>
+          <p class="panel-muted">
+            회원별 저장용량(Quota)과 현재 사용량입니다. 기본 제공량은
+            <b><span id="admin-default-quota">100</span>MB</b>이고, 필요하면 여기서 늘릴 수 있습니다.
+          </p>
+          <div class="admin-toolbar">
+            <button id="admin-members-reload" class="secondary slim">새로 고침</button>
+            <span id="admin-members-count" class="panel-muted"></span>
+          </div>
+          <div id="admin-members-list" class="admin-list">불러오는 중...</div>
+        </div>
+
         <!-- ===== My사진관리: 화면관리 (내가 만든 액자만) ===== -->
         <div class="panel panel-wide hidden" id="panel-my-screens">
           <h2>My 화면관리</h2>
@@ -381,8 +403,6 @@
       <img class="photo-layer" id="photo-a" />
       <img class="photo-layer" id="photo-b" />
       <video class="photo-layer" id="video-layer" playsinline muted preload="metadata"></video>
-      <!-- "사진 보기" 피드에서 카드를 눌러 남의 공개 공유를 보고 있을 때 표시 -->
-      <div id="public-view-badge" class="screen-badge hidden"></div>
       <!-- 관리자가 특정 액자(공유)를 메인화면으로 열어본 상태임을 표시 -->
       <div id="frame-badge" class="screen-badge frame-badge hidden"></div>
       <div id="title-overlay" class="title-overlay hidden"></div>
@@ -473,38 +493,15 @@
         </div>
       </div>
 
-      <div class="filter-block">
-        <div class="section-label">사진 방향</div>
-        <div id="orientation-radios" class="radio-row">
-          <label><input type="radio" name="orientation" value="all" checked /> 전체보기</label>
-          <label><input type="radio" name="orientation" value="landscape" /> 가로보기</label>
-          <label><input type="radio" name="orientation" value="portrait" /> 세로보기</label>
+      <!-- 순서: 사진 목록 → 화면 표시 → 배경음악 → 공유 → (추가옵션: 사진 방향·재생 설정) -->
+      <div class="photo-list-block">
+        <div class="section-label">사진 목록 (<span id="photo-list-count">0</span>)</div>
+        <div id="exclude-actions" class="exclude-actions hidden">
+          <span class="exclude-info">선택 <span id="exclude-count">0</span>장</span>
+          <button id="btn-exclude-apply" class="secondary slim">선택 제외</button>
+          <button id="btn-exclude-cancel" class="secondary slim">취소</button>
         </div>
-      </div>
-
-      <div class="filter-block">
-        <div class="section-label">재생 설정</div>
-        <div class="setting-row">
-          <span class="setting-label">전환 간격</span>
-          <select id="interval-select" class="mini-select">
-            <option value="3">3초</option>
-            <option value="5">5초</option>
-            <option value="7">7초</option>
-            <option value="10">10초</option>
-            <option value="15">15초</option>
-            <option value="20">20초</option>
-            <option value="30">30초</option>
-          </select>
-        </div>
-        <div class="setting-row">
-          <span class="setting-label">전환 효과</span>
-          <div id="effect-radios" class="radio-row">
-            <label><input type="radio" name="effect" value="fade" /> 페이드</label>
-            <label><input type="radio" name="effect" value="slide" /> 슬라이드</label>
-            <label><input type="radio" name="effect" value="kenburns" /> 켄번즈</label>
-          </div>
-        </div>
-        <label class="check-row"><input type="checkbox" id="video-sound-toggle" /> 동영상 소리 재생 (재생 중 배경음악 정지)</label>
+        <div id="photo-list-strip" class="thumb-grid"></div>
       </div>
 
       <div class="filter-block">
@@ -515,14 +512,20 @@
         <label class="check-row"><input type="checkbox" id="ambient-toggle" checked /> 시계·날씨 표시</label>
       </div>
 
-      <div class="photo-list-block">
-        <div class="section-label">사진 목록 (<span id="photo-list-count">0</span>)</div>
-        <div id="exclude-actions" class="exclude-actions hidden">
-          <span class="exclude-info">선택 <span id="exclude-count">0</span>장</span>
-          <button id="btn-exclude-apply" class="secondary slim">선택 제외</button>
-          <button id="btn-exclude-cancel" class="secondary slim">취소</button>
+      <div class="music-block">
+        <div class="section-label">배경음악</div>
+        <div class="music-row">
+          <input type="text" id="music-url" placeholder="음악 링크 붙여넣기" />
+          <button id="btn-music-clear" class="mini-btn" title="입력 지우기">✕</button>
+          <button id="btn-music-load" class="mini-btn" title="재생 / 일시정지">▶</button>
+          <!-- Spotify에서 곡을 검색해 고른다(30초 미리듣기). 링크 입력은 위 칸에서 그대로. -->
+          <button id="btn-music-spotify" class="mini-btn spotify-btn" title="Spotify에서 곡 찾기">Spotify</button>
         </div>
-        <div id="photo-list-strip" class="thumb-grid"></div>
+        <div class="music-row">
+          <input type="range" id="music-volume" min="0" max="100" value="60" />
+        </div>
+        <div id="music-title" class="music-title"></div>
+        <div class="yt-host"><div id="yt-player"></div></div>
       </div>
 
       <div class="share-block" id="share-block">
@@ -535,6 +538,11 @@
           <!-- 링크가 만들어진 액자에서만 쓰는 두 가지: 주소 복사 / 링크 삭제 -->
           <button id="btn-frame-copy" class="mini-btn hidden" title="주소 복사하기">📋</button>
           <button id="btn-frame-delete" class="mini-btn hidden" title="링크 삭제하기">🗑</button>
+        </div>
+        <!-- wepic이 만들어지면 그 주소를 버튼 바로 위에 보여준다(눌러서 바로 열 수 있게). -->
+        <div id="share-url-inline" class="share-url-inline hidden">
+          <span class="share-url-caption">wepic 주소</span>
+          <a id="share-url-link" class="share-url-text" target="_blank" rel="noopener"></a>
         </div>
         <!-- 버튼은 언제나 하나만 보인다: 링크가 없으면 "만들기", 있으면 "반영".
              "반영"은 사진 추가·삭제, 제목, 배경음악, 전환설정, PIN을 한 번에 저장한다. -->
@@ -557,18 +565,46 @@
         </div>
       </div>
 
-      <div class="music-block">
-        <div class="section-label">배경음악 (YouTube)</div>
-        <div class="music-row">
-          <input type="text" id="music-url" placeholder="YouTube 링크 붙여넣기" />
-          <button id="btn-music-clear" class="mini-btn" title="입력 지우기">✕</button>
-          <button id="btn-music-load" class="mini-btn" title="재생 / 일시정지">▶</button>
+      <!-- 추가옵션: 자주 안 바꾸는 설정은 접어둔다(사진 방향·재생 설정) -->
+      <div class="extra-options-block">
+        <button id="btn-extra-options" class="extra-options-toggle" aria-expanded="false" aria-controls="extra-options">
+          <span class="extra-options-caret">▸</span> 추가옵션
+        </button>
+        <div id="extra-options" class="extra-options hidden">
+          <div class="filter-block">
+            <div class="section-label">사진 방향</div>
+            <div id="orientation-radios" class="radio-row">
+              <label><input type="radio" name="orientation" value="all" checked /> 전체보기</label>
+              <label><input type="radio" name="orientation" value="landscape" /> 가로보기</label>
+              <label><input type="radio" name="orientation" value="portrait" /> 세로보기</label>
+            </div>
+          </div>
+
+          <div class="filter-block">
+            <div class="section-label">재생 설정</div>
+            <div class="setting-row">
+              <span class="setting-label">전환 간격</span>
+              <select id="interval-select" class="mini-select">
+                <option value="3">3초</option>
+                <option value="5">5초</option>
+                <option value="7">7초</option>
+                <option value="10">10초</option>
+                <option value="15">15초</option>
+                <option value="20">20초</option>
+                <option value="30">30초</option>
+              </select>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">전환 효과</span>
+              <div id="effect-radios" class="radio-row">
+                <label><input type="radio" name="effect" value="fade" /> 페이드</label>
+                <label><input type="radio" name="effect" value="slide" /> 슬라이드</label>
+                <label><input type="radio" name="effect" value="kenburns" /> 켄번즈</label>
+              </div>
+            </div>
+            <label class="check-row"><input type="checkbox" id="video-sound-toggle" /> 동영상 소리 재생 (재생 중 배경음악 정지)</label>
+          </div>
         </div>
-        <div class="music-row">
-          <input type="range" id="music-volume" min="0" max="100" value="60" />
-        </div>
-        <div id="music-title" class="music-title"></div>
-        <div class="yt-host"><div id="yt-player"></div></div>
       </div>
 
       <div class="settings-block">
@@ -626,6 +662,42 @@
       </div>
       <button id="btn-revoke-share" class="secondary slim revoke-btn">링크 삭제하기</button>
       <p class="hint" style="margin:6px 0 0;">삭제하면 이 링크는 즉시 만료되어 더 이상 열리지 않습니다.</p>
+    </div>
+  </div>
+
+  <!-- Spotify 곡 찾기 팝업 -->
+  <div id="spotify-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h2 style="margin:0 0 6px;">Spotify에서 곡 찾기</h2>
+      <p class="modal-block">
+        곡 이름이나 가수를 검색해 배경음악으로 쓸 곡을 고르세요.<br />
+        <b>Spotify는 30초 미리듣기만 제공합니다</b> — 전체 곡을 끝까지 듣고 싶으면 YouTube 링크를 쓰세요.
+      </p>
+      <div class="share-url-row">
+        <input id="spotify-q" type="text" placeholder="곡 이름 또는 가수" />
+        <button id="btn-spotify-search" class="btn-primary">검색</button>
+      </div>
+      <p id="spotify-status" class="panel-muted" style="margin:8px 0 0; font-size:12.5px;"></p>
+      <div id="spotify-results" class="spotify-results"></div>
+      <div class="share-modal-actions">
+        <a href="#" id="btn-spotify-close" class="text-link small">닫기</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- 회원탈퇴 확인 팝업 -->
+  <div id="withdraw-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h2 style="margin:0 0 6px;">회원탈퇴</h2>
+      <p class="modal-block">
+        회원탈퇴를 하게 되면 <b>사용된 계정과 만들었던 Wepic 컨텐츠가 삭제됩니다.</b>
+      </p>
+      <div id="withdraw-summary" class="panel-muted" style="font-size:13px; line-height:1.7;"></div>
+      <p class="hint" style="margin:10px 0 0;">삭제한 사진과 계정은 되돌릴 수 없습니다.</p>
+      <div class="share-modal-actions">
+        <a href="#" id="btn-withdraw-cancel" class="text-link small">취소</a>
+      </div>
+      <button id="btn-withdraw-confirm" class="secondary slim revoke-btn">확인 — 탈퇴하겠습니다</button>
     </div>
   </div>
 

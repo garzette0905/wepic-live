@@ -706,6 +706,56 @@ select optgroup {
   border-radius: 8px; padding: 7px 8px; font-family: inherit;
 }
 .share-pin-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+
+/* wepic 주소 — "링크변경 반영" 버튼 바로 위에 보여준다(눌러서 바로 열 수 있게) */
+.share-url-inline {
+  display: flex; flex-direction: column; gap: 2px; margin: 2px 0 8px;
+  padding: 8px 10px; border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border);
+}
+.share-url-caption { font-size: 10.5px; font-weight: 700; letter-spacing: 0.6px; color: var(--text-muted); }
+.share-url-text {
+  font-size: 12px; color: var(--accent); text-decoration: none;
+  word-break: break-all; line-height: 1.45;
+}
+.share-url-text:hover { text-decoration: underline; }
+
+/* 추가옵션 — 자주 안 바꾸는 설정(사진 방향·재생 설정)을 접어둔다 */
+.extra-options-block { border-top: 1px solid var(--border); padding-top: 10px; }
+.extra-options-toggle {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  background: none; border: none; padding: 6px 0; cursor: pointer;
+  color: var(--text-main); font-size: 12.5px; font-weight: 700; letter-spacing: 0.4px;
+}
+.extra-options-toggle:hover { color: #fff; background: none; filter: none; }
+.extra-options-caret { color: var(--text-muted); font-size: 11px; }
+.extra-options { display: flex; flex-direction: column; gap: 14px; padding-top: 6px; }
+
+/* Spotify — 배경음악 줄의 버튼과 곡 검색 팝업 */
+.spotify-btn { width: auto; padding: 0 10px; font-weight: 700; color: #1ed760; }
+.spotify-btn:hover { color: #1ed760; background: rgba(30, 215, 96, 0.16); }
+.spotify-results { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 46vh; overflow-y: auto; }
+.spotify-row {
+  display: flex; align-items: center; gap: 10px; padding: 7px 9px;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border); border-radius: 9px;
+}
+.spotify-cover { width: 40px; height: 40px; border-radius: 5px; object-fit: cover; flex: none; }
+.spotify-meta { flex: 1; min-width: 0; }
+.spotify-name { font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.spotify-artist { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 저장용량(Quota) 막대 — 회원정보 화면과 관리자 회원관리에서 함께 쓴다 */
+.quota-bar {
+  height: 5px; border-radius: 3px; margin-top: 6px; overflow: hidden;
+  background: rgba(255, 255, 255, 0.10);
+}
+.quota-bar-fill { height: 100%; width: 0; background: var(--accent-strong); transition: width 0.3s ease; }
+.quota-bar-fill.over { background: #e0655b; } /* 90% 이상이면 붉게 */
+.quota-input { width: 78px; letter-spacing: 0; font-weight: 600; font-size: 13px; }
+
+/* 되돌릴 수 없는 동작(회원탈퇴)은 링크 색으로 구분한다 */
+.danger-link { color: #ff9b9b; }
+.danger-link:hover { color: #ffb8b8; }
 /* 전체공유 체크박스 — PIN 행 바로 위에 둔다(체크하면 그 아래 PIN 행이 사라진다) */
 .public-share-row {
   display: flex; align-items: flex-start; gap: 8px; margin-top: 10px;

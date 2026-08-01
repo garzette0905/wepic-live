@@ -337,6 +337,14 @@ async function changeMusic(id) {
 }
 
 async function playSound() {
+  // Spotify 미리듣기(<audio>)를 쓰는 중이면 그쪽 음소거를 푼다.
+  if (usingPreview()) {
+    previewAudio.muted = false;
+    try { await previewAudio.play(); } catch { /* 무시 */ }
+    soundOn = true;
+    updateMusicBtn();
+    return;
+  }
   if (playerPromise) await playerPromise; // 준비 전 클릭 대비
   if (!ytPlayer) return;
   try { ytPlayer.unMute(); ytPlayer.setVolume(80); ytPlayer.playVideo(); } catch {}
@@ -345,6 +353,12 @@ async function playSound() {
   updateMusicBtn();
 }
 function muteSound() {
+  if (usingPreview()) {
+    previewAudio.muted = true; // 계속 재생하되 소리만 끈다(YouTube 쪽과 동일한 동작)
+    soundOn = false;
+    updateMusicBtn();
+    return;
+  }
   if (!ytPlayer) return;
   try { ytPlayer.mute(); } catch {} // 계속 무음으로 재생(곡목 유지), 소리만 끔
   soundOn = false;
@@ -357,15 +371,48 @@ function updateMusicBtn() {
   b.title = soundOn ? '소리 끄기' : '소리 켜기';
 }
 
+// ---- Spotify 30초 미리듣기 ----
+// 메인화면에서 Spotify로 고른 곡은 musicUrl이 p.scdn.co의 미리듣기 MP3다.
+// YouTube 플레이어로는 못 틀기 때문에 <audio>로 반복 재생한다.
+// 공유화면 규칙(기본은 무음, ▶를 눌러야 소리)을 그대로 지키려고 muted로 시작한다.
+const isSpotifyPreview = (u) => /^https?:\/\/p\.scdn\.co\//i.test(String(u || ''));
+let previewAudio = null;
+function startPreviewMusic(url, title) {
+  try { ytPlayer?.pauseVideo?.(); } catch { /* 무시 */ } // 둘이 동시에 나지 않게
+  if (!previewAudio) {
+    previewAudio = new Audio();
+    previewAudio.loop = true; // 30초뿐이라 반복해야 배경음악 구실을 한다
+  }
+  previewAudio.src = url;
+  previewAudio.muted = !soundOn;
+  previewAudio.volume = 0.8;
+  previewAudio.play().catch(() => { /* 자동재생 차단 — ▶를 누르면 재생된다 */ });
+  musicTitle = shortMusicTitle(title || 'Spotify 미리듣기');
+  const b = document.getElementById('btn-music');
+  b.style.display = 'flex';
+  updateMusicBtn();
+  renderCaption();
+}
+function stopPreviewMusic() {
+  if (!previewAudio) return;
+  try { previewAudio.pause(); previewAudio.removeAttribute('src'); } catch { /* 무시 */ }
+}
+// 지금 배경음악이 Spotify 미리듣기인가
+const usingPreview = () => !!(previewAudio && previewAudio.src);
+
 // 동영상 소리와 배경음악이 겹치지 않도록, 동영상 재생 중에는 음악을 잠시 멈춘다.
 let musicPausedForVideo = false;
 function pauseMusicForVideo() {
-  if (!ytPlayer || musicPausedForVideo) return;
+  if (musicPausedForVideo) return;
+  if (usingPreview()) { try { previewAudio.pause(); musicPausedForVideo = true; } catch { /* 무시 */ } return; }
+  if (!ytPlayer) return;
   try { ytPlayer.pauseVideo(); musicPausedForVideo = true; } catch { /* 무시 */ }
 }
 function resumeMusicAfterVideo() {
-  if (!ytPlayer || !musicPausedForVideo) return;
+  if (!musicPausedForVideo) return;
   musicPausedForVideo = false;
+  if (usingPreview()) { try { previewAudio.play().catch(() => {}); } catch { /* 무시 */ } return; }
+  if (!ytPlayer) return;
   try { ytPlayer.playVideo(); } catch { /* 무시 */ }
 }
 document.getElementById('btn-music').addEventListener('click', () => (soundOn ? muteSound() : playSound()));
@@ -373,6 +420,7 @@ document.getElementById('btn-music').addEventListener('click', () => (soundOn ? 
 // ---- 홈으로 이동 ----
 document.getElementById('btn-home').addEventListener('click', () => {
   try { ytPlayer?.pauseVideo(); } catch {}
+  stopPreviewMusic();
   location.href = '/';
 });
 
@@ -469,15 +517,22 @@ function applyManifest(data) {
   const newMusic = data.musicUrl || defaultMusicUrl || '';
   if (newMusic !== musicUrl) {
     musicUrl = newMusic;
-    const newId = musicUrl ? ytId(musicUrl) : null;
-    if (!newId) {
-      // 음악이 제거된 경우: 정지하고 버튼·곡목 숨김
-      try { ytPlayer?.pauseVideo?.(); } catch {}
-      musicTitle = '';
-      document.getElementById('btn-music').style.display = 'none';
-      renderCaption();
+    // Spotify 미리듣기(p.scdn.co)면 YouTube 플레이어가 아니라 <audio>로 재생한다.
+    // 곡목은 주소에서 알 수 없으므로 매니페스트에 저장된 musicTitle을 쓴다.
+    if (isSpotifyPreview(musicUrl)) {
+      startPreviewMusic(musicUrl, data.musicTitle || '');
     } else {
-      changeMusic(newId); // 최초 생성/곡 교체 모두 여기서 처리(중복 생성 없음)
+      stopPreviewMusic();
+      const newId = musicUrl ? ytId(musicUrl) : null;
+      if (!newId) {
+        // 음악이 제거된 경우: 정지하고 버튼·곡목 숨김
+        try { ytPlayer?.pauseVideo?.(); } catch {}
+        musicTitle = '';
+        document.getElementById('btn-music').style.display = 'none';
+        renderCaption();
+      } else {
+        changeMusic(newId); // 최초 생성/곡 교체 모두 여기서 처리(중복 생성 없음)
+      }
     }
   }
 }
