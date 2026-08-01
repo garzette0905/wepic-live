@@ -83,13 +83,68 @@ function genPin() {
 }
 const normalizePin = (v) => (/^\d{4}$/.test(String(v || '').trim()) ? String(v).trim() : null);
 async function pinToken(env, id, pin) {
-  const secret = env.SESSION_SECRET || 'memory-frame-dev-secret-change-me';
+  // ⚠️ 기본값으로 넘어가지 않는다. 예전에는 `env.SESSION_SECRET || '고정문자열'`이었는데,
+  // 시크릿을 빼고 배포하면 **아무 경고 없이** 서명 키가 공개된 값이 되어 PIN 열람 쿠키를
+  // 누구나 위조할 수 있었다. 설정이 빠졌으면 조용히 취약해지는 대신 명확히 실패시킨다.
+  const secret = env.SESSION_SECRET;
+  if (!secret) throw new Error('SESSION_SECRET이 설정되지 않았습니다. (PIN 보호를 사용할 수 없습니다)');
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret),
     { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${id}:${pin}`));
   return b64url(new Uint8Array(sig)).slice(0, 32);
 }
 const pinCookieName = (id) => `sp_${id}`;
+
+// ---------- PIN 시도 횟수 제한 (무차별 대입 방어) ----------
+// PIN은 4자리(10,000가지)라 제한이 없으면 스크립트로 수 초 안에 전수 조사할 수 있다.
+// 같은 IP가 같은 액자에서 반복 실패하면 잠시 막는다.
+//
+// 막아야 하는 경로가 **두 개**라는 점이 중요하다:
+//   (1) POST /api/share/:id/verify-pin  — 정상 입력 경로
+//   (2) GET  /shares/:id/...            — 열람 쿠키(sp_<id>)를 위조해 직접 찔러보는 경로
+// (2)를 빼놓으면 SESSION_SECRET이 새어나갔을 때 후보 쿠키 10,000개를 그대로 시도할 수 있다.
+//
+// 한계: KV는 최종 일관성이라 아주 빠른 동시 요청 일부는 카운터를 앞질러 통과할 수 있다.
+// 확실히 막으려면 Cloudflare 대시보드의 WAF 레이트리밋 규칙(엣지 차단)을 함께 두는 것이 좋다.
+const PIN_TRY_MAX = 10;        // 창 안에서 허용할 실패 횟수
+const PIN_TRY_WINDOW = 60;     // 초 (KV expirationTtl 최소값이 60이다)
+const clientIp = (request) => request.headers.get('CF-Connecting-IP') || 'unknown';
+const pinTryKey = (id, request) => `pinfail:${id}:${clientIp(request)}`;
+
+async function pinTriesExceeded(env, id, request) {
+  const raw = await env.SESSIONS.get(pinTryKey(id, request));
+  return Number(raw || 0) >= PIN_TRY_MAX;
+}
+// 실패를 1 올린다(성공은 세지 않는다). 실패가 이어지는 동안 창이 갱신되는 슬라이딩 방식.
+async function bumpPinTries(env, id, request) {
+  const k = pinTryKey(id, request);
+  const n = Number((await env.SESSIONS.get(k)) || 0) + 1;
+  await env.SESSIONS.put(k, String(n), { expirationTtl: PIN_TRY_WINDOW });
+}
+const tooManyPinTries = () =>
+  json({ error: 'PIN 시도가 너무 많습니다. 잠시 후 다시 시도해주세요.', retryAfter: PIN_TRY_WINDOW },
+    429, { 'Retry-After': String(PIN_TRY_WINDOW) });
+
+// ---------- CSRF 방어 ----------
+// 세션 쿠키가 SameSite=Lax라 크로스사이트 POST에는 쿠키가 실리지 않아 이미 대부분 막혀 있다.
+// 다만 multipart form(/api/share/blob)은 외부 HTML form으로도 보낼 수 있고, 일부 브라우저의
+// "Lax+POST" 예외 창이 있어 한 겹 더 둔다.
+//
+// Origin으로 판단하는 이유: 브라우저는 POST/PUT/DELETE에 Origin을 항상 붙인다.
+// BASE_URL과 비교하지 않고 **요청 자신의 출처**와 비교한다 — 그래야 로컬 개발(localhost)에서도
+// 그대로 동작한다(BASE_URL은 운영 주소로 고정되어 있다).
+// Origin이 아예 없는 요청(curl 등)은 브라우저가 만든 것이 아니므로 CSRF가 성립하지 않고,
+// 쿠키도 스스로 붙여야 하니 여기서 막지 않는다(인증 가드가 따로 처리한다).
+function sameOriginRequest(request) {
+  if (request.method === 'GET' || request.method === 'HEAD') return true;
+  const origin = request.headers.get('Origin');
+  if (!origin) return true;
+  try {
+    return new URL(origin).origin === new URL(request.url).origin;
+  } catch {
+    return false;
+  }
+}
 
 // ---------- 세션당 액자(다중 액자) ----------
 // 한 세션이 여러 액자(shareId)를 동시에 만들고, 각각을 계속 갱신하며 운영할 수 있게 한다.
@@ -687,9 +742,14 @@ async function verifyPin(request, env, id) {
   const m = await readManifest(env, id);
   if (!m) return json({ error: '공유 사진을 찾을 수 없습니다.' }, 404);
   if (!m.pin) return json({ ok: true }); // PIN 없는 공유(기존 링크)
+  // 무차별 대입 방어: 이 IP가 이 액자에서 이미 너무 많이 틀렸으면 검사 자체를 하지 않는다.
+  if (await pinTriesExceeded(env, id, request)) return tooManyPinTries();
   const body = await request.json().catch(() => ({}));
   const pin = normalizePin(body.pin);
-  if (!pin || pin !== m.pin) return json({ error: 'PIN 번호가 올바르지 않습니다.' }, 403);
+  if (!pin || pin !== m.pin) {
+    await bumpPinTries(env, id, request);
+    return json({ error: 'PIN 번호가 올바르지 않습니다.' }, 403);
+  }
   const tok = await pinToken(env, id, m.pin);
   return json({ ok: true }, 200, {
     'Set-Cookie': `${pinCookieName(id)}=${tok}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`,
@@ -782,6 +842,27 @@ async function pickerMedia(env, token, url) {
 function allowedHost(u) {
   try { return /(^|\.)googleusercontent\.com$/.test(new URL(u).hostname); } catch { return false; }
 }
+
+// 구글 자산을 액세스 토큰으로 가져온다. **리다이렉트를 자동으로 따라가지 않는다** —
+// fetch가 리다이렉트를 따라갈 때 Authorization 헤더가 같이 전달되므로, 구글 쪽에 오픈
+// 리다이렉트가 있으면 사용자의 액세스 토큰이 제3자에게 새어나갈 수 있다.
+// 직접 받아서 이동 대상 호스트를 다시 검증하고, 허용 호스트일 때만 따라간다.
+async function fetchGoogleAsset(target, token, extraHeaders = {}) {
+  let next = target;
+  for (let hop = 0; hop < 3; hop++) {
+    const r = await fetch(next, {
+      headers: { Authorization: 'Bearer ' + token, ...extraHeaders },
+      redirect: 'manual',
+    });
+    if (r.status < 300 || r.status >= 400) return r;
+    const loc = r.headers.get('location');
+    if (!loc) return r;
+    const dest = new URL(loc, next).toString();
+    if (!allowedHost(dest)) throw new Error('허용되지 않은 호스트로 리다이렉트되었습니다.');
+    next = dest;
+  }
+  throw new Error('리다이렉트가 너무 많습니다.');
+}
 // ?dl=<파일명> 이면 Content-Disposition: attachment 를 붙여 브라우저가 저장하게 만든다.
 // (헤더 인젝션·경로 이탈 방지를 위해 개행·따옴표·슬래시 제거 + 길이 제한)
 function setDownloadHeader(headers, dl) {
@@ -795,7 +876,12 @@ async function imgProxy(env, token, url) {
   const sz = (url.searchParams.get('sz') || 'w800-h800').replace(/[^\w-]/g, '');
   if (!u) return text('missing url', 400);
   if (!allowedHost(u)) return text('forbidden host', 403);
-  const r = await fetch(`${u}=${sz}`, { headers: { Authorization: 'Bearer ' + token } });
+  let r;
+  try {
+    r = await fetchGoogleAsset(`${u}=${sz}`, token);
+  } catch {
+    return text('image fetch failed', 502); // 허용 안 된 리다이렉트 등
+  }
   if (!r.ok) return text('image fetch failed', r.status);
   const h = new Headers({
     'Content-Type': r.headers.get('content-type') || 'image/jpeg',
@@ -809,10 +895,13 @@ async function videoProxy(request, env, token, url) {
   const u = url.searchParams.get('u');
   if (!u) return text('missing url', 400);
   if (!allowedHost(u)) return text('forbidden host', 403);
-  const headers = { Authorization: 'Bearer ' + token };
   const range = request.headers.get('Range');
-  if (range) headers.Range = range;
-  const r = await fetch(`${u}=dv`, { headers });
+  let r;
+  try {
+    r = await fetchGoogleAsset(`${u}=dv`, token, range ? { Range: range } : {});
+  } catch {
+    return text('video fetch failed', 502); // 허용 안 된 리다이렉트 등
+  }
   if (!r.ok && r.status !== 206) return text('video fetch failed', r.status);
   const h = new Headers();
   ['content-type', 'content-length', 'content-range', 'accept-ranges'].forEach((k) => {
@@ -857,7 +946,8 @@ function baseUrlFromImgPath(imgPath) {
   } catch { return null; }
 }
 async function downloadImage(base, sz, token) {
-  const r = await fetch(`${base}=${sz}`, { headers: { Authorization: 'Bearer ' + token } });
+  // 리다이렉트 대상 호스트를 검증하는 안전한 fetch를 쓴다(토큰 유출 방지 — fetchGoogleAsset 참고)
+  const r = await fetchGoogleAsset(`${base}=${sz}`, token);
   if (!r.ok) throw new Error('image fetch ' + r.status);
   return new Uint8Array(await r.arrayBuffer());
 }
@@ -866,7 +956,7 @@ async function downloadImage(base, sz, token) {
 // (/video 프록시)을 쓸 수 없으므로, 파일 자체를 저장해야 재생할 수 있다.
 // 응답 본문을 스트림으로 그대로 넘겨 메모리에 다 올리지 않는다(큰 파일 대비).
 async function putVideoToR2(env, base, token, key) {
-  const r = await fetch(`${base}=dv`, { headers: { Authorization: 'Bearer ' + token } });
+  const r = await fetchGoogleAsset(`${base}=dv`, token);
   if (!r.ok) throw new Error('video fetch ' + r.status);
   const len = Number(r.headers.get('content-length') || 0);
   const max = maxShareVideoBytes(env);
@@ -1118,12 +1208,19 @@ function parseRange(header, size) {
 async function shareAsset(request, env, pathname, url) {
   const key = pathname.replace(/^\/shares\//, '');
   if (!/^[\w-]{6,}\//.test(key)) return text('not found', 404);
+  // 경로 이탈 패턴 방어(심층 방어). R2는 평면 키-값 저장소라 `..`에 상위 디렉터리 의미가
+  // 없고 위 정규식이 접두사를 강제하므로 현재 구조에서는 악용되지 않지만, 나중에 키 파싱이
+  // 바뀌어도 안전하도록 명시적으로 막아둔다.
+  if (key.includes('..') || key.includes('//') || /%2e%2e/i.test(key)) return text('not found', 404);
   const id = key.split('/')[0];
 
   // PIN이 걸린 공유는 열람 쿠키가 없으면 차단한다. 화면에서만 막으면 이 URL을 직접 열어
   // 우회할 수 있으므로 photos.json과 사진 파일 자체를 서버에서 막아야 한다.
   const manifest = await readManifest(env, id);
   if (manifest && manifest.pin && !(await canViewShare(request, env, id, manifest))) {
+    // 쿠키 위조로 이 경로를 반복해서 찔러보는 것도 무차별 대입이므로 같이 제한한다.
+    if (await pinTriesExceeded(env, id, request)) return tooManyPinTries();
+    await bumpPinTries(env, id, request);
     return json({ error: 'PIN 번호가 필요합니다.', pinRequired: true }, 401);
   }
 
@@ -1178,6 +1275,12 @@ export default {
     const p = url.pathname;
     const m = request.method;
     try {
+      // CSRF 방어: 상태를 바꾸는 요청은 같은 출처에서 온 것만 받는다.
+      // 라우팅 맨 앞에서 한 번 검사해 엔드포인트를 하나라도 빠뜨리는 일이 없게 한다.
+      if (!sameOriginRequest(request)) {
+        return json({ error: '잘못된 요청 출처입니다.' }, 403);
+      }
+
       // 로그인/회원가입 (OIDC). 구글은 예전 주소를 그대로 유지한다.
       if (p === '/auth/login' && m === 'GET') return authLogin(env, 'google');
       if (p === '/auth/callback' && m === 'GET') return authCallback(env, url, 'google');
