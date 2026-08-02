@@ -6,10 +6,12 @@
 <title>Wepic Live</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg" />
 <link rel="manifest" href="manifest.json" />
-<meta name="theme-color" content="#0b1220" />
+<meta name="theme-color" content="#0b0f17" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@600&family=Nanum+Pen+Script&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Dancing+Script:wght@600&family=Nanum+Pen+Script&display=swap" rel="stylesheet" />
+<!-- 한글 본문용 Pretendard (라틴은 Inter가 받는다) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -65,39 +67,73 @@
       <div id="admin-badge" class="admin-badge hidden">ADMIN</div>
 
       <div class="hero-inner">
-        <div class="hero-tagline">Capture Moments,<br /><b>Live the Joy</b></div>
+        <div class="hero-tagline">Capture Moments,<br /><b>Share the Live Joy</b></div>
+        <p class="hero-sub">지금 흐르는 30초 음악과 순간의 추억을,<br />멀리 있는 공간의 전자액자로 실시간 송출하세요.</p>
       </div>
     </header>
 
     <div class="home-body">
       <!-- 관리자 화면을 보고 있을 때만 좌측에 나타나는 하위 메뉴 -->
-      <nav class="admin-side-menu hidden" id="admin-side-menu">
-        <div class="admin-menu-label">🛠 Admin</div>
-        <button class="menu-item admin-sub" data-panel="admin-screens">📁 화면관리</button>
-        <button class="menu-item admin-sub" data-panel="admin-pins">🔢 PIN번호관리</button>
-        <button class="menu-item admin-sub" data-panel="admin-defaults">⚙️ Default 정보관리</button>
-        <button class="menu-item admin-sub" data-panel="admin-members">👥 회원관리</button>
+      <!-- 상단 바와 같은 결로 — 상자 없이 이름만, 현재 항목은 밑줄로 표시한다. -->
+      <nav class="side-menu hidden" id="admin-side-menu">
+        <div class="side-menu-label">Admin</div>
+        <button class="menu-item side-sub" data-panel="admin-screens">화면관리</button>
+        <button class="menu-item side-sub" data-panel="admin-members">회원관리</button>
+        <button class="menu-item side-sub" data-panel="admin-pins">PIN번호관리</button>
+        <button class="menu-item side-sub" data-panel="admin-defaults">Default 정보관리</button>
       </nav>
 
       <!-- My사진관리 화면을 보고 있을 때만 좌측에 나타나는 하위 메뉴 (관리자 메뉴와 동일한 구조) -->
-      <nav class="admin-side-menu hidden" id="my-side-menu">
-        <div class="admin-menu-label">📂 My사진관리</div>
-        <button class="menu-item admin-sub" data-panel="my-screens">📁 화면관리</button>
-        <button class="menu-item admin-sub" data-panel="my-pins">🔢 PIN번호관리</button>
+      <nav class="side-menu hidden" id="my-side-menu">
+        <div class="side-menu-label">My사진관리</div>
+        <button class="menu-item side-sub" data-panel="my-screens">화면관리</button>
+        <button class="menu-item side-sub" data-panel="my-pins">PIN번호관리</button>
       </nav>
 
       <section class="home-frame">
         <!-- 소개 -->
         <div class="panel" id="panel-about">
-          <h2>Wepic Live — 실시간 사진 액자</h2>
-          <p>구글 포토의 사진·동영상을 골라 감성 슬라이드쇼로 보여주고, 링크 하나로 가족과 함께 감상하는 웹 액자입니다.</p>
-          <ul class="panel-list">
-            <li>구글 포토에서 사진 선택 → 자동 슬라이드쇼</li>
-            <li>배경음악 · 전환효과(페이드/슬라이드/켄번즈) · 시계·날씨 · 제목 오버레이</li>
-            <li>실시간 공유 링크 — 로그인 없이 열람</li>
-            <li>동영상 재생 · 폰에서 "공유"로 바로 보내기(PWA 설치)</li>
-          </ul>
-          <p class="panel-muted">위쪽 메뉴에서 <b>로그인</b> 또는 <b>데모로 보기</b>로 시작하세요.</p>
+          <p class="panel-eyebrow">wepic live — Real-time Audio-Visual Frame Platform</p>
+          <h2>사진과 30초 음악을, 멀리 있는 액자로 실시간 송출</h2>
+          <p>사진을 고르고 음악을 얹으면 링크 하나가 만들어집니다. 그 링크를 받은 분은
+            앱 설치도, 로그인도 없이 <b>바로 그 순간의 사진과 음악</b>을 함께 봅니다.</p>
+          <!-- 아이콘은 Lucide(zap · music · heart)를 인라인 SVG로 옮겨 담았다.
+               빌드 단계가 없는 프로젝트라 아이콘 라이브러리를 번들할 수 없어, 쓰는 3개만 직접 넣었다. -->
+          <div class="feature-grid">
+            <div class="feature-card">
+              <div class="feature-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M4 14h7l-2 7 9-11h-7l2-7z" />
+                </svg>
+              </div>
+              <h3>실시간 반영</h3>
+              <p>사진을 더하거나 바꾸면 이미 열려 있는 액자에도 곧바로 나타납니다.</p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M9 18V5l12-2v13" />
+                  <circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
+                </svg>
+              </div>
+              <h3>음악과 함께</h3>
+              <p>곡을 검색해 고르면 30초 미리듣기가, YouTube 링크를 넣으면 전곡이 흐릅니다.</p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M19 14c1.5-1.5 3-3.4 3-5.5A5.5 5.5 0 0 0 12 5.4 5.5 5.5 0 0 0 2 8.5c0 2.1 1.5 4 3 5.5l7 7z" />
+                </svg>
+              </div>
+              <h3>같이 보는 재미</h3>
+              <p>보는 사람들이 좋아요와 한마디를 남기고, 그 글이 서로의 화면에 실시간으로 뜹니다.</p>
+            </div>
+          </div>
+          <p class="panel-muted">위쪽 메뉴의 <b>사진 선택</b>으로 나만의 액자를 만들고,
+            <b>사진 보기</b>에서 다른 분들이 공개한 액자를 구경해보세요.</p>
         </div>
 
         <!-- 로그인 (OIDC: 구글 / 카카오 / 네이버) -->
@@ -108,8 +144,8 @@
           <!-- 실제로 설정된 제공자만 app.js가 여기에 버튼으로 그린다 -->
           <div id="login-providers" class="login-providers"></div>
           <p class="hint" style="margin:10px 0 0;">
-            <b>Google</b>로 로그인하면 구글 포토에서 사진을 골라올 수 있습니다.<br />
-            <b>카카오·네이버</b>는 기기(갤러리)에 있는 사진을 직접 올리는 방식으로 이용합니다.
+            <b>Google</b> 계정은 Google 포토에서 바로 골라올 수 있고,<br />
+            <b>카카오·네이버</b> 계정은 기기 갤러리에서 사진을 올려 쓰시면 됩니다.
           </p>
           <div id="login-actions" class="hidden">
             <button class="btn-primary" data-goto="photos">사진 선택하러 가기</button>
@@ -127,7 +163,7 @@
           <div class="terms-box">
             <h3>이용안내</h3>
             <ul class="panel-list">
-              <li>Wepic Live는 고른 사진을 슬라이드쇼로 보여주고, <b>링크 하나로 가족과 공유</b>하는 서비스입니다.</li>
+              <li>wepic live는 고른 사진에 음악을 얹어, <b>링크 하나로 실시간 공유</b>하는 서비스입니다.</li>
               <li>공유 링크는 <b>로그인 없이</b> 열람할 수 있으므로, 링크를 받은 사람은 누구나 볼 수 있습니다.
                 원치 않으시면 <b>PIN(4자리)</b>을 걸어두세요(기본으로 자동 발급됩니다).</li>
               <li>사진 업로드·공유 링크 만들기는 <b>로그인한 회원만</b> 할 수 있습니다.</li>
@@ -165,27 +201,29 @@
 
         <!-- 사진 선택 — 로그인 제공자에 따라 아래 두 블록 중 하나만 보인다 -->
         <div class="panel hidden" id="panel-photos">
-          <h2>표시할 사진 선택</h2>
+          <p class="panel-eyebrow">Step 1 — 사진 고르기</p>
+          <h2>액자에 띄울 사진을 고르세요</h2>
+          <p>고른 사진은 바로 액자 화면에 올라갑니다. 음악과 PIN은 그 다음 화면에서 정하면 됩니다.</p>
           <p id="photos-login-note" class="account-notice hidden">먼저 위쪽 메뉴에서 <b>로그인</b>이 필요합니다.</p>
 
           <!-- (A) 구글 로그인: 구글 포토 Picker -->
           <div id="photos-google" class="hidden">
             <ol class="steps">
-              <li>“사진 선택 시작” 클릭 또는 QR 스캔</li>
-              <li><b>로그인된 계정으로</b> 선택하세요 (폰에 여러 계정이 있으면 다른 계정을 고르면 선택이 완료되지 않습니다)</li>
-              <li>검색창에 <b>인물 이름</b>(예: 아버지) 또는 <b>장소명</b> 입력</li>
-              <li>원하는 사진들을 선택 후 <b>완료</b></li>
+              <li>아래 버튼을 누르거나, 휴대폰이면 QR을 스캔하세요</li>
+              <li><b>로그인한 계정으로</b> 고르세요 — 휴대폰에 계정이 여럿이면 다른 계정으로는 전달되지 않습니다</li>
+              <li>사람 이름이나 장소로 검색하면 원하는 사진을 빨리 찾을 수 있습니다</li>
+              <li>사진을 고르고 <b>완료</b>를 누르면 액자에 바로 올라갑니다</li>
             </ol>
-            <button id="btn-start-picker" class="btn-primary">구글 포토에서 사진 선택 시작</button>
+            <button id="btn-start-picker" class="btn-primary">Google 포토에서 사진 고르기</button>
           </div>
 
           <!-- (B) 카카오·네이버 로그인: 구글 포토 권한이 없으므로 기기 갤러리에서 직접 올린다 -->
           <div id="photos-local" class="hidden">
-            <p>기기(갤러리)에 있는 사진을 직접 골라 올립니다.</p>
+            <p>휴대폰·PC에 있는 사진을 그대로 올려서 액자를 만듭니다.</p>
             <ol class="steps">
-              <li>“갤러리에서 사진 선택” 클릭</li>
-              <li>원하는 사진들을 선택 (여러 장 가능)</li>
-              <li>선택하면 바로 슬라이드쇼가 시작됩니다</li>
+              <li>아래 <b>갤러리에서 사진 선택</b>을 누르세요</li>
+              <li>원하는 사진을 여러 장 한꺼번에 고를 수 있습니다</li>
+              <li>고르는 즉시 액자 화면이 시작됩니다</li>
             </ol>
             <!-- 웹 표준 file input — iOS 사파리·안드로이드 크롬 모두 기기 사진 선택 화면을 띄운다 -->
             <input type="file" id="local-file-input" accept="image/*" multiple hidden />
@@ -193,27 +231,26 @@
             <!-- 이미 보고 있는 사진이 있을 때만 의미가 있어 app.js가 노출을 결정한다 -->
             <button id="btn-pick-local-add" class="secondary slim hidden" style="margin-top:8px;">갤러리에서 사진 추가</button>
             <p id="local-pick-status" class="status hidden"></p>
-            <p class="hint" style="margin:8px 0 0;">동영상은 공유 링크에 담기지 않아 사진만 선택됩니다.</p>
+            <p class="hint" style="margin:8px 0 0;">동영상은 공유 링크에 담기지 않으므로 사진만 올라갑니다.</p>
           </div>
         </div>
 
         <!-- 내 회원정보 -->
         <div class="panel hidden" id="panel-me">
           <h2>내 회원정보</h2>
-          <p class="panel-muted">로그인에 사용한 계정 정보입니다. <b>이름과 이메일</b>을 바꿀 수 있습니다.
-            로그인 방식·권한·가입일은 바꿀 수 없습니다.</p>
-          <div class="setting-row">
-            <span class="setting-label">이름</span>
-            <input type="text" id="me-name" class="title-input" maxlength="30" placeholder="표시할 이름" />
-          </div>
-          <div class="setting-row">
+          <p class="panel-muted">로그인에 사용한 계정 정보입니다. 여기서 바꿀 수 있는 것은
+            <b>이메일</b>뿐이고, 이름·로그인 방식·권한·가입일은 로그인 계정에서 가져옵니다.</p>
+          <!-- 고칠 수 있는 항목이 이메일뿐이라는 게 한눈에 보이도록, 저장 버튼을 이메일 칸 바로 옆에 둔다 -->
+          <div class="setting-row me-email-row">
             <span class="setting-label">이메일</span>
             <input type="email" id="me-email" class="title-input" maxlength="120"
                    placeholder="예: hong@example.com (비워둘 수 있음)" />
+            <button id="me-save" class="btn-primary slim">저장</button>
           </div>
           <p class="hint" style="margin:2px 0 0;">이메일은 연락·표시용입니다. 이 값을 바꿔도
             로그인 계정이나 권한은 바뀌지 않습니다.</p>
           <div class="me-info">
+            <div><span class="me-key">이름</span><span id="me-name" class="me-val">-</span></div>
             <div><span class="me-key">로그인 방식</span><span id="me-provider" class="me-val">-</span></div>
             <div><span class="me-key">권한</span><span id="me-role" class="me-val">-</span></div>
             <div><span class="me-key">가입일</span><span id="me-created" class="me-val">-</span></div>
@@ -222,7 +259,6 @@
             <div><span class="me-key">저장용량</span><span id="me-quota" class="me-val">-</span></div>
           </div>
           <div class="quota-bar"><div id="me-quota-fill" class="quota-bar-fill"></div></div>
-          <button id="me-save" class="btn-primary">저장</button>
           <p id="me-saved" class="share-copied hidden">저장되었습니다.</p>
           <p style="margin:12px 0 0;">
             <a href="#" id="btn-logout-me" class="text-link small">로그아웃</a>
@@ -378,15 +414,15 @@
     </div>
 
     <section id="screen-source" class="card light wide hidden">
-      <h2>표시할 사진 선택</h2>
+      <h2>액자에 띄울 사진 고르기</h2>
       <div class="source-body">
         <div class="source-text">
           <p id="account-notice-picker" class="account-notice hidden"></p>
           <ol class="steps">
-            <li>“구글 포토에서 선택” 클릭 또는 QR 스캔</li>
-            <li><b>위에 표시된 계정으로 로그인된 상태</b>인지 확인 (폰에 여러 계정이 있으면 다른 계정을 고르면 선택이 완료되지 않습니다)</li>
-            <li>검색창에 <b>인물 이름</b>(예: 아버지) 또는 <b>장소명</b> 입력</li>
-            <li>원하는 사진들을 선택 후 <b>완료</b></li>
+            <li>“Google 포토에서 고르기”를 누르거나, 휴대폰이면 QR을 스캔하세요</li>
+            <li><b>위에 표시된 계정</b>으로 로그인된 상태인지 확인하세요 — 다른 계정으로 고르면 전달되지 않습니다</li>
+            <li>사람 이름이나 장소로 검색하면 원하는 사진을 빨리 찾을 수 있습니다</li>
+            <li>사진을 고르고 <b>완료</b>를 누르면 액자에 바로 올라갑니다</li>
           </ol>
           <p id="source-status" class="status dark">
             <span id="source-status-text"></span>
@@ -396,7 +432,7 @@
         </div>
         <div class="source-qr-col">
           <img id="source-qr" class="qr hidden" alt="qr" />
-          <button id="btn-open-picker" class="btn-primary">구글 포토에서 선택</button>
+          <button id="btn-open-picker" class="btn-primary">Google 포토에서 고르기</button>
           <a href="#" id="btn-picker-home" class="text-link small">홈으로</a>
         </div>
       </div>

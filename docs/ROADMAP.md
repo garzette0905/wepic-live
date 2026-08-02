@@ -13,7 +13,7 @@
 | **wepic 홈페이지** | 첫 진입 랜딩(**상단 가로 메뉴** + 배너 + 안내 프레임) | `/` · `index.html`의 `#home-shell` |
 | **wepic 메인화면** | 로그인 후 내 사진을 보는 슬라이드쇼 + 우측 설정 패널 | `index.html`의 `#screen-slideshow` · `app.js` |
 | **wepic 공유화면** | 공유 링크로 로그인 없이 보는 화면 | `/f/<id>` · `share.html` · `share.js` |
-| **wepic 관리자** | 화면관리·PIN번호관리·Default 정보관리 (관리자 진입 시 **좌측 하위 메뉴**) | `index.html`의 `#admin-side-menu` |
+| **wepic 관리자** | 화면관리·회원관리·PIN번호관리·Default 정보관리 (관리자 진입 시 **좌측 하위 메뉴**) | `index.html`의 `#admin-side-menu` |
 
 ### 사용자 구분 (3가지)
 
@@ -24,7 +24,7 @@
 | **Wepic 조회자** | 불필요 | wepic 공유화면 조회(PIN이 걸려 있으면 PIN 입력) | 로그인 없음 — DB에 존재하지 않음 |
 
 > ✅ **브랜딩·온보딩 개편 완료 (Wepic Live)** — 제품명을 **Wepic Live**로 변경
-> (태그라인 "Capture Moments, Live the Joy"), 무지개 카메라 셔터 로고·모바일
+> (태그라인 "Capture Moments, Share the Live Joy" — J-13에서 갱신), 무지개 카메라 셔터 로고·모바일
 > 아이콘 교체. 진입 흐름을 **자동 팝업 → 홈(랜딩) 우선**으로 전환: 상단 배너 +
 > 좌측 메뉴(홈·소개 / Google 로그인 / 사진 선택 / 데모 / 등록 신청 / Feedback) +
 > 우측 안내 프레임 구조. 사용자가 직접 메뉴를 눌러 인증·사진선택으로 진입한다.
@@ -1353,6 +1353,87 @@ wepic을 만들 때 뜨던 모달을 통째로 없앴다. 주소는 섹션 안 "
 
 **배운 것**: 외부 API를 Worker로 프록시할 때는 **"IP당 한도"가 있는지** 먼저 확인해야 한다.
 있으면 프록시가 곧 병목이 되고, 로컬 테스트로는 절대 드러나지 않는다.
+
+### J-13. ✅ 음악 버튼 복구 · 문구 전면 갱신 · 디자인 시스템 도입 (완료, 2026-08-03)
+
+사용자 요청 7건을 한 번에 반영했다.
+
+**① 버그 — 음악찾기로 만든 wepic에서 음표 버튼이 사라졌다**
+
+- 재현: `musicUrl`이 iTunes 미리듣기 주소인 wepic을 만들면 `#btn-music`이 `display:none`.
+- 원인: `startPreviewMusic()`이 버튼을 `flex`로 켠 **직후** `initMusic()`이 실행되고,
+  `ytId(미리듣기주소)`가 `null`이라 **버튼을 다시 숨겨버렸다**. `initMusic()`은
+  YouTube 배경음악 전용 함수인데 미리듣기에도 불려서 생긴 문제.
+- 수정 (`share.js`) — 두 곳을 함께 막았다.
+  - 호출부: `if (musicUrl && !isPreviewUrl(musicUrl) && !playerPromise) initMusic();`
+  - 함수 안: 미리듣기가 재생 중이면(`usingPreview()`) 버튼을 숨기지 않는다.
+- 검증: 버튼이 보이고 **무음으로 시작**(`soundOn:false, muted:true`) → 한 번 누르면
+  `muted:false, readyState:4`로 재생 → 다시 누르면 무음. YouTube 경로도 그대로 동작.
+
+**② 문구 전면 갱신** — 예전 "구글 포토에서 사진 올리기" 시절 표현을 현재 제품에 맞게 고쳤다.
+
+- 소개 패널을 다시 썼다: eyebrow(`wepic live — Real-time Audio-Visual Frame Platform`) +
+  헤드라인 + 기능 카드 3장(실시간 반영 · 음악과 함께 · 같이 보는 재미).
+- 로그인 안내는 "구글은 포토에서 골라오고, 카카오·네이버는 갤러리에서 올린다"로 정리.
+- 사진 선택 패널에 `Step 1 — 사진 고르기` 라벨과 안내문을 붙이고, 단계 설명을
+  명령문("클릭") 대신 사람 말투로 바꿨다.
+
+**③ 배경 사진 교체 + 그에 맞춘 그레이딩 재조정**
+
+- `web/public/home-bg.png`를 새 이미지(TV가 있는 밝은 거실)로 교체.
+- 예전 값(`brightness 0.84`)은 **밝은 사진**에서는 흰 글씨가 묻힌다 → 눈대중이 아니라
+  사진의 실제 평균 밝기에서 계산해 맞췄다:
+  `saturate(0.72) contrast(1.04) brightness(0.62)` + 차콜 그라디언트(위 0.90 → 가운데 0.30 →
+  아래 0.88) + 우하단 코랄 radial.
+- 계산 결과 대비: 상단 바 흰 글씨 **17.6:1**, 히어로 문구 **11.7:1**(서브문구 7.2:1),
+  패널 영역 **10.4:1** — AA(4.5:1)를 넉넉히 넘기면서 사진의 형태·색은 살아 있다.
+
+**④ 회원정보 — 고칠 수 있는 건 이메일뿐임을 눈으로 보이게**
+
+- 이름을 입력칸에서 **읽기 전용 항목**으로 내리고(`#me-name`은 이제 `<span>`),
+  **저장 버튼을 이메일 입력칸 바로 옆**에 붙였다(`.me-email-row`).
+- `PUT /api/me`는 여전히 `name`을 함께 받으므로, `app.js`가 현재 이름을 `meName`에
+  담아두고 저장 시 그대로 되돌려 보낸다(서버 계약은 안 건드렸다).
+
+**⑤ 좌측 하위 메뉴를 상단 바와 같은 결로**
+
+- `.admin-side-menu` → **`.side-menu`**로 이름을 바꾸고 상자·이모지(📁🔢⚙️👥)를 없앴다.
+  이름만 남기고 현재 항목은 **왼쪽 세로선**(코랄)으로 표시. 좁은 화면에서는 가로로 누우며
+  세로선 대신 **아래 밑줄**로 바뀐다.
+- J-5에서 "좌측 메뉴는 상자 형태를 유지한다"고 적었던 결정을 여기서 뒤집었다.
+
+**⑥ 관리자 메뉴 순서** — 화면관리 → **회원관리** → PIN번호관리 → Default 정보관리.
+
+**⑦ 디자인 시스템 도입 (팔레트·유리·알약 CTA·폰트)**
+
+요청서는 React + Tailwind + Lucide 기준이었지만, 이 프로젝트는 **빌드 단계가 없는
+바닐라 HTML/CSS/JS**다. 스택을 바꾸면 전 화면을 다시 쓰는 일이 되므로,
+**디자인 규칙만 그대로 옮겨** CSS 변수와 클래스로 구현했다.
+
+| 요청서 | 구현 |
+|---|---|
+| `#0B0F17` → `#121824` 차콜 | `--bg-deep` / `--bg-deep-2` |
+| Sunset Coral `#FF6B57` · Peach `#FF8E53` · Amber `#FFB800` | `--coral` / `--peach` / `--amber` (기존 `--accent-strong`·`--menu-accent` 값도 여기로 교체 → 전 화면이 한 번에 따라온다) |
+| `backdrop-blur-xl` `bg-white/5` `border-white/10` `rounded-3xl` | `--glass-blur: blur(24px)` · `--glass-bg` · `--glass-border` · `--radius-3xl: 24px` → `.panel`·`.card`·`.modal-card`·공유화면 댓글창에 모두 적용 |
+| 알약 CTA + `shadow-orange-500/30` | `button, .btn-primary`에 `border-radius: 999px` + 코랄→피치 그라데이션 + `0 8px 24px rgba(255,107,87,.30)` |
+| Inter + Pretendard | Google Fonts(Inter) + jsDelivr(Pretendard 가변·동적 서브셋) |
+| Lucide 아이콘 | 쓰는 3개(zap·music·heart)만 **인라인 SVG**로 옮겨 담았다(번들러가 없으므로) |
+| Features Grid (3 Cards) | `.feature-grid` — `auto-fit minmax(180px,1fr)`이라 660px 3열 → 520px 2열 → 360px 1열 |
+| 헤드라인/서브/태그라인 | `Capture Moments, **Share the Live Joy**`(강조부는 코랄→앰버 그라데이션 글자) + `.hero-sub` + eyebrow |
+
+**함정 2개**
+
+- 전역 `button` 규칙에 그림자·`translateY`를 넣으면 `.mini-btn`·`.icon-btn`·`.menu-item`처럼
+  자기 배경만 덮어쓰는 버튼들이 **엉뚱한 주황 그림자와 들썩임**을 물려받는다 →
+  그 클래스들만 `box-shadow: none; transform: none`으로 한 번에 되돌렸다.
+- `.panel-eyebrow`(0,1,0)는 `.panel p`(0,1,1)에게 명시도로 진다 → 색이 안 먹었다.
+  `.panel .panel-eyebrow`로 한정해서 해결. (계산값을 읽어 확인 후 수정)
+
+**검증** — 브라우저 창이 0×0으로 떠서 **스크린샷·레이아웃 측정이 불가**했다. 그래서
+계산 스타일과 CSSOM 규칙을 직접 읽어 확인했다: 팔레트·라운드·블러·그림자 값,
+그리드 3열/2열/1열 분기(폭을 강제한 사본으로 측정), 좌측 메뉴 활성 표시,
+메뉴 6개 전환 시 JS 오류 0건, 회원정보 DOM 구조(이름=span, 저장 버튼=이메일 행 안).
+**화면을 눈으로 확인하지는 못했다.**
 
 ### Render 제거 대비 — 데이터 위치 점검 (확인 완료)
 

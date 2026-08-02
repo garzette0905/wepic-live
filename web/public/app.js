@@ -2228,10 +2228,14 @@ function applyLoginState(status) {
 // 제공자 코드를 사람이 읽는 이름으로
 const PROVIDER_LABELS = { google: 'Google', kakao: '카카오', naver: '네이버' };
 
-// 회원정보 패널: 이름·이메일은 수정 가능, 나머지는 읽기 전용으로 표시
+// 회원정보 패널: **이메일만** 수정 가능하고 나머지(이름 포함)는 읽기 전용으로 표시한다.
+//   이름은 로그인 제공자에서 온 값이므로 여기서 고치지 않는다. 다만 PUT /api/me는 name도
+//   함께 받으므로, 저장할 때 되돌려 보낼 현재 이름을 meName에 담아둔다.
+let meName = '';
 function fillMeForm(me, provider) {
   if (!me) return;
-  document.getElementById('me-name').value = me.name || '';
+  meName = me.name || '';
+  document.getElementById('me-name').textContent = meName || '-';
   document.getElementById('me-email').value = me.email || '';
   document.getElementById('me-provider').textContent =
     PROVIDER_LABELS[me.provider || provider] || me.provider || provider || '-';
@@ -2264,9 +2268,8 @@ async function loadMyUsage() {
 }
 
 document.getElementById('me-save').addEventListener('click', async () => {
-  const name = document.getElementById('me-name').value.trim();
+  const name = meName;   // 이름은 화면에서 고치지 않고 그대로 되돌려 보낸다
   const email = document.getElementById('me-email').value.trim();
-  if (!name) { alert('이름을 입력하세요.'); return; }
   // 서버도 검사하지만, 저장을 누르고 나서야 알게 되는 것보다 여기서 먼저 알려준다.
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
     alert('이메일 형식이 올바르지 않습니다. (비워두셔도 됩니다)');
@@ -2282,7 +2285,11 @@ document.getElementById('me-save').addEventListener('click', async () => {
     });
     // 저장된 값을 화면에 다시 반영(상단 메뉴 이름 포함)
     loggedInName = r.me?.name || name;
-    document.getElementById('menu-me').textContent = `👤 ${loggedInName}`;
+    // 상단 바에서 이름을 보여주는 건 #menu-whoami다(#menu-me는 "정보수정" 라벨 고정).
+    // 예전에는 여기서 menu-me의 글자를 "👤 이름"으로 덮어써 메뉴 이름이 사라졌다.
+    const whoami = document.getElementById('menu-whoami');
+    const via = whoami.textContent.replace(/\s*\S+$/, '').trim();
+    whoami.textContent = `${via ? via + ' ' : ''}${loggedInName}`;
     if (r.me) fillMeForm(r.me, r.me.provider);
     const ok = document.getElementById('me-saved');
     ok.classList.remove('hidden');

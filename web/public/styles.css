@@ -1,14 +1,32 @@
+/* ===== 디자인 토큰 =====
+   짙은 차콜(#0B0F17 → #121824) 바탕에 선셋 코랄~앰버 계열 강조색을 쓰고,
+   카드는 유리(반투명 흰색 + 블러 + 옅은 흰 테두리)로 처리한다.
+   기존 변수 이름(--accent-strong 등)은 그대로 두고 값만 새 팔레트로 바꿔서,
+   이 변수를 쓰는 화면 전체가 한 번에 같은 톤으로 따라오게 했다. */
 :root {
-  --bg-deep: #0b1220;
-  --bg-panel: #10192b;
-  --border: rgba(255, 255, 255, 0.08);
-  --accent: #8ab4ff;
-  --accent-strong: #5b8def;
+  --bg-deep: #0b0f17;
+  --bg-deep-2: #121824;
+  --bg-panel: #121824;
+  --border: rgba(255, 255, 255, 0.10);
+
+  /* 강조색: Sunset Coral · Peach Pink · Amber */
+  --coral: #ff6b57;
+  --peach: #ff8e53;
+  --amber: #ffb800;
+  --accent: #ff8e53;
+  --accent-strong: #ff6b57;
   /* 상단 바 강조색(현재 메뉴 밑줄·소셜 아이콘 hover) */
-  --menu-accent: #ff3615;
-  --text-main: #f1f5fb;
-  --text-muted: #8fa0bb;
+  --menu-accent: #ff6b57;
+
+  /* 유리 카드 공통값 */
+  --glass-bg: rgba(255, 255, 255, 0.05);
+  --glass-border: rgba(255, 255, 255, 0.10);
+  --glass-blur: blur(24px);
   --radius: 14px;
+  --radius-3xl: 24px;
+
+  --text-main: #f2f4f8;
+  --text-muted: #94a0b4;
 }
 
 * { box-sizing: border-box; }
@@ -17,13 +35,15 @@ html, body {
   margin: 0;
   height: 100%;
   background-color: var(--bg-deep);
-  background-image: linear-gradient(rgba(11,18,32,0.72), rgba(11,18,32,0.88)), url("brand.png");
+  background-image: linear-gradient(rgba(11,15,23,0.80), rgba(18,24,36,0.92)), url("brand.png");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
   background-attachment: fixed;
   color: var(--text-main);
-  font-family: "Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  /* 라틴은 Inter, 한글은 Pretendard로 받는다(둘 다 없으면 시스템 고딕) */
+  font-family: "Inter", "Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  -webkit-font-smoothing: antialiased;
   overflow: hidden;
   /* 모바일에서 화면을 아래로 당기면 브라우저가 새로고침(pull-to-refresh)을 해버려
      보고 있던 상태가 날아가고 홈으로 돌아간다. 페이지 자체는 스크롤하지 않고
@@ -47,15 +67,16 @@ html, body {
   align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center;
 }
 .brand-header {
-  background: rgba(11, 18, 32, 0.5); backdrop-filter: blur(6px);
-  border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 36px;
+  background: rgba(11, 15, 23, 0.5); backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border); border-radius: 18px; padding: 16px 36px;
 }
 .brand-title { font-size: 18px; font-weight: 500; color: var(--accent); margin: 0; letter-spacing: 0.5px; }
 .brand-name { font-size: 26px; font-weight: 700; letter-spacing: 1px; }
 
 .card {
-  background: rgba(13, 20, 36, 0.78); backdrop-filter: blur(10px);
-  border: 1px solid var(--border); border-radius: var(--radius); padding: 28px 32px;
+  background: linear-gradient(rgba(11, 15, 23, 0.72), rgba(18, 24, 36, 0.72)), var(--glass-bg);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border); border-radius: 20px; padding: 28px 32px;
   width: 430px; display: flex; flex-direction: column; gap: 12px;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45); text-align: left;
 }
@@ -89,13 +110,37 @@ input[type="text"], input[type="date"] {
 }
 input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.8); }
 
+/* 기본 버튼 — 코랄→피치 그라데이션에 알약 모양, 아래로 은근한 주황빛 그림자 */
 button, .btn-primary {
-  background: var(--accent-strong); color: #fff; border: none; border-radius: 8px;
-  padding: 11px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
-  font-family: inherit; transition: filter 0.15s ease; text-decoration: none; text-align: center;
+  background: linear-gradient(135deg, var(--coral), var(--peach));
+  color: #fff; border: none; border-radius: 999px;
+  padding: 11px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
+  font-family: inherit; text-decoration: none; text-align: center;
+  box-shadow: 0 8px 24px rgba(255, 107, 87, 0.30);
+  transition: filter 0.15s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
-button:hover, .btn-primary:hover { filter: brightness(1.12); }
-button.secondary { background: rgba(255, 255, 255, 0.08); color: var(--text-main); }
+button:hover, .btn-primary:hover {
+  filter: brightness(1.06); box-shadow: 0 10px 30px rgba(255, 107, 87, 0.42); transform: translateY(-1px);
+}
+button:active, .btn-primary:active { transform: translateY(0); }
+
+/* 위 규칙은 "알약 CTA"용이다. 아이콘 버튼·메뉴 항목처럼 배경을 스스로 정하는 버튼들은
+   자기 background/border-radius만 덮어쓰고 box-shadow·transform은 그대로 물려받아
+   엉뚱한 주황 그림자와 들썩임이 생긴다 → 여기서 한 번에 되돌린다. */
+.mini-btn, .icon-btn, .menu-item, .menu-home, .comment-close, .music-find-btn,
+.feed-like-btn, .btn-provider, .extra-options-toggle, .fullscreen-btn, .revoke-btn {
+  box-shadow: none;
+}
+.mini-btn:hover, .icon-btn:hover, .menu-item:hover, .menu-home:hover, .comment-close:hover,
+.music-find-btn:hover, .feed-like-btn:hover, .btn-provider:hover, .extra-options-toggle:hover,
+.fullscreen-btn:hover, .revoke-btn:hover {
+  box-shadow: none; transform: none;
+}
+button.secondary {
+  background: rgba(255, 255, 255, 0.06); color: var(--text-main);
+  border: 1px solid var(--glass-border); box-shadow: none;
+}
+button.secondary:hover { background: rgba(255, 255, 255, 0.12); box-shadow: none; transform: none; }
 button.secondary.slim { padding: 8px 12px; font-size: 12.5px; font-weight: 500; }
 
 .text-link { color: var(--accent-strong); font-size: 13.5px; font-weight: 600; text-decoration: underline; cursor: pointer; }
@@ -106,7 +151,7 @@ button.secondary.slim { padding: 8px 12px; font-size: 12.5px; font-weight: 500; 
 
 .status { color: var(--text-muted); font-size: 13px; }
 .status #btn-back-to-slideshow { margin-left: 8px; }
-.status.dark { color: #5b8def; font-weight: 600; }
+.status.dark { color: #d4562f; font-weight: 600; }
 .error { color: #e05b5b; font-size: 13px; }
 
 .progress-track { height: 8px; border-radius: 4px; background: rgba(255,255,255,0.08); overflow: hidden; }
@@ -279,7 +324,7 @@ button.preset.active { background: var(--accent-strong); color: #fff; }
   left: 16px;
   top: 16px;
   z-index: 5;
-  background: rgba(91, 141, 239, 0.9);
+  background: rgba(255, 107, 87, 0.9);
   color: #fff;
   font-size: 11px;
   font-weight: 700;
@@ -370,9 +415,10 @@ select optgroup {
   padding: 24px; backdrop-filter: blur(3px);
 }
 .modal-card {
-  background: rgba(13, 20, 36, 0.96);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  background: linear-gradient(rgba(11, 15, 23, 0.94), rgba(18, 24, 36, 0.94));
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
   padding: 28px 30px;
   max-width: 460px;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
@@ -399,7 +445,7 @@ select optgroup {
 .mini-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .mini-btn:disabled:hover { background: rgba(255, 255, 255, 0.08); color: var(--text-muted); }
 /* 눌린 상태(사진 제외 중)를 아이콘 버튼에 표시 */
-.mini-btn.active { background: rgba(91, 141, 239, 0.42); color: #fff; }
+.mini-btn.active { background: rgba(255, 107, 87, 0.42); color: #fff; }
 
 /* "사진선택" 섹션의 사진 고르기 아이콘 줄 */
 .photo-pick-actions {
@@ -411,8 +457,8 @@ select optgroup {
 .share-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .share-btn-row { display: flex; gap: 6px; }
 .share-btn-row .share-btn { flex: 1; min-width: 0; }
-#btn-update-share { background: rgba(91, 141, 239, 0.28); color: #fff; }
-#btn-update-share:hover { background: rgba(91, 141, 239, 0.42); filter: none; }
+#btn-update-share { background: rgba(255, 107, 87, 0.28); color: #fff; }
+#btn-update-share:hover { background: rgba(255, 107, 87, 0.42); filter: none; }
 .share-url-row { display: flex; gap: 6px; margin: 4px 0 6px; }
 .share-url-row input {
   flex: 1; min-width: 0; background: rgba(255,255,255,0.06); border: 1px solid var(--border);
@@ -481,18 +527,27 @@ select optgroup {
    위쪽은 진하게 눌러 상단 바의 흰 글씨가 사진에 묻히지 않게 하고, 가운데는 사진이 살아 있게
    비우고, 아래쪽은 다시 눌러 패널 글씨가 읽히게 한다. backdrop-filter는 "뒤에 있는 것"
    (= 배경 사진)에만 걸리므로, 이 레이어 위에 오는 메뉴·패널 색은 영향을 받지 않는다. */
+/* 새 배경 사진은 낮의 거실처럼 **밝은** 사진이라, 예전 값(brightness 0.84)으로는 흰 글씨가
+   묻힌다. 밝기를 더 내리고 짙은 차콜(#0B0F17 / #121824)을 두 겹으로 얹어, 사진의 형태는
+   남기면서 전체 톤을 팔레트와 같은 어두운 차콜로 끌어내린다. */
+/* 값은 눈대중이 아니라 배경 사진의 실제 밝기에서 계산해 맞췄다. 이 조합이면
+   상단 바 흰 글씨 17.6:1, 히어로 문구 11.7:1(서브문구 7.2:1), 패널 영역 10.4:1로
+   AA(4.5:1)를 넉넉히 넘기면서도 사진의 형태·색이 살아 있다. */
 .home-scrim {
   position: absolute; inset: 0; z-index: 0; pointer-events: none;
-  backdrop-filter: saturate(0.78) contrast(1.06) brightness(0.84);
-  -webkit-backdrop-filter: saturate(0.78) contrast(1.06) brightness(0.84);
-  background: linear-gradient(
-    180deg,
-    rgba(5, 9, 16, 0.82) 0%,
-    rgba(5, 9, 16, 0.42) 16%,
-    rgba(5, 9, 16, 0.10) 38%,
-    rgba(5, 9, 16, 0.22) 66%,
-    rgba(5, 9, 16, 0.68) 100%
-  );
+  backdrop-filter: saturate(0.72) contrast(1.04) brightness(0.62);
+  -webkit-backdrop-filter: saturate(0.72) contrast(1.04) brightness(0.62);
+  background:
+    /* 우하단에서 은근히 번지는 코랄빛 — 팔레트의 강조색을 배경에도 한 방울 */
+    radial-gradient(120% 90% at 82% 78%, rgba(255, 107, 87, 0.15) 0%, rgba(255, 107, 87, 0) 55%),
+    linear-gradient(
+      180deg,
+      rgba(11, 15, 23, 0.90) 0%,
+      rgba(11, 15, 23, 0.56) 18%,
+      rgba(18, 24, 36, 0.30) 42%,
+      rgba(18, 24, 36, 0.46) 68%,
+      rgba(11, 15, 23, 0.88) 100%
+    );
 }
 /* 아주 옅은 필름 그레인 — 사진이 매끈한 CG처럼 보이지 않게 질감만 얹는다 */
 .home-scrim::after {
@@ -505,7 +560,7 @@ select optgroup {
    로고는 상단 바로 올라갔으므로 여기에는 문구만 왼쪽에 크게 둔다. */
 .hero {
   position: relative; z-index: 1; flex: none;
-  height: clamp(150px, 24vh, 240px);
+  height: clamp(178px, 27vh, 270px);
   display: flex; align-items: center;
 }
 .hero-inner { position: relative; padding: 0 clamp(20px, 4vw, 52px); }
@@ -514,7 +569,20 @@ select optgroup {
   font-size: clamp(26px, 4.6vw, 46px); font-weight: 300; line-height: 1.16;
   letter-spacing: -0.02em; text-shadow: 0 2px 18px rgba(0, 0, 0, 0.55);
 }
-.hero-tagline b { font-weight: 600; color: #fff; }
+/* 강조 부분만 코랄→앰버 그라데이션 글자로 */
+.hero-tagline b {
+  font-weight: 600; color: #fff;
+  background: linear-gradient(100deg, var(--coral), var(--peach) 45%, var(--amber));
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+/* 서브 헤드라인 — 무엇을 해주는 서비스인지 한 문장으로 */
+.hero-sub {
+  margin: 14px 0 0; max-width: 34em;
+  color: rgba(255, 255, 255, 0.74); font-size: clamp(13.5px, 1.25vw, 16px);
+  font-weight: 400; line-height: 1.62; letter-spacing: -0.005em;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.6);
+}
 
 /* ---------- 상단 바 ---------- */
 /* 유리 바를 없애고 배경 사진 위에 글자만 얹는다(참고 디자인과 동일). 상단이 어둡게 눌려
@@ -591,26 +659,69 @@ select optgroup {
 
 /* 본문: (관리자 화면일 때만) 좌측 메뉴 + 우측 프레임 */
 .home-body { position: relative; z-index: 1; flex: 1 1 auto; min-height: 0; display: flex; }
-/* 관리자 하위 메뉴 — 관리자 화면을 보고 있을 때만 표시된다 */
-.admin-side-menu {
-  flex: 0 0 214px; width: 214px;
-  background: rgba(11, 18, 32, 0.62); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-  border-right: 1px solid rgba(255, 255, 255, 0.14); padding: 18px 12px;
-  display: flex; flex-direction: column; gap: 6px; overflow-y: auto;
+/* 좌측 하위 메뉴(관리자 · My사진관리) — 상단 바와 같은 결.
+   상자·이모지를 없애고 이름만 두고, 현재 항목은 왼쪽 세로선과 흰 글씨로만 알린다. */
+.side-menu {
+  flex: 0 0 196px; width: 196px;
+  background: none; border: none;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 26px clamp(14px, 1.6vw, 22px);
+  display: flex; flex-direction: column; gap: 2px; overflow-y: auto;
 }
 
 .home-frame { flex: 1 1 auto; min-width: 0; overflow-y: auto; padding: 30px 36px; }
-/* 우측 패널: 배경 위에 뜨는 반투명 유리 카드 (글씨 가독성 확보) */
+/* 우측 패널: 배경 위에 뜨는 유리 카드.
+   흰색 5% + 강한 블러 + 흰 테두리 10% + 큰 라운드 — 화면 전체가 이 규칙 하나를 공유한다.
+   배경 사진이 밝은 곳도 있어, 흰색만으로는 글씨가 흐려지므로 짙은 차콜을 밑에 한 겹 깐다. */
 .panel {
-  max-width: 660px;
-  background: rgba(13, 20, 36, 0.62); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 16px;
-  padding: 24px 28px; box-shadow: 0 14px 44px rgba(0, 0, 0, 0.4);
+  max-width: 720px;
+  background: linear-gradient(rgba(11, 15, 23, 0.56), rgba(18, 24, 36, 0.56)), var(--glass-bg);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border); border-radius: var(--radius-3xl);
+  padding: 28px 30px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
 }
-.panel h2 { margin: 0 0 12px; font-size: 22px; font-weight: 700; }
+.panel h2 {
+  margin: 0 0 12px; font-size: clamp(20px, 2.1vw, 25px); font-weight: 700;
+  letter-spacing: -0.02em; line-height: 1.3;
+}
 .panel p { color: var(--text-main); line-height: 1.7; font-size: 14.5px; margin: 0 0 12px; }
 .panel-list { margin: 0 0 14px; padding-left: 20px; line-height: 1.95; color: var(--text-main); font-size: 14px; }
 .panel-muted { color: var(--text-muted); font-size: 13.5px; }
+
+/* 패널 맨 위 작은 라벨 (예: "wepic live — Real-time Audio-Visual Frame Platform").
+   `.panel p`가 색을 잡고 있어(같은 요소, 더 높은 명시도) 여기서도 .panel로 한정해야 이긴다. */
+.panel .panel-eyebrow, .panel-eyebrow {
+  margin: 0 0 10px;
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--peach);
+}
+
+/* 기능 소개 3장 카드 — 좁아지면 자동으로 한 줄에 1~2장이 된다 */
+.feature-grid {
+  display: grid; gap: 14px; margin: 20px 0 18px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.feature-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--glass-border); border-radius: 18px;
+  padding: 18px 16px;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+.feature-card:hover {
+  background: rgba(255, 255, 255, 0.09); border-color: rgba(255, 142, 83, 0.34);
+  transform: translateY(-2px);
+}
+.feature-card h3 {
+  margin: 12px 0 6px; font-size: 15px; font-weight: 700; color: #fff; letter-spacing: -0.01em;
+}
+.feature-card p { margin: 0; font-size: 13px; line-height: 1.62; color: var(--text-muted); }
+.feature-icon {
+  display: grid; place-items: center; width: 40px; height: 40px; border-radius: 13px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--coral), var(--amber));
+  box-shadow: 0 6px 18px rgba(255, 107, 87, 0.28);
+}
+.feature-icon svg { width: 20px; height: 20px; display: block; }
 .panel .account-notice { display: block; color: #6b5300; }
 /* 홈 패널(유리 카드) 안의 단계 안내는 흰색으로 (Picker의 흰 카드에서는 기존 어두운 색 유지) */
 .panel .steps { color: #eef3fb; }
@@ -636,22 +747,25 @@ select optgroup {
   background: #e0322f; color: #fff; font-size: 12px; font-weight: 800; letter-spacing: 1.4px;
   padding: 5px 11px; border-radius: 6px; box-shadow: 0 3px 14px rgba(0,0,0,0.5);
 }
-.admin-menu-label {
-  font-size: 11px; font-weight: 800; letter-spacing: 1.2px; color: #ffb4b2;
-  padding: 2px 6px 6px; text-transform: uppercase;
+/* 하위 메뉴 제목 (예: "Admin", "My사진관리") */
+.side-menu-label {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--peach); padding: 0 0 14px;
 }
-/* 좌측 하위 메뉴(관리자 · My사진관리)는 상단 바와 달리 상자 형태를 유지한다.
-   상단 바의 .menu-item에서 배경·테두리를 뺐으므로 여기서 다시 지정한다. */
-.admin-side-menu .menu-item {
-  background: rgba(255, 255, 255, 0.06); border: 1px solid transparent; border-radius: 10px;
-  color: #fff; font-weight: 600; padding: 11px 13px; font-size: 13.5px; white-space: normal;
+/* 항목은 상단 바처럼 글자만. 현재 항목은 왼쪽 세로선(accent)으로 표시한다. */
+.side-menu .menu-item {
+  background: none; border: none; border-radius: 0;
+  color: rgba(255, 255, 255, 0.68); font-weight: 500; font-size: 13.5px;
+  padding: 9px 0 9px 13px; white-space: normal;
+  border-left: 2px solid transparent;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
+  transition: color 0.18s ease, border-color 0.18s ease;
 }
-.admin-side-menu .menu-item::after { display: none; } /* 상단 바용 밑줄은 쓰지 않는다 */
-.admin-side-menu .menu-item:hover { background: rgba(255, 255, 255, 0.16); }
-.admin-side-menu .menu-item.active {
-  background: rgba(91, 141, 239, 0.42); border-color: rgba(138, 180, 255, 0.8); font-weight: 700;
+.side-menu .menu-item::after { display: none; } /* 상단 바용 밑줄은 쓰지 않는다 */
+.side-menu .menu-item:hover { color: #fff; background: none; }
+.side-menu .menu-item.active {
+  color: #fff; font-weight: 600; background: none; border-left-color: var(--menu-accent);
 }
-.menu-item.admin-sub { font-size: 13px; padding: 10px 12px 10px 18px; }
 
 /* 로그인 제공자 버튼 (구글 / 카카오 / 네이버) */
 .login-providers { display: flex; flex-direction: column; gap: 8px; max-width: 340px; margin-top: 14px; }
@@ -680,7 +794,7 @@ select optgroup {
 /* 회원가입: 이용안내·개인정보 안내 박스 (길어서 스크롤 가능하게) */
 .terms-box {
   margin-top: 14px; padding: 14px 16px;
-  background: rgba(0, 0, 0, 0.22); border: 1px solid var(--border); border-radius: 10px;
+  background: rgba(0, 0, 0, 0.22); border: 1px solid var(--glass-border); border-radius: 16px;
   max-height: 300px; overflow-y: auto;
 }
 .terms-box h3 {
@@ -693,6 +807,11 @@ select optgroup {
 .login-providers.gated { opacity: 0.45; pointer-events: none; }
 
 /* 내 회원정보: 읽기 전용 항목 목록 */
+/* 회원정보: 고칠 수 있는 건 이메일뿐이라, 입력칸 바로 옆에 저장 버튼을 붙인다 */
+.me-email-row { align-items: center; gap: 8px; max-width: 520px; }
+.me-email-row .title-input { flex: 1 1 auto; min-width: 0; width: auto; }
+.me-email-row .btn-primary.slim { flex: none; padding: 9px 18px; font-size: 13px; }
+
 .me-info { margin: 14px 0 16px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .me-info > div { display: flex; gap: 10px; align-items: baseline; }
 .me-key { flex: 0 0 96px; color: var(--text-muted); }
@@ -755,7 +874,7 @@ select optgroup {
 
 /* 음악찾기 — 배경음악 줄의 버튼과 곡 검색 팝업 */
 .music-find-btn { width: auto; padding: 0 10px; font-weight: 700; color: var(--accent); }
-.music-find-btn:hover { color: #fff; background: rgba(138, 180, 255, 0.20); }
+.music-find-btn:hover { color: #fff; background: rgba(255, 142, 83, 0.20); }
 .music-pick-results { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 46vh; overflow-y: auto; }
 .music-pick-row {
   display: flex; align-items: center; gap: 10px; padding: 7px 9px;
@@ -847,13 +966,20 @@ select optgroup {
   .admin-badge { top: 10px; left: 10px; font-size: 11px; padding: 4px 9px; }
   /* 좁은 화면에서는 관리자 하위 메뉴도 가로 스크롤로 눕힌다 */
   .home-body { flex-direction: column; }
-  .admin-side-menu {
+  .side-menu {
     flex: none; width: 100%; flex-direction: row; overflow-x: auto; overflow-y: hidden;
-    border-right: none; border-bottom: 1px solid var(--border); padding: 10px; gap: 6px;
-    align-items: center;
+    border-right: none; border-bottom: 1px solid var(--border);
+    padding: 10px 14px; gap: 16px; align-items: center;
+    scrollbar-width: none;
   }
-  .admin-side-menu .admin-menu-label { flex: 0 0 auto; padding: 0 4px 0 0; }
-  .admin-side-menu .menu-item { flex: 0 0 auto; white-space: nowrap; }
+  .side-menu::-webkit-scrollbar { display: none; }
+  .side-menu .side-menu-label { flex: 0 0 auto; padding: 0 4px 0 0; }
+  /* 가로로 누우면 왼쪽 세로선 대신 상단 바처럼 아래 밑줄로 현재 항목을 표시한다 */
+  .side-menu .menu-item {
+    flex: 0 0 auto; white-space: nowrap;
+    padding: 6px 0; border-left: none; border-bottom: 2px solid transparent;
+  }
+  .side-menu .menu-item.active { border-left: none; border-bottom-color: var(--menu-accent); }
   .home-frame { padding: 20px 18px; }
   .login-providers { max-width: none; }
 }

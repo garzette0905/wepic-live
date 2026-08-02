@@ -297,10 +297,18 @@ function readMusicTitleSoon() {
 }
 
 // 무음으로 재생을 시작해 곡 제목만 확보한다(소리는 ▶ 버튼으로). 여러 번 호출해도 안전.
+// ⚠️ 이 함수는 **YouTube 배경음악 전용**이다. "음악찾기"로 고른 30초 미리듣기는
+//    startPreviewMusic()이 <audio>로 따로 재생하므로 여기서 건드리면 안 된다 —
+//    예전에는 미리듣기일 때도 이 함수가 불려 ytId()가 null이라며 **음표 버튼을 숨겨버렸다**
+//    (그래서 음악찾기로 만든 wepic에서는 음악 아이콘이 아예 사라졌다).
 async function initMusic() {
   const id = musicUrl ? ytId(musicUrl) : null;
   const btn = document.getElementById('btn-music');
-  if (!id) { btn.style.display = 'none'; return; }
+  if (!id) {
+    // 미리듣기가 이미 재생 중이면 그 버튼을 살려둔다(내가 숨길 대상이 아니다).
+    if (!usingPreview()) btn.style.display = 'none';
+    return;
+  }
   await ensurePlayer(id);
   readMusicTitleSoon();
   btn.style.display = 'flex';
@@ -805,7 +813,8 @@ async function start() {
 
   // 음악은 위 applyManifest에서 이미 무음 재생으로 시작됨(중복 생성 방지). 여기서는
   // 혹시 누락된 경우만 보정한다(initMusic은 여러 번 호출해도 안전).
-  if (musicUrl && !playerPromise) initMusic();
+  // 미리듣기(음악찾기로 고른 곡)는 <audio>가 이미 맡고 있으므로 부르지 않는다.
+  if (musicUrl && !isPreviewUrl(musicUrl) && !playerPromise) initMusic();
   // 변경 감지 폴링은 재생이 시작된 뒤 한 번만 걸어둔다(PIN 통과 전에는 돌지 않음).
   if (!pollStarted) { pollStarted = true; setInterval(pollForUpdates, POLL_MS); }
   // 댓글·좋아요도 재생이 시작된 뒤(=볼 자격이 확인된 뒤) 불러온다.
