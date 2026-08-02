@@ -82,6 +82,59 @@
   @media (hover: none), (pointer: coarse) {
     #btn-download { display: none; }
   }
+
+  /* 좋아요·댓글은 숫자를 같이 보여주므로 동그라미가 아니라 알약 모양으로 넓힌다 */
+  .share-view .icon-btn-wide { width: auto; padding: 0 10px; gap: 5px; border-radius: 15px; }
+  .btn-count { font-size: 11.5px; font-weight: 700; line-height: 1; }
+  #btn-like.liked { color: #ff6b7a; }
+
+  /* ---- 실시간 댓글 ---- */
+  /* 사진 위 좌측에 얹는다(아이콘 줄 위쪽). 사진을 가리지 않게 폭을 좁히고 반투명으로. */
+  .comment-pane {
+    position: absolute; left: 16px; bottom: 62px; z-index: 6;
+    width: min(320px, calc(100% - 32px)); max-height: min(52vh, 420px);
+    display: flex; flex-direction: column;
+    background: rgba(8, 12, 20, 0.72); backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 12px;
+    overflow: hidden;
+  }
+  .comment-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+  }
+  .comment-title { font-size: 12px; font-weight: 700; color: rgba(255,255,255,0.85); letter-spacing: 0.3px; }
+  .comment-close {
+    background: none; border: none; color: rgba(255,255,255,0.6); cursor: pointer;
+    font-size: 13px; padding: 0 2px; line-height: 1;
+  }
+  .comment-close:hover { color: #fff; background: none; filter: none; }
+  .comment-list {
+    flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px;
+    display: flex; flex-direction: column; gap: 7px;
+    -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  }
+  .comment-item { font-size: 12.5px; line-height: 1.45; color: #f1f5fb; }
+  .comment-item .who { font-weight: 700; color: var(--accent); margin-right: 5px; }
+  .comment-item .when { color: rgba(255,255,255,0.42); font-size: 10.5px; margin-left: 5px; }
+  /* 방금 새로 도착한 댓글은 살짝 밝게 떠오르게 해 눈에 띄도록 */
+  .comment-item.fresh { animation: cmtIn 1.6s ease-out; }
+  @keyframes cmtIn {
+    from { background: rgba(138,180,255,0.22); }
+    to   { background: transparent; }
+  }
+  .comment-empty { font-size: 12px; color: rgba(255,255,255,0.45); }
+  .comment-form { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid rgba(255,255,255,0.10); }
+  .comment-form input {
+    flex: 1; min-width: 0; font-size: 12.5px; padding: 7px 9px; border-radius: 8px;
+    background: rgba(255,255,255,0.09); border: 1px solid rgba(255,255,255,0.14); color: #fff;
+    font-family: inherit;
+  }
+  .comment-send { padding: 7px 11px; font-size: 12px; font-weight: 700; border-radius: 8px; }
+  .comment-note { padding: 0 10px 8px; font-size: 10.5px; color: rgba(255,255,255,0.45); line-height: 1.5; }
+  /* 전체화면일 때도 그대로 보인다(사진만 보고 싶으면 ✕로 닫으면 된다) */
+  @media (max-width: 600px) {
+    .comment-pane { bottom: 58px; max-height: 44vh; }
+  }
 </style>
 </head>
 <body>
@@ -173,6 +226,38 @@
           <path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 20h16"/>
         </svg>
       </button>
+
+      <!-- 좋아요 (로그인 없이도 누를 수 있다) -->
+      <button id="btn-like" class="icon-btn icon-btn-wide" title="좋아요">
+        <svg class="icon-heart" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 20s-7-4.4-7-9.3A4 4 0 0 1 12 7a4 4 0 0 1 7 3.7C19 15.6 12 20 12 20z"/>
+        </svg>
+        <span id="like-count" class="btn-count">0</span>
+      </button>
+
+      <!-- 댓글 열기/닫기 (사진을 보면서 바로 쓸 수 있다) -->
+      <button id="btn-comments" class="icon-btn icon-btn-wide" title="댓글">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a7.5 7.5 0 0 1-7.5 7.5H8l-4 3v-4.6A7.5 7.5 0 0 1 13.5 4.5 7.5 7.5 0 0 1 21 12z"/>
+        </svg>
+        <span id="comment-count" class="btn-count">0</span>
+      </button>
+    </div>
+
+    <!-- 실시간 댓글 — 사진을 보는 중에도 좌측에서 읽고 아래에서 바로 쓸 수 있다.
+         로그인하지 않아도 쓸 수 있고, 그때는 "색깔 동물" 별명이 붙는다. -->
+    <div id="comment-pane" class="comment-pane hidden">
+      <div class="comment-head">
+        <span class="comment-title">함께 남긴 글</span>
+        <button id="btn-comment-close" class="comment-close" title="닫기" aria-label="댓글 닫기">✕</button>
+      </div>
+      <div id="comment-list" class="comment-list"></div>
+      <div class="comment-form">
+        <input id="comment-input" type="text" maxlength="50" placeholder="한마디 남기기 (50자)"
+               autocomplete="off" />
+        <button id="btn-comment-send" class="comment-send">보내기</button>
+      </div>
+      <div id="comment-note" class="comment-note"></div>
     </div>
 
     <div id="share-caption" class="share-caption"></div>

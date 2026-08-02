@@ -337,7 +337,7 @@ async function changeMusic(id) {
 }
 
 async function playSound() {
-  // Spotify 미리듣기(<audio>)를 쓰는 중이면 그쪽 음소거를 푼다.
+  // 미리듣기(<audio>)를 쓰는 중이면 그쪽 음소거를 푼다.
   if (usingPreview()) {
     previewAudio.muted = false;
     try { await previewAudio.play(); } catch { /* 무시 */ }
@@ -371,11 +371,13 @@ function updateMusicBtn() {
   b.title = soundOn ? '소리 끄기' : '소리 켜기';
 }
 
-// ---- Spotify 30초 미리듣기 ----
-// 메인화면에서 Spotify로 고른 곡은 musicUrl이 p.scdn.co의 미리듣기 MP3다.
+// ---- 30초 미리듣기 배경음악 ----
+// 메인화면의 "음악찾기"로 고른 곡은 musicUrl이 30초 미리듣기 오디오 주소다.
 // YouTube 플레이어로는 못 틀기 때문에 <audio>로 반복 재생한다.
 // 공유화면 규칙(기본은 무음, ▶를 눌러야 소리)을 그대로 지키려고 muted로 시작한다.
-const isSpotifyPreview = (u) => /^https?:\/\/p\.scdn\.co\//i.test(String(u || ''));
+// scdn.co는 예전에 Spotify로 만들어 둔 wepic이 계속 재생되도록 남겨둔 것이다.
+const PREVIEW_HOSTS = /^https?:\/\/([\w-]+\.)*(mzstatic\.com|itunes\.apple\.com|scdn\.co)\//i;
+const isPreviewUrl = (u) => PREVIEW_HOSTS.test(String(u || ''));
 let previewAudio = null;
 function startPreviewMusic(url, title) {
   try { ytPlayer?.pauseVideo?.(); } catch { /* 무시 */ } // 둘이 동시에 나지 않게
@@ -387,7 +389,7 @@ function startPreviewMusic(url, title) {
   previewAudio.muted = !soundOn;
   previewAudio.volume = 0.8;
   previewAudio.play().catch(() => { /* 자동재생 차단 — ▶를 누르면 재생된다 */ });
-  musicTitle = shortMusicTitle(title || 'Spotify 미리듣기');
+  musicTitle = shortMusicTitle(title || '미리듣기');
   const b = document.getElementById('btn-music');
   b.style.display = 'flex';
   updateMusicBtn();
@@ -397,7 +399,7 @@ function stopPreviewMusic() {
   if (!previewAudio) return;
   try { previewAudio.pause(); previewAudio.removeAttribute('src'); } catch { /* 무시 */ }
 }
-// 지금 배경음악이 Spotify 미리듣기인가
+// 지금 배경음악이 미리듣기 오디오인가
 const usingPreview = () => !!(previewAudio && previewAudio.src);
 
 // 동영상 소리와 배경음악이 겹치지 않도록, 동영상 재생 중에는 음악을 잠시 멈춘다.
@@ -524,9 +526,9 @@ function applyManifest(data) {
   const newMusic = data.musicUrl || defaultMusicUrl || '';
   if (newMusic !== musicUrl) {
     musicUrl = newMusic;
-    // Spotify 미리듣기(p.scdn.co)면 YouTube 플레이어가 아니라 <audio>로 재생한다.
+    // 미리듣기 주소면 YouTube 플레이어가 아니라 <audio>로 재생한다.
     // 곡목은 주소에서 알 수 없으므로 매니페스트에 저장된 musicTitle을 쓴다.
-    if (isSpotifyPreview(musicUrl)) {
+    if (isPreviewUrl(musicUrl)) {
       startPreviewMusic(musicUrl, data.musicTitle || '');
     } else {
       stopPreviewMusic();
@@ -562,6 +564,168 @@ async function pollForUpdates() {
     resetTimer();
   } catch { /* 네트워크 순단 무시 */ }
 }
+
+// ---- 실시간 댓글 + 좋아요 ----
+// 사진을 보는 중에도 좌측 패널에서 읽고 바로 쓸 수 있다. 로그인하지 않아도 쓸 수 있고,
+// 그때는 서버가 브라우저 쿠키에서 "색깔 동물" 별명을 만들어 붙여준다.
+//
+// "동시에 모두 본다"는 **짧은 주기 폴링**으로 구현했다. 진짜 푸시(WebSocket)는 Cloudflare에서
+// Durable Objects가 필요해 지금 구성(KV·D1·R2)보다 무거워지므로, 패널을 열어둔 동안 3초마다
+// **새로 달린 것만**(after=마지막 id) 받아온다 — 체감상 거의 실시간이고 트래픽도 적다.
+const CMT_POLL_OPEN = 3000;    // 댓글창을 열어둔 동안
+const CMT_POLL_IDLE = 20000;   // 닫아둔 동안(개수만 갱신)
+let lastCommentId = 0;
+let commentsOpen = false;
+let commentTimer = null;
+let likeCount = 0;
+let likedByMe = false;
+let commentTotal = 0;
+
+const cmtListEl = () => document.getElementById('comment-list');
+
+function fmtCommentTime(iso) {
+  const d = new Date(iso);
+  return new Intl.DateTimeFormat('ko-KR', { hour: '2-digit', minute: '2-digit' }).format(d);
+}
+
+function renderLikeUI() {
+  document.getElementById('like-count').textContent = String(likeCount);
+  const b = document.getElementById('btn-like');
+  b.classList.toggle('liked', likedByMe);
+  b.title = likedByMe ? '좋아요 취소' : '좋아요';
+}
+function renderCommentCount() {
+  document.getElementById('comment-count').textContent = String(commentTotal);
+}
+
+// 댓글을 목록에 덧붙인다. fresh=true면 방금 도착한 것처럼 살짝 강조한다.
+function appendComments(list, fresh) {
+  const box = cmtListEl();
+  const empty = box.querySelector('.comment-empty');
+  if (empty && list.length) empty.remove();
+  // 거의 맨 아래를 보고 있었다면 새 글이 와도 계속 아래를 따라가게 한다(읽던 위치는 존중).
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  list.forEach((c) => {
+    if (c.id && c.id <= lastCommentId) return; // 중복 방지(폴링과 내가 쓴 글이 겹칠 수 있다)
+    const item = document.createElement('div');
+    item.className = 'comment-item' + (fresh ? ' fresh' : '');
+    const who = document.createElement('span');
+    who.className = 'who';
+    who.textContent = c.author;
+    item.appendChild(who);
+    item.appendChild(document.createTextNode(c.body));
+    const when = document.createElement('span');
+    when.className = 'when';
+    when.textContent = fmtCommentTime(c.createdAt);
+    item.appendChild(when);
+    box.appendChild(item);
+    if (c.id) lastCommentId = Math.max(lastCommentId, c.id);
+  });
+  if (nearBottom) box.scrollTop = box.scrollHeight;
+}
+
+async function loadComments(initial) {
+  try {
+    const url = `/api/wepic/${encodeURIComponent(shareId)}/comments`
+      + (initial ? '' : `?after=${lastCommentId}`);
+    const r = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+    if (!r.ok) return; // PIN 게이트 등 — 조용히 넘어간다(사진 재생은 계속)
+    const d = await r.json();
+    likeCount = d.likeCount || 0;
+    likedByMe = !!d.likedByMe;
+    renderLikeUI();
+    if (initial) {
+      cmtListEl().innerHTML = '';
+      lastCommentId = 0;
+      if (!d.comments.length) {
+        const e = document.createElement('div');
+        e.className = 'comment-empty';
+        e.textContent = '아직 남긴 글이 없습니다. 첫 글을 남겨보세요.';
+        cmtListEl().appendChild(e);
+      }
+      commentTotal = d.comments.length;
+      appendComments(d.comments, false);
+      cmtListEl().scrollTop = cmtListEl().scrollHeight;
+    } else if (d.comments.length) {
+      commentTotal += d.comments.length;
+      appendComments(d.comments, true);
+    }
+    renderCommentCount();
+  } catch { /* 네트워크 순단 무시 */ }
+}
+
+function scheduleCommentPoll() {
+  if (commentTimer) clearInterval(commentTimer);
+  commentTimer = setInterval(() => loadComments(false), commentsOpen ? CMT_POLL_OPEN : CMT_POLL_IDLE);
+}
+
+function setCommentsOpen(on) {
+  commentsOpen = on;
+  document.getElementById('comment-pane').classList.toggle('hidden', !on);
+  if (on) {
+    loadComments(false);
+    cmtListEl().scrollTop = cmtListEl().scrollHeight;
+  }
+  scheduleCommentPoll();
+}
+document.getElementById('btn-comments').addEventListener('click', () => setCommentsOpen(!commentsOpen));
+document.getElementById('btn-comment-close').addEventListener('click', () => setCommentsOpen(false));
+
+async function sendComment() {
+  const input = document.getElementById('comment-input');
+  const note = document.getElementById('comment-note');
+  const text = input.value.trim();
+  if (!text) return;
+  const btn = document.getElementById('btn-comment-send');
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/api/wepic/${encodeURIComponent(shareId)}/comments`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: text }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { note.textContent = d.error || '남기지 못했습니다.'; return; }
+    input.value = '';
+    note.textContent = '';
+    commentTotal += 1;
+    appendComments([d.comment], true);
+    renderCommentCount();
+  } catch (err) {
+    note.textContent = '남기지 못했습니다: ' + err.message;
+  } finally {
+    btn.disabled = false;
+    input.focus();
+  }
+}
+document.getElementById('btn-comment-send').addEventListener('click', sendComment);
+document.getElementById('comment-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); sendComment(); }
+});
+// 글을 쓰는 동안에는 사진이 넘어가지 않게 잠시 멈춘다(쓰다가 화면이 바뀌면 산만하다).
+document.getElementById('comment-input').addEventListener('focus', () => {
+  if (!slidePaused) { setSlidePaused(true); document.getElementById('comment-note').textContent = '글을 쓰는 동안 사진이 멈춥니다.'; }
+});
+
+document.getElementById('btn-like').addEventListener('click', async () => {
+  const b = document.getElementById('btn-like');
+  b.disabled = true;
+  try {
+    const r = await fetch(`/api/wepic/${encodeURIComponent(shareId)}/like`, {
+      method: 'POST', credentials: 'same-origin',
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(d.error || '좋아요를 처리하지 못했습니다.'); return; }
+    likeCount = d.likeCount || 0;
+    likedByMe = !!d.liked;
+    renderLikeUI();
+  } catch (err) {
+    showToast('좋아요를 처리하지 못했습니다: ' + err.message);
+  } finally {
+    b.disabled = false;
+  }
+});
 
 // ---- PIN 입력 게이트 ----
 // PIN이 걸린 공유는 서버가 photos.json과 사진 파일까지 막는다(401 pinRequired).
@@ -644,6 +808,9 @@ async function start() {
   if (musicUrl && !playerPromise) initMusic();
   // 변경 감지 폴링은 재생이 시작된 뒤 한 번만 걸어둔다(PIN 통과 전에는 돌지 않음).
   if (!pollStarted) { pollStarted = true; setInterval(pollForUpdates, POLL_MS); }
+  // 댓글·좋아요도 재생이 시작된 뒤(=볼 자격이 확인된 뒤) 불러온다.
+  await loadComments(true);
+  scheduleCommentPoll();
   return true;
 }
 

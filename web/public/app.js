@@ -25,7 +25,7 @@ function stopSlideshowPlayback() {
   try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* 무시 */ }
   v.classList.remove('active');
   try { ytPlayer?.pauseVideo?.(); } catch { /* 무시 */ }
-  try { previewAudio?.pause?.(); } catch { /* 무시 */ } // Spotify 미리듣기도 함께 멈춘다
+  try { previewAudio?.pause?.(); } catch { /* 무시 */ } // 미리듣기 오디오도 함께 멈춘다
   musicPlaying = false;
   syncMusicButton();
 }
@@ -767,12 +767,13 @@ async function loadBgMusic(url) {
   }, 900);
 }
 
-// ---------- Spotify 30초 미리듣기 ----------
-// Spotify는 웹에서 전체 곡을 틀려면 유료 계정 + Web Playback SDK가 필요하다. 여기서는
-// 공개 API가 주는 **30초 미리듣기 MP3**(p.scdn.co)를 <audio>로 반복 재생한다.
-// musicUrl 한 칸에 YouTube 링크와 Spotify 미리듣기 URL이 모두 들어올 수 있어, 주소를 보고
-// 어느 쪽인지 판단한다(별도 필드를 두지 않아 기존 액자·공유화면과 그대로 호환된다).
-const isSpotifyPreview = (u) => /^https?:\/\/p\.scdn\.co\//i.test(String(u || ''));
+// ---------- 음악찾기 30초 미리듣기 ----------
+// 검색으로 고른 곡은 **30초 미리듣기 오디오 URL**이라 YouTube 플레이어로는 못 틀고
+// <audio>로 반복 재생한다. musicUrl 한 칸에 YouTube 링크와 미리듣기 URL이 모두 들어올 수
+// 있어 주소를 보고 어느 쪽인지 판단한다(별도 필드를 두지 않아 기존 wepic과 그대로 호환).
+// p.scdn.co는 예전에 Spotify로 만들어 둔 wepic이 계속 재생되도록 남겨둔 것이다.
+const PREVIEW_HOSTS = /^https?:\/\/([\w-]+\.)*(mzstatic\.com|itunes\.apple\.com|scdn\.co)\//i;
+const isPreviewUrl = (u) => PREVIEW_HOSTS.test(String(u || ''));
 let previewAudio = null;
 function ensurePreviewAudio() {
   if (!previewAudio) {
@@ -783,10 +784,10 @@ function ensurePreviewAudio() {
   }
   return previewAudio;
 }
-// 지금 로드된 배경음악이 Spotify 미리듣기인가(=YouTube 플레이어가 아니라 <audio>를 쓰는가)
-const musicIsPreview = () => !!(previewAudio && previewAudio.src && musicLoaded && isSpotifyPreview(previewAudio.src));
+// 지금 로드된 배경음악이 미리듣기 오디오인가(=YouTube 플레이어가 아니라 <audio>를 쓰는가)
+const musicIsPreview = () => !!(previewAudio && previewAudio.src && musicLoaded && isPreviewUrl(previewAudio.src));
 
-async function loadSpotifyPreview(url, title) {
+async function loadPreviewMusic(url, title) {
   const a = ensurePreviewAudio();
   a.src = url;
   a.volume = Number(document.getElementById('music-volume').value) / 100;
@@ -794,7 +795,7 @@ async function loadSpotifyPreview(url, title) {
   try { ytPlayer?.pauseVideo?.(); } catch { /* 무시 */ }
   loadedVideoId = null;
   musicLoaded = true;
-  musicTitle = shortMusicTitle(title || 'Spotify 미리듣기');
+  musicTitle = shortMusicTitle(title || '미리듣기');
   document.getElementById('music-title').textContent = musicTitle + ' (30초 미리듣기)';
   try {
     await a.play();
@@ -806,7 +807,7 @@ async function loadSpotifyPreview(url, title) {
   refreshCaption();
 }
 
-// 재생/일시정지 토글 — YouTube든 Spotify 미리듣기든 같은 버튼으로 다룬다.
+// 재생/일시정지 토글 — YouTube든 미리듣기든 같은 버튼으로 다룬다.
 function toggleMusicPlayback() {
   if (musicIsPreview()) {
     const a = ensurePreviewAudio();
@@ -822,16 +823,16 @@ function toggleMusicPlayback() {
 // "▶ 재생하기" 버튼: 처음이거나 링크가 바뀌었으면 로드/재생, 이미 로드됐으면 재생↔일시정지 토글
 document.getElementById('btn-music-load').addEventListener('click', () => {
   const url = document.getElementById('music-url').value.trim();
-  // Spotify 미리듣기 주소가 들어와 있으면 그것으로 재생한다(팝업에서 고르면 이 칸이 채워진다).
-  if (isSpotifyPreview(url)) {
+  // 미리듣기 주소가 들어와 있으면 그것으로 재생한다(팝업에서 고르면 이 칸이 채워진다).
+  if (isPreviewUrl(url)) {
     if (previewAudio && previewAudio.src === url && musicLoaded) toggleMusicPlayback();
-    else loadSpotifyPreview(url, musicTitle);
+    else loadPreviewMusic(url, musicTitle);
     return;
   }
   const id = url ? extractYouTubeId(url) : null;
   if (!musicLoaded || musicIsPreview() || (id && id !== loadedVideoId)) {
-    if (!url) { showToast('음악 링크를 입력하거나 Spotify 버튼으로 곡을 고르세요.'); return; }
-    if (!id) { showToast('YouTube 링크가 아닙니다. Spotify 곡은 옆의 Spotify 버튼으로 골라주세요.'); return; }
+    if (!url) { showToast('음악 링크를 붙여넣거나 "음악찾기"로 곡을 고르세요.'); return; }
+    if (!id) { showToast('YouTube 링크가 아닙니다. 옆의 "음악찾기"로 곡을 골라주세요.'); return; }
     loadBgMusic(url);
     return;
   }
@@ -852,61 +853,61 @@ document.getElementById('btn-music-clear').addEventListener('click', () => {
   const i = document.getElementById('music-url'); i.value = ''; i.focus();
 });
 
-// ---------- Spotify 곡 찾기 팝업 ----------
-const spotifyModal = document.getElementById('spotify-modal');
-document.getElementById('btn-music-spotify').addEventListener('click', () => {
-  spotifyModal.classList.remove('hidden');
-  document.getElementById('spotify-q').focus();
+// ---------- 음악찾기 팝업 ----------
+const musicModal = document.getElementById('music-modal');
+document.getElementById('btn-music-find').addEventListener('click', () => {
+  musicModal.classList.remove('hidden');
+  document.getElementById('music-q').focus();
 });
-document.getElementById('btn-spotify-close').addEventListener('click', (e) => {
-  e.preventDefault(); spotifyModal.classList.add('hidden');
+document.getElementById('btn-music-close').addEventListener('click', (e) => {
+  e.preventDefault(); musicModal.classList.add('hidden');
 });
-spotifyModal.addEventListener('click', (e) => { if (e.target === spotifyModal) spotifyModal.classList.add('hidden'); });
-document.getElementById('spotify-q').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); searchSpotify(); }
+musicModal.addEventListener('click', (e) => { if (e.target === musicModal) musicModal.classList.add('hidden'); });
+document.getElementById('music-q').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); searchMusic(); }
 });
-document.getElementById('btn-spotify-search').addEventListener('click', searchSpotify);
+document.getElementById('btn-music-search').addEventListener('click', searchMusic);
 
-async function searchSpotify() {
-  const q = document.getElementById('spotify-q').value.trim();
-  const statusEl = document.getElementById('spotify-status');
-  const listEl = document.getElementById('spotify-results');
+async function searchMusic() {
+  const q = document.getElementById('music-q').value.trim();
+  const statusEl = document.getElementById('music-status');
+  const listEl = document.getElementById('music-results');
   if (!q) { statusEl.textContent = '검색어를 입력하세요.'; return; }
   listEl.innerHTML = '';
   statusEl.textContent = '검색 중...';
   try {
-    const r = await api(`/api/spotify/search?q=${encodeURIComponent(q)}`);
+    const r = await api(`/api/music/search?q=${encodeURIComponent(q)}`);
     if (!r.tracks.length) {
       // 미리듣기가 없는 곡은 배경음악으로 쓸 수 없어 서버에서 걸러진다 → 왜 비었는지 알려준다.
       statusEl.textContent = r.totalFound
-        ? `${r.totalFound}곡을 찾았지만 30초 미리듣기를 제공하는 곡이 없습니다. 다른 검색어로 시도해보세요.`
+        ? `${r.totalFound}곡을 찾았지만 미리듣기를 제공하는 곡이 없습니다. 다른 검색어로 시도해보세요.`
         : '검색 결과가 없습니다.';
       return;
     }
     statusEl.textContent = `미리듣기 가능한 ${r.tracks.length}곡`;
-    r.tracks.forEach((t) => listEl.appendChild(spotifyRow(t)));
+    r.tracks.forEach((t) => listEl.appendChild(musicRow(t)));
   } catch (err) {
     statusEl.textContent = '검색 실패: ' + err.message;
   }
 }
 
-function spotifyRow(t) {
+function musicRow(t) {
   const row = document.createElement('div');
-  row.className = 'spotify-row';
+  row.className = 'music-pick-row';
   if (t.image) {
     const img = document.createElement('img');
-    img.className = 'spotify-cover';
+    img.className = 'music-pick-cover';
     img.src = t.image;
     img.alt = '';
     row.appendChild(img);
   }
   const meta = document.createElement('div');
-  meta.className = 'spotify-meta';
+  meta.className = 'music-pick-meta';
   const name = document.createElement('div');
-  name.className = 'spotify-name';
+  name.className = 'music-pick-name';
   name.textContent = t.name;
   const artist = document.createElement('div');
-  artist.className = 'spotify-artist';
+  artist.className = 'music-pick-artist';
   artist.textContent = t.artist;
   meta.append(name, artist);
   row.appendChild(meta);
@@ -916,8 +917,8 @@ function spotifyRow(t) {
   pick.textContent = '이 곡으로';
   pick.addEventListener('click', () => {
     document.getElementById('music-url').value = t.previewUrl;
-    loadSpotifyPreview(t.previewUrl, `${t.name} - ${t.artist}`);
-    spotifyModal.classList.add('hidden');
+    loadPreviewMusic(t.previewUrl, `${t.name} - ${t.artist}`);
+    musicModal.classList.add('hidden');
     showToast('배경음악을 바꿨습니다. 30초 미리듣기가 반복 재생됩니다.');
   });
   row.appendChild(pick);
@@ -1112,7 +1113,7 @@ async function pushShare() {
       }
       form.append('meta', JSON.stringify(meta));
       form.append('musicUrl', musicUrl);
-      // Spotify 미리듣기는 주소만으로 곡 제목을 알 수 없어(YouTube는 플레이어가 알려준다)
+      // 미리듣기는 주소만으로 곡 제목을 알 수 없어(YouTube는 플레이어가 알려준다)
       // 지금 화면에 표시된 제목을 함께 저장한다 → 공유화면에서도 곡목이 보인다.
       form.append('musicTitle', musicTitle || '');
       form.append('frameName', currentFrameName()); // 이 wepic의 이름(화면 입력칸)
@@ -1135,7 +1136,7 @@ async function pushShare() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           items, musicUrl, title, intervalSec, effect: slideEffect, pin, isPublic,
-          musicTitle: musicTitle || '', // Spotify 미리듣기용 곡목 스냅샷(위 blob 경로 주석 참고)
+          musicTitle: musicTitle || '', // 미리듣기용 곡목 스냅샷(위 blob 경로 주석 참고)
           frameName: currentFrameName(), // 이 wepic의 이름(화면 입력칸)
         }),
       });
@@ -1372,7 +1373,8 @@ function feedCard(s) {
 
   const meta = document.createElement('div');
   meta.className = 'feed-card-meta';
-  meta.textContent = `${s.author} · ${feedDateLabel(s.updatedAt)} · 사진 ${s.count}장`;
+  meta.textContent = `${s.author} · ${feedDateLabel(s.updatedAt)} · 사진 ${s.count}장`
+    + (s.commentCount ? ` · 댓글 ${s.commentCount}` : '');
   body.appendChild(meta);
 
   const likeBtn = document.createElement('button');
@@ -1400,15 +1402,11 @@ function setFeedLikeBtnContent(btn, liked, count) {
   btn.appendChild(document.createTextNode(String(count)));
 }
 
-// 비로그인 상태에서 누르면 안내 후 로그인 화면으로 보낸다. 로그인 상태면 서버에 토글 요청.
+// 좋아요는 **로그인하지 않아도** 누를 수 있다(공유화면 방문자 대부분이 비로그인이라,
+// 로그인만 요구하면 사실상 아무도 못 누른다). 비로그인은 브라우저 쿠키로 중복을 막는다.
 async function toggleFeedLike(s, btn) {
-  if (!isLoggedIn) {
-    showToast('로그인한 사용자만 좋아요와 댓글을 남길 수 있습니다.');
-    selectPanel('login');
-    return;
-  }
   try {
-    const r = await api(`/api/public/shares/${encodeURIComponent(s.id)}/like`, { method: 'POST' });
+    const r = await api(`/api/wepic/${encodeURIComponent(s.id)}/like`, { method: 'POST' });
     s.likedByMe = r.liked;
     s.likeCount = r.likeCount;
     btn.classList.toggle('liked', r.liked);

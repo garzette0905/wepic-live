@@ -783,13 +783,22 @@ async function publicShares(request, env) {
   const shares = await listShares(env, (m) => m.isPublic === true);
   const ids = shares.map((s) => s.id);
   const likeCounts = {};
+  const commentCounts = {};
   let likedByMe = new Set();
   if (ids.length) {
     const ph = ids.map(() => '?').join(',');
-    const countRows = await env.DB.prepare(
-      `SELECT share_id, COUNT(*) as cnt FROM share_likes WHERE share_id IN (${ph}) GROUP BY share_id`
+    // 좋아요는 회원(share_likes)과 비로그인 방문자(share_likes_anon)를 합해서 센다.
+    for (const table of ['share_likes', 'share_likes_anon']) {
+      const rows = await env.DB.prepare(
+        `SELECT share_id, COUNT(*) as cnt FROM ${table} WHERE share_id IN (${ph}) GROUP BY share_id`
+      ).bind(...ids).all();
+      for (const r of rows.results || []) likeCounts[r.share_id] = (likeCounts[r.share_id] || 0) + r.cnt;
+    }
+    // 카드에 댓글 수도 함께 보여준다(들어가 보지 않아도 이야기가 있는지 알 수 있게).
+    const cmtRows = await env.DB.prepare(
+      `SELECT share_id, COUNT(*) as cnt FROM share_comments WHERE share_id IN (${ph}) GROUP BY share_id`
     ).bind(...ids).all();
-    for (const r of countRows.results || []) likeCounts[r.share_id] = r.cnt;
+    for (const r of cmtRows.results || []) commentCounts[r.share_id] = r.cnt;
 
     const sess = await getSession(request, env);
     const userId = sess.data?.userId;
@@ -798,6 +807,14 @@ async function publicShares(request, env) {
         `SELECT share_id FROM share_likes WHERE user_id = ? AND share_id IN (${ph})`
       ).bind(userId, ...ids).all();
       likedByMe = new Set((likedRows.results || []).map((r) => r.share_id));
+    } else {
+      const vid = parseCookies(request)[VISITOR_COOKIE];
+      if (vid) {
+        const likedRows = await env.DB.prepare(
+          `SELECT share_id FROM share_likes_anon WHERE visitor_id = ? AND share_id IN (${ph})`
+        ).bind(vid, ...ids).all();
+        likedByMe = new Set((likedRows.results || []).map((r) => r.share_id));
+      }
     }
   }
   return json({
@@ -810,27 +827,165 @@ async function publicShares(request, env) {
       updatedAt: s.updatedAt,
       likeCount: likeCounts[s.id] || 0,
       likedByMe: likedByMe.has(s.id),
+      commentCount: commentCounts[s.id] || 0,
     })),
   });
 }
 
-// 좋아요 토글(있으면 취소, 없으면 추가). 전체공유가 아닌 액자에는 걸 수 없다.
-async function togglePublicLike(env, id, userId) {
-  if (!/^[\w-]{6,}$/.test(id)) return json({ error: '잘못된 id' }, 400);
+// ---------- 방문자 신원 (로그인하지 않은 사람) ----------
+// 댓글·좋아요를 로그인 없이 쓸 수 있게 하려면 "같은 사람"을 알아볼 방법이 필요하다.
+// 브라우저에 wvid 쿠키를 하나 심고, 별명은 그 값에서 **계산해서** 만든다(저장하지 않는다)
+// → 같은 브라우저면 늘 같은 별명이 나오고, 서버에 별명 표를 둘 필요가 없다.
+const VISITOR_COOKIE = 'wvid';
+const visitorCookie = (vid) =>
+  `${VISITOR_COOKIE}=${vid}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${365 * 24 * 60 * 60}`;
+
+const NICK_COLORS = ['빨간', '주황', '노란', '초록', '파란', '남색', '보라', '분홍',
+  '하늘', '연두', '금빛', '은빛', '하얀', '검은', '민트', '살구'];
+const NICK_ANIMALS = ['여우', '고양이', '강아지', '토끼', '사슴', '곰', '판다', '펭귄',
+  '돌고래', '부엉이', '다람쥐', '호랑이', '코알라', '수달', '거북이', '고래', '너구리', '앵무새'];
+// 쿠키 값에서 별명을 뽑는다(같은 방문자 = 같은 별명).
+function nicknameOf(vid) {
+  let h = 0;
+  for (let i = 0; i < vid.length; i++) h = (h * 31 + vid.charCodeAt(i)) >>> 0;
+  // ⚠️ 반드시 >>>(부호 없는 시프트)를 쓴다. >>를 쓰면 h가 2^31을 넘을 때 음수가 되어
+  //    음수 % 길이 = 음수 인덱스가 되고 이름이 "검은 undefined"처럼 나온다.
+  return `${NICK_COLORS[h % NICK_COLORS.length]} ${NICK_ANIMALS[(h >>> 8) % NICK_ANIMALS.length]}`;
+}
+// 요청에서 방문자를 알아낸다. 쿠키가 없으면 새로 만들고, 응답에 실어 보낼 쿠키도 함께 돌려준다.
+function visitorOf(request) {
+  const existing = parseCookies(request)[VISITOR_COOKIE];
+  if (existing && /^[\w-]{8,64}$/.test(existing)) return { vid: existing, setCookie: null };
+  const vid = randomId(16);
+  return { vid, setCookie: visitorCookie(vid) };
+}
+
+// ---------- wepic 좋아요 / 댓글 ----------
+// 볼 수 있는 wepic이면 좋아요·댓글도 쓸 수 있다. PIN이 걸린 wepic은 PIN을 통과해야 하므로
+// canViewShare로 함께 막는다(그렇지 않으면 링크만 알면 남의 비공개 wepic에 글을 남길 수 있다).
+async function requireViewableShare(request, env, id) {
+  if (!/^[\w-]{6,}$/.test(id)) return { error: json({ error: '잘못된 id' }, 400) };
   const m = await readManifest(env, id);
-  if (!m || !m.isPublic) return json({ error: '없는 공유입니다.' }, 404);
-  const existing = await env.DB.prepare(
-    'SELECT id FROM share_likes WHERE share_id = ?1 AND user_id = ?2'
-  ).bind(id, userId).first();
-  if (existing) {
-    await env.DB.prepare('DELETE FROM share_likes WHERE share_id = ?1 AND user_id = ?2').bind(id, userId).run();
-  } else {
-    await env.DB.prepare(
-      'INSERT INTO share_likes (share_id, user_id, created_at) VALUES (?1, ?2, ?3)'
-    ).bind(id, userId, new Date().toISOString()).run();
+  if (!m) return { error: json({ error: '없는 wepic입니다.' }, 404) };
+  if (!(await canViewShare(request, env, id, m))) {
+    return { error: json({ error: 'PIN 번호가 필요합니다.', pinRequired: true }, 401) };
   }
-  const row = await env.DB.prepare('SELECT COUNT(*) as cnt FROM share_likes WHERE share_id = ?1').bind(id).first();
-  return json({ ok: true, liked: !existing, likeCount: row?.cnt || 0 });
+  return { manifest: m };
+}
+
+// 좋아요 수(회원 + 비로그인 방문자를 합산)와 "내가 눌렀는지"
+async function likeStateOf(env, id, userId, vid) {
+  const a = await env.DB.prepare('SELECT COUNT(*) as c FROM share_likes WHERE share_id = ?1').bind(id).first();
+  const b = await env.DB.prepare('SELECT COUNT(*) as c FROM share_likes_anon WHERE share_id = ?1').bind(id).first();
+  let mine = null;
+  if (userId) {
+    mine = await env.DB.prepare('SELECT id FROM share_likes WHERE share_id = ?1 AND user_id = ?2')
+      .bind(id, userId).first();
+  } else if (vid) {
+    mine = await env.DB.prepare('SELECT id FROM share_likes_anon WHERE share_id = ?1 AND visitor_id = ?2')
+      .bind(id, vid).first();
+  }
+  return { likeCount: (a?.c || 0) + (b?.c || 0), likedByMe: !!mine };
+}
+
+// 좋아요 토글. 로그인했으면 회원으로, 아니면 방문자 쿠키로 중복을 막는다.
+async function toggleShareLike(request, env, id) {
+  const guard = await requireViewableShare(request, env, id);
+  if (guard.error) return guard.error;
+  const sess = await getSession(request, env);
+  const userId = sess.data?.userId || null;
+  const visitor = userId ? { vid: null, setCookie: null } : visitorOf(request);
+  const now = new Date().toISOString();
+
+  if (userId) {
+    const has = await env.DB.prepare('SELECT id FROM share_likes WHERE share_id = ?1 AND user_id = ?2')
+      .bind(id, userId).first();
+    if (has) await env.DB.prepare('DELETE FROM share_likes WHERE share_id = ?1 AND user_id = ?2').bind(id, userId).run();
+    else await env.DB.prepare('INSERT INTO share_likes (share_id, user_id, created_at) VALUES (?1, ?2, ?3)')
+      .bind(id, userId, now).run();
+  } else {
+    const has = await env.DB.prepare('SELECT id FROM share_likes_anon WHERE share_id = ?1 AND visitor_id = ?2')
+      .bind(id, visitor.vid).first();
+    if (has) await env.DB.prepare('DELETE FROM share_likes_anon WHERE share_id = ?1 AND visitor_id = ?2')
+      .bind(id, visitor.vid).run();
+    else await env.DB.prepare('INSERT INTO share_likes_anon (share_id, visitor_id, created_at) VALUES (?1, ?2, ?3)')
+      .bind(id, visitor.vid, now).run();
+  }
+  const state = await likeStateOf(env, id, userId, visitor.vid);
+  return json({ ok: true, liked: state.likedByMe, likeCount: state.likeCount }, 200,
+    visitor.setCookie ? { 'Set-Cookie': visitor.setCookie } : {});
+}
+
+// 댓글 목록. after를 주면 그 id 뒤에 새로 달린 것만 준다(실시간 갱신용 — 매번 전체를
+// 다시 받지 않아 트래픽이 적다). 좋아요 상태도 같이 실어 보내 요청 수를 줄인다.
+const COMMENT_MAX = 50;        // 글자 수 제한
+const COMMENT_PAGE = 100;      // 처음 불러올 최대 개수
+async function listComments(request, env, id, url) {
+  const guard = await requireViewableShare(request, env, id);
+  if (guard.error) return guard.error;
+  const after = Number(url.searchParams.get('after') || 0);
+  const sess = await getSession(request, env);
+  const userId = sess.data?.userId || null;
+  const vid = parseCookies(request)[VISITOR_COOKIE] || null;
+
+  let rows;
+  if (after > 0) {
+    rows = await env.DB.prepare(
+      'SELECT id, author, body, created_at FROM share_comments WHERE share_id = ?1 AND id > ?2 ORDER BY id ASC LIMIT 200'
+    ).bind(id, after).all();
+  } else {
+    // 처음에는 최근 것부터 COMMENT_PAGE개를 가져와 오래된 순으로 되돌려 준다(대화처럼 읽히게).
+    const r = await env.DB.prepare(
+      'SELECT id, author, body, created_at FROM share_comments WHERE share_id = ?1 ORDER BY id DESC LIMIT ?2'
+    ).bind(id, COMMENT_PAGE).all();
+    rows = { results: (r.results || []).slice().reverse() };
+  }
+  const like = await likeStateOf(env, id, userId, vid);
+  return json({
+    comments: (rows.results || []).map((c) => ({
+      id: c.id, author: c.author, body: c.body, createdAt: c.created_at,
+    })),
+    ...like,
+  });
+}
+
+// 댓글 쓰기 — 로그인하지 않아도 쓸 수 있다.
+// 로그인했으면 회원 이름, 아니면 방문자 쿠키에서 만든 "색깔 동물" 별명으로 남는다.
+const CMT_RATE_MAX = 10;       // 같은 사람이 1분에 남길 수 있는 댓글 수
+const CMT_RATE_WINDOW = 60;
+async function addComment(request, env, id) {
+  const guard = await requireViewableShare(request, env, id);
+  if (guard.error) return guard.error;
+
+  const body = await request.json().catch(() => ({}));
+  const text = String(body.body || '').replace(/\s+/g, ' ').trim();
+  if (!text) return json({ error: '내용을 입력하세요.' }, 400);
+  if (text.length > COMMENT_MAX) {
+    return json({ error: `${COMMENT_MAX}자까지 쓸 수 있습니다.` }, 400);
+  }
+
+  const sess = await getSession(request, env);
+  const user = await getUserById(env, sess.data?.userId);
+  const visitor = user ? { vid: null, setCookie: null } : visitorOf(request);
+
+  // 도배 방지: 같은 회원/방문자 기준으로 1분에 CMT_RATE_MAX개까지.
+  const rateKey = `cmt:${user ? 'u' + user.id : 'v' + visitor.vid}`;
+  const used = Number((await env.SESSIONS.get(rateKey)) || 0);
+  if (used >= CMT_RATE_MAX) {
+    return json({ error: '댓글을 너무 빠르게 남기고 있습니다. 잠시 후 다시 시도해주세요.' }, 429);
+  }
+  await env.SESSIONS.put(rateKey, String(used + 1), { expirationTtl: CMT_RATE_WINDOW });
+
+  const author = user ? (user.name || '위픽 사용자') : nicknameOf(visitor.vid);
+  const now = new Date().toISOString();
+  const res = await env.DB.prepare(
+    'INSERT INTO share_comments (share_id, user_id, visitor_id, author, body, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)'
+  ).bind(id, user ? user.id : null, user ? null : visitor.vid, author, text, now).run();
+
+  return json({
+    ok: true,
+    comment: { id: res.meta?.last_row_id || 0, author, body: text, createdAt: now },
+  }, 200, visitor.setCookie ? { 'Set-Cookie': visitor.setCookie } : {});
 }
 
 // "사진 보기" 예시 콘텐츠 등록(관리자 전용, 1회성). 원래 있던 데모 사진(web/public/demo/)을
@@ -937,8 +1092,15 @@ async function apiWithdraw(request, env, sess, user) {
   } while (cursor);
   for (const id of mine) await deleteShare(env, id);
 
-  // (2) 좋아요 기록 (남의 공유에 눌러둔 것도 함께 정리)
+  // (2) 좋아요·댓글 기록 (남의 wepic에 남긴 것도 함께 정리)
   await env.DB.prepare('DELETE FROM share_likes WHERE user_id = ?1').bind(user.id).run();
+  await env.DB.prepare('DELETE FROM share_comments WHERE user_id = ?1').bind(user.id).run();
+  // 내가 만든 wepic에 남들이 달아둔 좋아요·댓글도 wepic과 함께 사라져야 한다.
+  for (const sid of mine) {
+    await env.DB.prepare('DELETE FROM share_likes WHERE share_id = ?1').bind(sid).run();
+    await env.DB.prepare('DELETE FROM share_likes_anon WHERE share_id = ?1').bind(sid).run();
+    await env.DB.prepare('DELETE FROM share_comments WHERE share_id = ?1').bind(sid).run();
+  }
   // (3) 회원 행
   await env.DB.prepare('DELETE FROM users WHERE id = ?1').bind(user.id).run();
   // (4) 세션 — 쿠키까지 지워 즉시 로그아웃 상태가 되게 한다.
@@ -1017,56 +1179,51 @@ async function adminSetQuota(request, env, id) {
   return json({ ok: true, quotaBytes: bytes || DEFAULT_QUOTA_BYTES, isDefaultQuota: bytes === null });
 }
 
-// ---------- Spotify (30초 미리듣기) ----------
-// Client Credentials 플로우로 앱 토큰을 받아 곡을 검색한다(사용자 Spotify 로그인 불필요).
-// 반환하는 preview_url은 Spotify가 제공하는 **30초 미리듣기 MP3**다 — 전체 곡 재생은
-// Spotify 정책상 웹 임베드/SDK로만 가능하고 유료 계정이 필요해서, 여기서는 미리듣기만 쓴다.
-let spotifyToken = null; // { value, expiresAt } — Worker 인스턴스 메모리에 잠깐 캐시
-const spotifyConfigured = (env) => !!(env.SPOTIFY_CLIENT_ID && env.SPOTIFY_CLIENT_SECRET);
-async function spotifyAccessToken(env) {
-  if (spotifyToken && spotifyToken.expiresAt > Date.now() + 10_000) return spotifyToken.value;
-  const basic = btoa(`${env.SPOTIFY_CLIENT_ID}:${env.SPOTIFY_CLIENT_SECRET}`);
-  const r = await fetch('https://accounts.spotify.com/api/token', {
-    method: 'POST',
-    headers: { Authorization: 'Basic ' + basic, 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'grant_type=client_credentials',
-  });
-  if (!r.ok) throw new Error(`Spotify 토큰 요청 실패 (${r.status})`);
-  const d = await r.json();
-  spotifyToken = { value: d.access_token, expiresAt: Date.now() + (d.expires_in || 3600) * 1000 };
-  return spotifyToken.value;
-}
-
-async function spotifySearch(env, url) {
+// ---------- 음악찾기 (30초 미리듣기) ----------
+// iTunes Search API로 곡을 검색한다. **API 키·앱 등록이 전혀 필요 없는 공개 엔드포인트**라
+// 시크릿을 둘 필요가 없다(예전에 쓰던 Spotify는 앱 등록 + 토큰 발급이 필요했고, 2024년 말
+// 정책 변경으로 신규 앱에는 미리듣기 URL이 내려오지 않는 곡이 많아 갈아탔다).
+//
+// 브라우저에서 직접 부르지 않고 Worker가 대신 호출한다 — iTunes Search API는 CORS 헤더를
+// 주지 않아 브라우저에서 바로 부르면 막히고, 화면 쪽 코드가 외부 서비스를 직접 알 필요도 없다.
+const ITUNES_SEARCH = 'https://itunes.apple.com/search';
+async function musicSearch(env, url) {
   const q = (url.searchParams.get('q') || '').trim();
   if (!q) return json({ error: '검색어를 입력하세요.' }, 400);
-  // 키가 없으면 "서버 오류"가 아니라 아직 준비되지 않았다고 분명히 알려준다
-  // (YouTube는 그대로 쓸 수 있으므로 치명적 오류가 아니다).
-  if (!spotifyConfigured(env)) {
-    return json({ error: 'Spotify 연동이 아직 설정되지 않았습니다. 배경음악은 YouTube 링크를 써주세요.' }, 503);
-  }
-  let token;
+
+  const api = new URL(ITUNES_SEARCH);
+  api.searchParams.set('term', q);
+  api.searchParams.set('media', 'music');
+  api.searchParams.set('entity', 'song');
+  api.searchParams.set('limit', '25');
+  // 한국 스토어 기준으로 찾는다(국내 곡·한글 검색 결과가 훨씬 잘 나온다).
+  api.searchParams.set('country', 'KR');
+
+  let r;
   try {
-    token = await spotifyAccessToken(env);
+    r = await fetch(api.toString(), { headers: { Accept: 'application/json' } });
   } catch (err) {
-    return json({ error: 'Spotify 인증에 실패했습니다: ' + err.message }, 502);
+    return json({ error: '음악 검색 서버에 연결하지 못했습니다: ' + err.message }, 502);
   }
-  const api = new URL('https://api.spotify.com/v1/search');
-  api.searchParams.set('q', q);
-  api.searchParams.set('type', 'track');
-  api.searchParams.set('limit', '20');
-  const r = await fetch(api.toString(), { headers: { Authorization: 'Bearer ' + token } });
-  if (!r.ok) return json({ error: `Spotify 검색 실패 (${r.status})` }, 502);
-  const d = await r.json();
-  const tracks = (d.tracks?.items || []).map((t) => ({
-    id: t.id,
-    name: t.name,
-    artist: (t.artists || []).map((a) => a.name).join(', '),
-    // preview_url이 없는 곡도 많다(권리사 정책·앱 등록 시점에 따라 다름) → 화면에서 걸러 표시한다.
-    previewUrl: t.preview_url || null,
-    image: t.album?.images?.[t.album.images.length - 1]?.url || null,
+  // 분당 호출 한도(약 20회)를 넘기면 403이 온다 → 사용자가 이해할 수 있는 말로 알려준다.
+  if (r.status === 403 || r.status === 429) {
+    return json({ error: '음악 검색 요청이 잠시 많습니다. 조금 뒤에 다시 시도해주세요.' }, 429);
+  }
+  if (!r.ok) return json({ error: `음악 검색 실패 (${r.status})` }, 502);
+
+  let d;
+  try { d = await r.json(); } catch { return json({ error: '음악 검색 응답을 읽지 못했습니다.' }, 502); }
+
+  const tracks = (d.results || []).map((t) => ({
+    id: String(t.trackId || ''),
+    name: t.trackName || '',
+    artist: t.artistName || '',
+    // 30초 미리듣기 m4a. 없는 곡도 있어 아래에서 걸러낸다.
+    previewUrl: t.previewUrl || null,
+    // 60px 앨범 이미지(100px에서 크기만 바꿔 요청). 목록 썸네일용.
+    image: t.artworkUrl60 || t.artworkUrl100 || null,
   }));
-  const playable = tracks.filter((t) => t.previewUrl);
+  const playable = tracks.filter((t) => t.previewUrl && t.name);
   return json({ tracks: playable, totalFound: tracks.length, playableCount: playable.length });
 }
 
@@ -1307,7 +1464,7 @@ async function shareCreate(request, env, token, sess) {
   const body = await request.json().catch(() => ({}));
   const items = Array.isArray(body.items) ? body.items : [];
   const musicUrl = typeof body.musicUrl === 'string' ? body.musicUrl : '';
-  // Spotify 미리듣기는 주소만으로 곡목을 알 수 없어 화면이 보내준 값을 저장한다.
+  // 미리듣기는 주소만으로 곡목을 알 수 없어 화면이 보내준 값을 저장한다.
   const musicTitle = typeof body.musicTitle === 'string' ? body.musicTitle.slice(0, 60) : '';
   // 화면에서 정한 wepic 이름. 새로 만들 때는 이 이름으로 액자를 만들고,
   // 이미 있는 액자면 이름을 바꾸지 않는다(만든 뒤에는 이름 고정).
@@ -1762,9 +1919,9 @@ export default {
         return requireAdmin(request, env, (rq, en) => adminSetQuota(rq, en, mAdminQuota[1]));
       }
 
-      // Spotify 곡 검색 (30초 미리듣기 URL을 돌려준다). 로그인한 회원만.
-      if (p === '/api/spotify/search' && m === 'GET') {
-        return requireMember(request, env, (rq, en) => spotifySearch(en, url));
+      // 음악찾기 — 곡 검색(30초 미리듣기 URL을 돌려준다). 배경음악을 고르는 건 회원만 한다.
+      if (p === '/api/music/search' && m === 'GET') {
+        return requireMember(request, env, (rq, en) => musicSearch(en, url));
       }
 
       // 내 저장용량 사용 현황 / 회원탈퇴
@@ -1780,10 +1937,14 @@ export default {
 
       // "사진 보기": 전체공유(isPublic) 액자 피드. 로그인 없이도 볼 수 있다(Wepic 조회자 대상).
       if (p === '/api/public/shares' && m === 'GET') return publicShares(request, env);
-      const mPubLike = p.match(/^\/api\/public\/shares\/([\w-]{6,})\/like$/);
-      if (mPubLike && m === 'POST') {
-        return requireMember(request, env, (rq, en, sess, user) => togglePublicLike(en, mPubLike[1], user.id));
-      }
+
+      // wepic 좋아요·댓글 — 볼 수 있는 wepic이면 **로그인 없이도** 쓸 수 있다.
+      // (PIN이 걸린 wepic은 PIN을 통과해야 통과한다 — requireViewableShare 참고)
+      const mLike = p.match(/^\/api\/wepic\/([\w-]{6,})\/like$/);
+      if (mLike && m === 'POST') return toggleShareLike(request, env, mLike[1]);
+      const mCmt = p.match(/^\/api\/wepic\/([\w-]{6,})\/comments$/);
+      if (mCmt && m === 'GET') return listComments(request, env, mCmt[1], url);
+      if (mCmt && m === 'POST') return addComment(request, env, mCmt[1]);
 
       // 내 회원정보: 표시 이름만 수정 가능(제공자·이메일·가입일은 읽기 전용)
       if (p === '/api/me' && m === 'PUT') {

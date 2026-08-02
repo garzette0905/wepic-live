@@ -529,8 +529,8 @@
           <input type="text" id="music-url" placeholder="음악 링크 붙여넣기" />
           <button id="btn-music-clear" class="mini-btn" title="입력 지우기">✕</button>
           <button id="btn-music-load" class="mini-btn" title="재생 / 일시정지">▶</button>
-          <!-- Spotify에서 곡을 검색해 고른다(30초 미리듣기). 링크 입력은 위 칸에서 그대로. -->
-          <button id="btn-music-spotify" class="mini-btn spotify-btn" title="Spotify에서 곡 찾기">Spotify</button>
+          <!-- 곡을 검색해 고른다(30초 미리듣기). YouTube 링크 입력은 위 칸에서 그대로. -->
+          <button id="btn-music-find" class="mini-btn music-find-btn" title="곡 검색해서 고르기">음악찾기</button>
         </div>
         <div class="music-row">
           <input type="range" id="music-volume" min="0" max="100" value="60" />
@@ -656,23 +656,25 @@
   <!-- 실시간 공유 링크 팝업은 없앴다(요청): wepic을 만들면 주소가 "사진선택" 섹션에 바로
        표시되고, 복사·삭제는 이름 옆 아이콘(📋·🗑)으로 할 수 있어 팝업이 필요 없다. -->
 
-  <!-- Spotify 곡 찾기 팝업 -->
-  <div id="spotify-modal" class="modal-overlay hidden">
+  <!-- 음악찾기 팝업 -->
+  <div id="music-modal" class="modal-overlay hidden">
     <div class="modal-card">
-      <h2 style="margin:0 0 6px;">Spotify에서 곡 찾기</h2>
+      <h2 style="margin:0 0 6px;">음악찾기</h2>
       <p class="modal-block">
         곡 이름이나 가수를 검색해 배경음악으로 쓸 곡을 고르세요.<br />
-        <b>Spotify는 30초 미리듣기만 제공합니다</b> — 전체 곡을 끝까지 듣고 싶으면 YouTube 링크를 쓰세요.
+        <b>미리듣기 30초가 반복 재생됩니다</b> — 전체 곡을 끝까지 듣고 싶으면 YouTube 링크를 쓰세요.
       </p>
       <div class="share-url-row">
-        <input id="spotify-q" type="text" placeholder="곡 이름 또는 가수" />
-        <button id="btn-spotify-search" class="btn-primary">검색</button>
+        <input id="music-q" type="text" placeholder="곡 이름 또는 가수" />
+        <button id="btn-music-search" class="btn-primary">검색</button>
       </div>
-      <p id="spotify-status" class="panel-muted" style="margin:8px 0 0; font-size:12.5px;"></p>
-      <div id="spotify-results" class="spotify-results"></div>
+      <p id="music-status" class="panel-muted" style="margin:8px 0 0; font-size:12.5px;"></p>
+      <div id="music-results" class="music-pick-results"></div>
       <div class="share-modal-actions">
-        <a href="#" id="btn-spotify-close" class="text-link small">닫기</a>
+        <a href="#" id="btn-music-close" class="text-link small">닫기</a>
       </div>
+      <!-- 검색 출처 표기(작게) — 곡 정보는 iTunes 공개 검색 API에서 온다 -->
+      <p class="hint" style="margin:8px 0 0;">검색 제공: iTunes</p>
     </div>
   </div>
 

@@ -753,18 +753,18 @@ select optgroup {
 .extra-options-caret { color: var(--text-muted); font-size: 11px; }
 .extra-options { display: flex; flex-direction: column; gap: 14px; padding-top: 6px; }
 
-/* Spotify — 배경음악 줄의 버튼과 곡 검색 팝업 */
-.spotify-btn { width: auto; padding: 0 10px; font-weight: 700; color: #1ed760; }
-.spotify-btn:hover { color: #1ed760; background: rgba(30, 215, 96, 0.16); }
-.spotify-results { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 46vh; overflow-y: auto; }
-.spotify-row {
+/* 음악찾기 — 배경음악 줄의 버튼과 곡 검색 팝업 */
+.music-find-btn { width: auto; padding: 0 10px; font-weight: 700; color: var(--accent); }
+.music-find-btn:hover { color: #fff; background: rgba(138, 180, 255, 0.20); }
+.music-pick-results { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 46vh; overflow-y: auto; }
+.music-pick-row {
   display: flex; align-items: center; gap: 10px; padding: 7px 9px;
   background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border); border-radius: 9px;
 }
-.spotify-cover { width: 40px; height: 40px; border-radius: 5px; object-fit: cover; flex: none; }
-.spotify-meta { flex: 1; min-width: 0; }
-.spotify-name { font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.spotify-artist { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-pick-cover { width: 40px; height: 40px; border-radius: 5px; object-fit: cover; flex: none; }
+.music-pick-meta { flex: 1; min-width: 0; }
+.music-pick-name { font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-pick-artist { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* 저장용량(Quota) 막대 — 회원정보 화면과 관리자 회원관리에서 함께 쓴다 */
 .quota-bar {

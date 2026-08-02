@@ -39,10 +39,8 @@ crons = ["0 * * * *"]
 
 # 시크릿은 대시보드(Settings → Variables and secrets, Encrypt)로 등록:
 #   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, KAKAO_CLIENT_ID, KAKAO_CLIENT_SECRET, SESSION_SECRET
-#   SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET  ← 배경음악의 Spotify 곡 검색(30초 미리듣기)용.
-#     https://developer.spotify.com/dashboard 에서 앱을 만들면 Client ID/Secret이 나온다.
-#     사용자 Spotify 로그인은 필요 없다(Client Credentials 플로우로 검색만 한다).
-#     설정하지 않으면 Spotify 버튼이 "준비 중" 안내만 띄우고 YouTube는 그대로 동작한다.
+# 배경음악의 "음악찾기"(30초 미리듣기)는 iTunes Search API를 쓴다 —
+# **API 키·앱 등록이 전혀 필요 없는 공개 엔드포인트**라 추가할 시크릿이 없다.
 # 카카오 값은 카카오 개발자센터(https://developers.kakao.com) > 내 애플리케이션 > 앱 키의
 # "REST API 키"(=KAKAO_CLIENT_ID)와 제품 설정 > 카카오 로그인 > 보안의 Client Secret
 # (=KAKAO_CLIENT_SECRET)에서 발급받는다. 카카오 로그인 > Redirect URI에는

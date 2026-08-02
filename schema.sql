@@ -57,3 +57,31 @@ CREATE TABLE IF NOT EXISTS share_likes (
   UNIQUE (share_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_share_likes_share ON share_likes (share_id);
+
+-- 로그인하지 않은 방문자의 좋아요. 위 share_likes는 user_id가 NOT NULL이라(이미 운영 중인
+-- 표라 컬럼 제약을 바꾸려면 표를 다시 만들어야 한다) 비로그인용은 별도 표로 둔다.
+-- 좋아요 수는 두 표를 합해서 센다. visitor_id는 브라우저에 심는 wvid 쿠키 값이다.
+CREATE TABLE IF NOT EXISTS share_likes_anon (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  share_id   TEXT NOT NULL,
+  visitor_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (share_id, visitor_id)
+);
+CREATE INDEX IF NOT EXISTS idx_share_likes_anon_share ON share_likes_anon (share_id);
+
+-- wepic 댓글. 로그인하지 않은 사람도 남길 수 있어 user_id는 NULL을 허용하고,
+-- 그때는 visitor_id(브라우저 쿠키)로 같은 사람인지 구분한다.
+-- author는 "표시 이름 스냅샷"이다 — 나중에 회원이 이름을 바꿔도 이미 쓴 댓글은 그대로 남고,
+-- 비로그인 방문자의 "색깔 동물" 별명도 여기에 굳는다.
+CREATE TABLE IF NOT EXISTS share_comments (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  share_id   TEXT NOT NULL,
+  user_id    INTEGER,
+  visitor_id TEXT,
+  author     TEXT NOT NULL,
+  body       TEXT NOT NULL,            -- 50자 이내(서버에서 자름)
+  created_at TEXT NOT NULL
+);
+-- 최신 댓글부터 읽고, "내가 본 것 이후"만 가져오는 실시간 갱신에 쓰는 인덱스.
+CREATE INDEX IF NOT EXISTS idx_share_comments_share ON share_comments (share_id, id);
