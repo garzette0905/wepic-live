@@ -868,6 +868,54 @@ document.getElementById('music-q').addEventListener('keydown', (e) => {
 });
 document.getElementById('btn-music-search').addEventListener('click', searchMusic);
 
+// ⚠️ 곡 검색은 **브라우저에서 직접** 한다. 처음에는 Worker가 대신 호출했는데 배포하고 나면
+// 항상 실패했다 — 이 검색 API는 **IP당 분당 약 20회** 제한이라, Worker를 거치면 우리 앱의
+// 모든 사용자가 Cloudflare의 같은 출구 IP를 공유하고(게다가 그 IP는 같은 API를 쓰는 다른
+// Worker들과도 공유된다) 한도가 늘 소진돼 있다. 로컬(wrangler dev)에서는 집 IP로 나가기
+// 때문에 잘 됐고, 그래서 배포 후에야 드러났다.
+// → 브라우저에서 부르면 **사용자마다 자기 IP의 한도**를 쓰므로 이 문제가 사라진다.
+// 이 API는 CORS 헤더를 주지 않지만 JSONP(callback=)를 지원해서 브라우저에서 쓸 수 있다.
+let jsonpSeq = 0;
+function searchMusicDirect(q, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const cbName = `__wepicMusicCb${++jsonpSeq}`;
+    const script = document.createElement('script');
+    let settled = false;
+    const cleanup = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      delete window[cbName];
+      script.remove();
+    };
+    const timer = setTimeout(() => { cleanup(); reject(new Error('검색이 지연되고 있습니다')); }, timeoutMs);
+    window[cbName] = (data) => { const d = data; cleanup(); resolve(d); };
+    script.onerror = () => { cleanup(); reject(new Error('검색 서버에 연결하지 못했습니다')); };
+    const u = new URL('https://itunes.apple.com/search');
+    u.searchParams.set('term', q);
+    u.searchParams.set('media', 'music');
+    u.searchParams.set('entity', 'song');
+    u.searchParams.set('limit', '25');
+    u.searchParams.set('country', 'KR'); // 한국 스토어 기준(국내 곡·한글 검색이 잘 나온다)
+    u.searchParams.set('callback', cbName);
+    script.src = u.toString();
+    document.head.appendChild(script);
+  });
+}
+
+// 검색 응답을 화면이 쓰는 모양으로 정리한다(서버 응답과 같은 형태로 맞춘다).
+function normalizeTracks(results) {
+  const all = (results || []).map((t) => ({
+    id: String(t.trackId || ''),
+    name: t.trackName || '',
+    artist: t.artistName || '',
+    previewUrl: t.previewUrl || null,   // 30초 미리듣기. 없는 곡은 배경음악으로 쓸 수 없다.
+    image: t.artworkUrl60 || t.artworkUrl100 || null,
+  }));
+  const tracks = all.filter((t) => t.previewUrl && t.name);
+  return { tracks, totalFound: all.length };
+}
+
 async function searchMusic() {
   const q = document.getElementById('music-q').value.trim();
   const statusEl = document.getElementById('music-status');
@@ -875,20 +923,30 @@ async function searchMusic() {
   if (!q) { statusEl.textContent = '검색어를 입력하세요.'; return; }
   listEl.innerHTML = '';
   statusEl.textContent = '검색 중...';
+
+  let r = null;
   try {
-    const r = await api(`/api/music/search?q=${encodeURIComponent(q)}`);
-    if (!r.tracks.length) {
-      // 미리듣기가 없는 곡은 배경음악으로 쓸 수 없어 서버에서 걸러진다 → 왜 비었는지 알려준다.
-      statusEl.textContent = r.totalFound
-        ? `${r.totalFound}곡을 찾았지만 미리듣기를 제공하는 곡이 없습니다. 다른 검색어로 시도해보세요.`
-        : '검색 결과가 없습니다.';
+    const d = await searchMusicDirect(q);
+    r = normalizeTracks(d.results);
+  } catch (directErr) {
+    // 브라우저에서 직접 못 받아온 경우(확장 프로그램 차단·사내망 등)에는 서버를 거쳐 한 번 더.
+    try {
+      r = await api(`/api/music/search?q=${encodeURIComponent(q)}`);
+    } catch (proxyErr) {
+      statusEl.textContent = `검색 실패: ${directErr.message} (서버 경유도 실패: ${proxyErr.message})`;
       return;
     }
-    statusEl.textContent = `미리듣기 가능한 ${r.tracks.length}곡`;
-    r.tracks.forEach((t) => listEl.appendChild(musicRow(t)));
-  } catch (err) {
-    statusEl.textContent = '검색 실패: ' + err.message;
   }
+
+  if (!r.tracks.length) {
+    // 미리듣기가 없는 곡은 배경음악으로 쓸 수 없어 걸러진다 → 왜 비었는지 알려준다.
+    statusEl.textContent = r.totalFound
+      ? `${r.totalFound}곡을 찾았지만 미리듣기를 제공하는 곡이 없습니다. 다른 검색어로 시도해보세요.`
+      : '검색 결과가 없습니다.';
+    return;
+  }
+  statusEl.textContent = `미리듣기 가능한 ${r.tracks.length}곡`;
+  r.tracks.forEach((t) => listEl.appendChild(musicRow(t)));
 }
 
 function musicRow(t) {

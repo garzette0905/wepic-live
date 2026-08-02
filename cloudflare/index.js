@@ -1205,11 +1205,15 @@ async function musicSearch(env, url) {
   } catch (err) {
     return json({ error: '음악 검색 서버에 연결하지 못했습니다: ' + err.message }, 502);
   }
-  // 분당 호출 한도(약 20회)를 넘기면 403이 온다 → 사용자가 이해할 수 있는 말로 알려준다.
-  if (r.status === 403 || r.status === 429) {
-    return json({ error: '음악 검색 요청이 잠시 많습니다. 조금 뒤에 다시 시도해주세요.' }, 429);
+  // 상태코드를 반드시 메시지에 남긴다 — 예전에는 403/429를 뭉뚱그려 "요청이 많습니다"로만
+  // 보여줘서, 실제로는 IP 차단이었는데 원인을 알 수 없었다.
+  if (!r.ok) {
+    console.warn('music search upstream', r.status);
+    if (r.status === 429) {
+      return json({ error: `음악 검색 요청이 잠시 많습니다. 조금 뒤에 다시 시도해주세요. (${r.status})` }, 429);
+    }
+    return json({ error: `음악 검색 실패 (${r.status})`, upstreamStatus: r.status }, 502);
   }
-  if (!r.ok) return json({ error: `음악 검색 실패 (${r.status})` }, 502);
 
   let d;
   try { d = await r.json(); } catch { return json({ error: '음악 검색 응답을 읽지 못했습니다.' }, 502); }
