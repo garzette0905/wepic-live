@@ -108,6 +108,9 @@ function selectPanel(name) {
   // "갤러리에서 사진 추가"는 이미 보고 있는 사진이 있을 때만 노출한다.
   if (name === 'photos') {
     document.getElementById('btn-pick-local-add').classList.toggle('hidden', allPhotos.length === 0);
+    // 버튼을 누르는 순간 frames가 준비돼 있어야 "새로 만들기 / 기존 수정"을 물을 수 있다.
+    // (기기 갤러리 경로는 사용자 클릭 안에서 input.click()을 해야 해 await를 걸 수 없다)
+    if (isLoggedIn) loadFrames();
   }
   // "사진 보기": 전체공유 카드 목록을 매번 새로 불러온다(다른 회원이 그새 새로 공개했을 수 있음).
   if (name === 'feed') loadPublicFeed();
@@ -237,10 +240,13 @@ async function startSync() {
     }
     let finalItems = items;
     if (appendMode && allPhotos.length) {
-      // "사진 추가": 기존 사진에 새 사진을 덧붙이고(중복 id 제거) 촬영일 오름차순 정렬
+      // "사진 추가": 기존 사진 순서를 그대로 두고 **맨 뒤에** 덧붙인다(중복 id 제거).
+      // 새 사진의 촬영일이 더 앞서더라도 앞으로 끼어들지 않는다 — 이미 남은 댓글이
+      // 가리키는 사진 번호가 밀리지 않게 하기 위함이다.
       const seen = new Set(allPhotos.map((p) => p.id));
-      const fresh = items.filter((it) => !seen.has(it.id));
-      finalItems = allPhotos.concat(fresh).sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
+      const fresh = items.filter((it) => !seen.has(it.id))
+        .sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
+      finalItems = allPhotos.concat(fresh);
     }
     appendMode = false;
     boot(finalItems);
@@ -429,6 +435,7 @@ function updateMeta(photo) {
   const { main, sub } = formatDate(photo.createTime);
   document.getElementById('cur-date-main').textContent = main;
   document.getElementById('cur-date-sub').textContent = sub;
+  renderPhotoCounter();
   updateFullscreenCaption(photo);
   updateActiveThumb();
   updateProgress();
@@ -493,6 +500,11 @@ async function showCurrent() {
   const im = await preload(photo.fullUrl);
   if (requested !== currentIndex) return;
   nextLayer.src = photo.fullUrl;
+  // 켄번즈: 이 레이어에 새 애니메이션을 처음부터 다시 건다. 지금 보이는(나가는) 레이어의
+  // .kb-run은 **그대로 둔다** — 벗기면 확대돼 있던 사진이 원래 크기로 툭 되돌아가며 사라진다.
+  nextLayer.classList.remove('kb-run');
+  void nextLayer.offsetWidth;         // 리플로우 강제 — 안 하면 애니메이션이 재시작되지 않는다
+  nextLayer.classList.add('kb-run');
   applyBackdrop(nextName, im, photo.fullUrl);    // 여백이 생기는 사진이면 흐린 배경을 함께 띄운다
   document.getElementById(`photo-${activeLayer}-bg`).classList.remove('active');
   nextLayer.classList.add('active');
@@ -987,6 +999,11 @@ function musicRow(t) {
 // 지금 만들어져 있는 wepic 주소. 예전에는 팝업 안의 <input>에 담아뒀는데 팝업을 없애면서
 // 이 변수 하나로 관리한다(주소 줄·복사 아이콘이 모두 이 값을 쓴다).
 let currentShareUrl = '';
+// 이 wepic에 달린 댓글 수. 0보다 크면 **사진을 뺄 수 없다**(추가만 가능) —
+// 보던 분들이 남긴 글이 가리키는 사진이 사라지면 대화가 어긋나기 때문이다.
+// /api/status와 "공유하기" 응답이 알려준다.
+let shareCommentCount = 0;
+const photosAreLocked = () => shareCommentCount > 0;
 
 // 버튼은 "공유하기" 하나뿐이다. 아직 안 만들었으면 눌러서 만들고, 이미 만들었으면
 // 같은 링크에 최신 내용을 반영한다. 만들어진 뒤에만 링크 복사·삭제 아이콘과 주소가 보인다.
@@ -1007,8 +1024,10 @@ function showShareUrlInline(url) {
   const box = document.getElementById('share-url-inline');
   const link = document.getElementById('share-url-link');
   const has = !!url;
-  link.textContent = has ? url : '';
+  // 화면에는 "https://"를 떼고 보여준다 — 그만큼 짧아 보이고, 누르면 그대로 열린다.
+  link.textContent = has ? url.replace(/^https?:\/\//, '') : '';
   link.href = has ? url : '#';
+  link.title = has ? url : '';
   box.classList.toggle('hidden', !has);
 }
 
@@ -1130,6 +1149,75 @@ async function loadFrames() {
   } catch { /* 로그인 전이거나 세션이 없으면 조용히 무시 */ }
 }
 
+// ---------- wepic 시작 선택 (새로 만들기 / 기존 수정) ----------
+// 세션은 로그인해 있는 동안 "현재 wepic"을 기억한다. 그래서 사진을 새로 고르면 예전
+// wepic이 조용히 덮어써질 수 있었다 → 사진을 고르기 **전에** 무엇을 할지 먼저 묻는다.
+// 한 세션에서 한 번 고르면 다시 묻지 않는다(매번 물으면 성가시다).
+let startChoiceMade = false;
+let startPickedId = null;
+
+// 사진을 고르러 가기 전에 확인이 필요한지 판단한다.
+// - 내용이 있는 wepic이 하나도 없으면 물을 게 없다.
+// - 관리자·회원이 /?frame=로 특정 wepic을 열어 온 상태(isFrameMode)면 이미 대상이 정해졌다.
+function needStartChoice() {
+  if (startChoiceMade || isFrameMode || !isLoggedIn) return false;
+  return frames.some((f) => f.hasContent);
+}
+
+function openStartModal() {
+  const list = document.getElementById('start-list');
+  const withContent = frames.filter((f) => f.hasContent);
+  document.getElementById('start-count').textContent = String(withContent.length);
+  startPickedId = null;
+  list.innerHTML = '';
+  withContent.forEach((f) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'start-item' + (f.id === currentFrameId ? ' current' : '');
+    const t = document.createElement('b');
+    t.textContent = f.title || f.name || '(제목 없음)';
+    const meta = document.createElement('span');
+    meta.className = 'start-item-meta';
+    meta.textContent = `사진 ${f.count || 0}장`
+      + (f.updatedAt ? ` · ${fmtDateTime(f.updatedAt)}` : '')
+      + (f.isPublic ? ' · 전체공유' : '');
+    row.append(t, meta);
+    row.addEventListener('click', () => {
+      startPickedId = f.id;
+      [...list.children].forEach((c) => c.classList.toggle('picked', c === row));
+      document.getElementById('start-edit').disabled = false;
+    });
+    list.appendChild(row);
+  });
+  document.getElementById('start-edit').disabled = true;
+  document.getElementById('start-modal').classList.remove('hidden');
+}
+const closeStartModal = () => document.getElementById('start-modal').classList.add('hidden');
+
+// "새 wepic 만들기": 세션의 현재 wepic 선택을 풀어 다음 저장이 **새 링크**를 만들게 한다.
+document.getElementById('start-new').addEventListener('click', async () => {
+  startChoiceMade = true;
+  closeStartModal();
+  try { await api('/api/frames/deselect', { method: 'POST' }); } catch { /* 무시 */ }
+  await loadFrames();               // 선택 없음 → 제목·음악이 Default로 되돌아간다
+  shareCommentCount = 0;
+  updateExcludeAvailability();
+  showToast('새 wepic으로 시작합니다. 사진을 고르면 새 링크가 만들어집니다.');
+  startPickerOrGallery();
+});
+// "선택한 wepic 수정하기": 이미 검증된 경로(/?frame=<id>)로 그 wepic을 그대로 불러온다.
+document.getElementById('start-edit').addEventListener('click', () => {
+  if (!startPickedId) return;
+  startChoiceMade = true;
+  location.href = `/?frame=${encodeURIComponent(startPickedId)}`;
+});
+
+// 로그인 제공자에 맞는 사진 고르기 경로로 보낸다(구글=Picker, 그 외=기기 갤러리).
+function startPickerOrGallery() {
+  if (canUseGooglePhotos) startPickerFlow();
+  else document.getElementById('local-file-input').click();
+}
+
 // 현재 화면의 사진·제목·음악·전환설정을 서버에 올린다.
 // 서버는 세션마다 같은 shareId를 재사용하므로, 다시 올리면 "같은 링크"의 내용이 갱신된다.
 // 버튼은 "공유하기" 하나뿐이고, 이미 만든 wepic이 있으면(update) 같은 링크에 반영한다.
@@ -1202,6 +1290,8 @@ async function pushShare() {
     setSharePin(r.pin || ''); // 전체공유면 서버가 pin을 null로 돌려주므로 PIN 행이 사라진다
     // wepic이 생겼으니 링크 복사·삭제 아이콘과 주소를 띄운다("공유하기"를 누르면 링크가 보인다).
     setShareLinkState(true, r.url);
+    shareCommentCount = Number(r.commentCount || 0);
+    updateExcludeAvailability();
     await loadFrames(); // 액자 이름·설정 갱신(자동 생성된 첫 액자 포함)
     if (mode === 'update') {
       const pinNote = r.isPublic ? '전체공유(PIN 없음)' : `PIN ${r.pin || '없음'}`;
@@ -1302,8 +1392,7 @@ function exitFullscreenIfAny() {
 function setExcludeBtnState(on) {
   const b = document.getElementById('btn-exclude');
   b.classList.toggle('active', on);
-  b.title = on ? '제외 취소' : '사진 제외';
-  b.setAttribute('aria-label', b.title);
+  updateExcludeAvailability();   // 툴팁은 여기서 한 번에 정한다(잠금 안내가 지워지지 않게)
 }
 function setExcludeMode(on) {
   excludeMode = on;
@@ -1315,8 +1404,23 @@ function setExcludeMode(on) {
   renderPhotoList();
   if (!on) resetTimer();
 }
+// 댓글이 달린 wepic이면 "사진 제외"를 아예 켜지 않고 이유를 알려준다.
+function updateExcludeAvailability() {
+  const b = document.getElementById('btn-exclude');
+  if (!b) return;
+  const locked = photosAreLocked();
+  b.classList.toggle('locked', locked);
+  b.title = locked
+    ? `댓글이 ${shareCommentCount}개 달려 있어 사진을 뺄 수 없습니다 (사진 추가만 가능)`
+    : (excludeMode ? '제외 취소' : '사진 제외');
+  b.setAttribute('aria-label', b.title);
+}
 document.getElementById('btn-exclude').addEventListener('click', (e) => {
   e.preventDefault();
+  if (photosAreLocked()) {
+    showToast(`댓글이 ${shareCommentCount}개 달려 있어 사진을 삭제할 수 없습니다. 사진 추가만 가능합니다.`);
+    return;
+  }
   setExcludeMode(!excludeMode);
 });
 document.getElementById('btn-exclude-cancel').addEventListener('click', () => setExcludeMode(false));
@@ -1484,6 +1588,8 @@ let localAppendMode = false;   // true면 고른 사진을 기존 목록에 덧�
 // 갤러리 선택창을 연다. append=true면 기존 사진을 유지하고 뒤에 더한다.
 function openLocalPicker(append) {
   if (!isLoggedIn) { selectPanel('login'); return; } // 업로드는 로그인 필수
+  // 새로 고르는 경우(append=false)에만 "새로 만들기 / 기존 수정"을 먼저 묻는다
+  if (!append && needStartChoice()) { openStartModal(); return; }
   localAppendMode = !!append;
   document.getElementById('local-file-input').click();
 }
@@ -1540,6 +1646,8 @@ document.getElementById('local-file-input').addEventListener('change', async (e)
 document.getElementById('btn-start-picker').addEventListener('click', () => {
   if (!isLoggedIn) { selectPanel('login'); return; } // 로그인 먼저
   appendMode = false;
+  // 이미 만들어 둔 wepic이 있으면 "새로 만들기 / 기존 수정"을 먼저 묻는다
+  if (needStartChoice()) { openStartModal(); return; }
   startPickerFlow();
 });
 document.getElementById('btn-logout-home').addEventListener('click', async (e) => {
@@ -1597,6 +1705,15 @@ function applyTitle(text) {
   const has = !!text.trim();
   ov.classList.toggle('hidden', !has);
   document.body.classList.toggle('has-title', has);
+}
+
+// 제목 아래 사진 번호("3 / 10") — 공유화면과 같은 자리·같은 크기로 보여준다.
+function renderPhotoCounter() {
+  const el = document.getElementById('photo-counter');
+  if (!el) return;
+  const show = filteredPhotos.length > 1;   // 한 장뿐이면 "1 / 1"은 의미가 없다
+  el.textContent = show ? `${currentIndex + 1} / ${filteredPhotos.length}` : '';
+  el.classList.toggle('hidden', !show);
 }
 
 // 배경음악을 "동영상 재생용"으로 잠시 정지 (재생 중일 때만). 나중에 복귀할 수 있게 표시.
@@ -2083,7 +2200,9 @@ function boot(photos) {
   // (이후에는 일반 메인화면처럼 자유롭게 사진 추가·제외, PIN 변경, 링크변경 반영이 가능하다).
   if (isFrameMode && frameManifest) {
     const badge = document.getElementById('frame-badge');
-    badge.textContent = `관리자 모드 — ${frameManifest.title || '(제목 없음)'}`;
+    // 관리자가 남의 액자를 연 경우와, 회원이 자기 wepic을 고치려고 연 경우를 구분해 적는다.
+    badge.textContent = (isWepicAdmin ? '관리자 모드' : 'wepic 수정 중')
+      + ` — ${frameManifest.title || '(제목 없음)'}`;
     badge.classList.remove('hidden');
     applyTitle(frameManifest.title || '');
     if (frameManifest.intervalSec) {
@@ -2109,6 +2228,7 @@ let isLoggedIn = false;
 // 구글로 로그인해서 구글 포토(Picker·/img·/video)를 쓸 수 있는 상태인가.
 // 카카오·네이버 로그인은 false — 이 값을 보고 구글 전용 UI·동작을 전부 막는다.
 let canUseGooglePhotos = false;
+let isWepicAdmin = false;    // wepic 관리자인지(프레임 모드 배지 문구를 가르는 데 쓴다)
 
 // 로그인 제공자 버튼 정의. 서버(/api/status의 availableProviders)가 "키가 설정된" 제공자만
 // 알려주므로, 나머지는 눌러도 오류가 나지 않게 "준비중"으로 비활성 표시한다.
@@ -2131,6 +2251,15 @@ function renderLoginProviders(available, boxId = 'login-providers', verb = '계�
     const el = document.createElement(on ? 'a' : 'span');
     el.className = `btn-provider prov-${on ? p.key : 'soon'}`;
     if (on) el.href = p.href;
+    // 회원가입 화면의 Google 버튼만: 구글 인증으로 바로 보내지 않고 안내를 한 번 더 띄운다.
+    // 구글 포토 접근은 운영자가 최초 1회 등록해야 열리므로, 등록 없이 인증만 하면
+    // 사진을 못 골라 원인을 알 수 없는 실패로 보인다.
+    if (on && p.key === 'google' && boxId === 'signup-providers') {
+      el.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        openGoogleNotice(p.href);
+      });
+    }
     const icon = document.createElement('span');
     icon.className = 'prov-icon';
     icon.textContent = p.icon;
@@ -2140,6 +2269,21 @@ function renderLoginProviders(available, boxId = 'login-providers', verb = '계�
     box.appendChild(el);
   });
 }
+
+// Google 가입 안내 팝업 — "다음"을 누르면 그때 구글 인증으로 넘어가고, "취소"면 회원가입 화면에 머문다.
+let googleNoticeHref = '/auth/login';
+function openGoogleNotice(href) {
+  googleNoticeHref = href || '/auth/login';
+  document.getElementById('google-notice-modal').classList.remove('hidden');
+}
+document.getElementById('google-notice-next').addEventListener('click', () => {
+  document.getElementById('google-notice-modal').classList.add('hidden');
+  location.href = googleNoticeHref;
+});
+document.getElementById('google-notice-cancel').addEventListener('click', () => {
+  document.getElementById('google-notice-modal').classList.add('hidden');
+  selectPanel('signup');   // 취소하면 회원가입 화면으로 되돌아온다
+});
 
 // 회원가입: 필수 동의 2개를 모두 체크해야 가입 버튼이 눌린다.
 function refreshSignupGate() {
@@ -2157,10 +2301,17 @@ function applyLoginState(status) {
   // 이전에 만든 공유 링크가 있으면 "링크변경 반영"을 바로 쓸 수 있게 노출
   if (status.hasShare) {
     setShareLinkState(true, status.shareUrl || '');
+    shareCommentCount = Number(status.shareCommentCount || 0);
+    updateExcludeAvailability();
     if (status.sharePin) setSharePin(status.sharePin); // 기존 공유의 PIN 표시
     document.getElementById('share-public').checked = !!status.sharePublic;
   }
   // wepic 관리자 화면 진입 메뉴는 관리자(role='admin')로 로그인했을 때만 노출
+  isWepicAdmin = !!status.isAdmin;
+  // 액자 목록을 미리 읽어 둔다. 예전에는 슬라이드쇼가 뜰 때만 읽어서, 홈에서 바로
+  // "사진 고르기"를 누르면 frames가 비어 있어 "새로 만들기 / 기존 수정" 확인이
+  // 아예 뜨지 않았다(needStartChoice가 false). 여기서 읽으면 항상 준비돼 있다.
+  if (status.loggedIn) loadFrames();
   document.getElementById('menu-admin').classList.toggle('hidden', !status.isAdmin);
   // My사진관리는 로그인한 Wepic 사용자(관리자 포함)라면 누구나 노출
   document.getElementById('menu-my').classList.toggle('hidden', !status.loggedIn);

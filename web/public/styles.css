@@ -65,6 +65,9 @@ html, body {
 .onboarding-shell {
   height: 100vh; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center;
+  /* body가 overflow:hidden이라, 내용이 화면보다 길면 아래가 잘려 보였다(모바일 세로).
+     이 컨테이너 자체를 스크롤 컨테이너로 만들어 끝까지 볼 수 있게 한다. */
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
 }
 .brand-header {
   background: rgba(11, 15, 23, 0.5); backdrop-filter: blur(12px);
@@ -81,6 +84,8 @@ html, body {
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45); text-align: left;
 }
 .card.wide { width: 620px; }
+/* 좁은 화면에서 620px/430px 고정폭이 화면을 넘어 카드가 잘려 보였다 → 화면 폭에 맞춘다 */
+.card, .card.wide { max-width: 100%; }
 .card.light { background: rgba(255, 255, 255, 0.92); border-color: rgba(0,0,0,0.06); color: #1c2536; }
 .card.light h2 { color: #1c2536; }
 .card h2 { margin: 0 0 4px; font-size: 18px; font-weight: 700; }
@@ -188,7 +193,9 @@ video.photo-layer { background: #000; }
 .photo-pane.fx-slide .photo-layer { transition: opacity 1s ease, transform 1s ease; transform: translateX(6%); }
 .photo-pane.fx-slide .photo-layer.active { transform: translateX(0); }
 /* Ken Burns: 표시되는 동안 사진이 천천히 줌·팬 (동영상에는 적용 안 함) */
-.photo-pane.fx-kenburns img.photo-layer.active { animation: kenburns var(--kb-duration, 12s) ease-out both; }
+/* 켄번즈는 .active가 아니라 .kb-run으로 건다 — 이유는 share.html의 같은 규칙 주석 참고
+   (.active로 걸면 전환 직전에 사진이 원래 크기로 툭 되돌아간다). */
+.photo-pane.fx-kenburns img.photo-layer.kb-run { animation: kenburns var(--kb-duration, 12s) ease-out both; }
 @keyframes kenburns {
   from { transform: scale(1); }
   to   { transform: scale(1.12) translate(-1.5%, -1.5%); }
@@ -312,6 +319,8 @@ button.preset.active { background: var(--accent-strong); color: #fff; }
 .music-row input[type="range"] { flex: 1; accent-color: var(--accent-strong); }
 .mini-btn { flex: none; width: 30px; height: 30px; padding: 0; border-radius: 8px; background: rgba(255,255,255,0.08); color: var(--text-muted); font-size: 12px; line-height: 1; }
 .mini-btn:hover { color: var(--text-main); filter: none; background: rgba(255,255,255,0.14); }
+/* 댓글이 달려 사진을 뺄 수 없는 상태 — 눌러도 되는 이유를 토스트로 알려주므로 흐리게만 둔다 */
+.mini-btn.locked { opacity: 0.4; }
 .music-title { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .yt-host { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0.01; pointer-events: none; left: -9999px; }
 
@@ -349,9 +358,21 @@ body.has-title .screen-badge { top: 50px; }
   position: absolute; left: 18px; top: 14px; z-index: 6; max-width: 62%;
   font-family: var(--title-font);
   font-size: var(--title-size); font-weight: 600; color: #fff;
+  line-height: 1.25;   /* 아래 .title-counter 위치를 계산에 쓰므로 값을 고정한다 */
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75); pointer-events: none;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* 사진 번호("3 / 10") — 제목 **바로 아래**, 제목과 같은 폰트·같은 크기.
+   제목이 없으면 제목 자리(top:14px)에 그대로 올라온다. */
+.title-counter {
+  position: absolute; left: 18px; top: 14px; z-index: 6;
+  font-family: var(--title-font);
+  font-size: var(--title-size); font-weight: 600; color: #fff;
+  line-height: 1.25;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75); pointer-events: none;
+  white-space: nowrap;
+}
+body.has-title .title-counter { top: calc(14px + var(--title-size) * 1.25 + 2px); }
 /* 관리자 설정용 폰트/크기 선택지 (body에 클래스로 적용) */
 body.tf-cursive { --title-font: 'Dancing Script', 'Nanum Pen Script', cursive; }
 body.tf-handwriting-ko { --title-font: 'Nanum Pen Script', 'Dancing Script', cursive; }
@@ -425,6 +446,20 @@ select optgroup {
   text-align: left;
 }
 .modal-block { font-size: 14px; line-height: 1.7; color: var(--text-main); margin: 0 0 14px; }
+/* 팝업 아래 버튼 줄 — 좁아지면 세로로 쌓인다 */
+.start-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.start-actions .btn-primary, .start-actions button { flex: 1 1 auto; min-width: 140px; margin-top: 0; }
+/* 기존 wepic 목록(고를 수 있는 항목) */
+.start-list { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow-y: auto; margin: 0 0 10px; }
+.start-item {
+  display: flex; flex-direction: column; gap: 2px; align-items: flex-start; text-align: left;
+  background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border); border-radius: 14px;
+  padding: 10px 12px; color: var(--text-main); font-size: 13.5px; box-shadow: none; cursor: pointer;
+}
+.start-item:hover { background: rgba(255,255,255,0.10); box-shadow: none; transform: none; }
+.start-item.picked { border-color: var(--coral); background: rgba(255, 107, 87, 0.16); }
+.start-item b { color: #fff; }
+.start-item-meta { color: var(--text-muted); font-size: 11.5px; }
 .modal-block b { color: var(--accent); }
 .modal-en { font-size: 12.5px; color: var(--text-muted); }
 
@@ -560,8 +595,9 @@ select optgroup {
    로고는 상단 바로 올라갔으므로 여기에는 문구만 왼쪽에 크게 둔다. */
 .hero {
   position: relative; z-index: 1; flex: none;
-  height: clamp(178px, 27vh, 270px);
-  display: flex; align-items: center;
+  /* height로 고정하면 서브문구가 늘어날 때 아래로 삐져나온다 → 최소 높이로 둔다 */
+  min-height: clamp(178px, 27vh, 270px);
+  display: flex; align-items: center; padding: 8px 0;
 }
 .hero-inner { position: relative; padding: 0 clamp(20px, 4vw, 52px); }
 .hero-tagline {
@@ -839,6 +875,21 @@ select optgroup {
   flex-direction: column; align-items: flex-end; gap: 4px; min-width: 132px;
 }
 .admin-empty { color: var(--text-muted); font-size: 13px; }
+/* 좁은 화면: 썸네일+글 / 버튼을 **두 줄**로 쌓는다.
+   예전에는 한 줄을 유지해서 .admin-actions의 고정폭(132px)에 밀린 .admin-meta가
+   폭 0까지 줄어들며 글자가 한 글자씩 세로로 쏟아졌다(첨부 화면). */
+@media (max-width: 700px) {
+  .admin-row { flex-wrap: wrap; row-gap: 8px; }
+  .admin-row img.admin-thumb { width: 44px; height: 44px; }
+  .admin-row .admin-meta { flex: 1 1 0; min-width: 120px; word-break: break-all; }
+  .admin-row .admin-actions,
+  #admin-shares-list .admin-row .admin-actions,
+  #my-shares-list .admin-row .admin-actions {
+    flex: 1 1 100%; min-width: 0; flex-direction: row; flex-wrap: wrap;
+    align-items: center; justify-content: flex-start; gap: 10px;
+    padding-top: 6px; border-top: 1px solid var(--border);
+  }
+}
 .btn-danger { background: rgba(224,91,91,0.18); color: #ff9b9b; padding: 8px 12px; font-size: 12.5px; }
 .btn-danger:hover { background: rgba(224,91,91,0.3); filter: none; }
 .pin-input {
@@ -951,7 +1002,8 @@ select optgroup {
 
 /* 홈 모바일: 상단 메뉴는 가로 스크롤 한 줄, 관리자 하위 메뉴는 위로 접혀 들어감 */
 @media (max-width: 768px) {
-  .hero { height: clamp(118px, 20vh, 175px); }
+  .hero { min-height: clamp(112px, 17vh, 165px); padding: 6px 0 10px; }
+  .hero-sub { margin-top: 10px; font-size: 12.5px; line-height: 1.55; }
   /* 좁은 화면: 로고와 인스타그램은 양끝에 고정하고, 가운데 메뉴명만 가로로 스크롤한다.
      (상단 바 전체를 스크롤하면 로고까지 밀려 나가 버린다) */
   .top-menu { gap: 12px; padding: 14px 14px 10px; }
@@ -982,4 +1034,22 @@ select optgroup {
   .side-menu .menu-item.active { border-left: none; border-bottom-color: var(--menu-accent); }
   .home-frame { padding: 20px 18px; }
   .login-providers { max-width: none; }
+}
+
+/* ==================== 모바일 세로: 사진 선택(Picker) 카드 · 팝업 ====================
+   좌우 2단(설명 | QR·버튼) 배치와 620px/430px 고정폭이 좁은 화면을 넘어 카드가 깨져 보였다.
+   ⚠️ 이 블록은 **파일 맨 끝**에 있어야 한다 — .modal-card 같은 기본 규칙이 파일 중간에
+      정의돼 있어서, 위쪽에 두면 명시도가 같아 나중에 오는 기본값에 덮인다. */
+@media (max-width: 700px) {
+  .onboarding-shell { justify-content: flex-start; padding: 14px 12px 28px; gap: 10px; }
+  .brand-header { padding: 10px 18px; }
+  .brand-name { font-size: 20px; }
+  .card, .card.wide { width: 100%; padding: 18px 16px; }
+  .source-body { flex-direction: column; gap: 14px; align-items: stretch; }
+  .source-qr-col { flex-direction: column; align-items: center; gap: 10px; }
+  .source-qr-col .btn-primary { width: 100%; }
+  .steps { padding-left: 18px; font-size: 13px; }
+  /* 팝업(모달)도 같은 이유로 화면을 넘지 않게 */
+  .modal-overlay { padding: 14px; }
+  .modal-card { width: 100%; max-width: 100%; padding: 20px 16px; max-height: 88vh; overflow-y: auto; }
 }

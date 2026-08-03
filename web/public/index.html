@@ -458,6 +458,8 @@
       <!-- 관리자가 특정 액자(공유)를 메인화면으로 열어본 상태임을 표시 -->
       <div id="frame-badge" class="screen-badge frame-badge hidden"></div>
       <div id="title-overlay" class="title-overlay hidden"></div>
+      <!-- 제목 바로 아래, 제목과 같은 크기로 "3 / 10"처럼 몇 번째 사진인지 알려준다 -->
+      <div id="photo-counter" class="title-counter hidden"></div>
       <div id="ambient-widget" class="ambient-widget hidden">
         <div id="amb-time" class="amb-time"></div>
         <div id="amb-date" class="amb-date"></div>
@@ -691,6 +693,41 @@
 
   <!-- 실시간 공유 링크 팝업은 없앴다(요청): wepic을 만들면 주소가 "사진선택" 섹션에 바로
        표시되고, 복사·삭제는 이름 옆 아이콘(📋·🗑)으로 할 수 있어 팝업이 필요 없다. -->
+
+  <!-- wepic 시작 선택 팝업 —
+       이 계정에 이미 만들어 둔 wepic이 있으면, 새로 만들지 / 기존 것을 고쳐 쓸지 먼저 묻는다.
+       (예전에는 세션에 남아 있던 wepic이 조용히 이어져서, 새로 만들려던 사진이
+        기존 wepic에 덮어써지는 일이 있었다) -->
+  <div id="start-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h2 style="margin:0 0 6px;">wepic 시작하기</h2>
+      <p class="modal-block">이 계정으로 <b id="start-count">0</b>개의 wepic을 이미 만들어 두셨습니다.<br />
+        <b>새로 만들</b>지, <b>기존 wepic을 고칠</b>지 골라주세요.</p>
+      <div id="start-list" class="start-list"></div>
+      <p class="hint" style="margin:2px 0 10px;">기존 wepic을 고르면 그 wepic의 사진·음악·PIN을
+        불러오고, <b>공유하기</b>를 누르면 <b>같은 링크</b>에 반영됩니다.</p>
+      <div class="start-actions">
+        <button id="start-new" class="btn-primary">새 wepic 만들기</button>
+        <button id="start-edit" class="secondary slim" disabled>선택한 wepic 수정하기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Google 가입 전 안내 팝업 (요청) — 구글 포토 접근은 운영자가 최초 1회 등록해야 열린다.
+       그래서 인증 화면으로 바로 보내지 않고 이 안내를 먼저 보여준다. -->
+  <div id="google-notice-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h2 style="margin:0 0 6px;">Google 인증 전에 확인해주세요</h2>
+      <p class="modal-block">Google 인증을 위해서는 구글포토 등 구글 프로그램 활용을 위한
+        <b>운영자의 최초 1회 등록</b>이 필요합니다. 운영자에게 연락을 해서 최초 등록을
+        요청해주시기 바랍니다 (구글 아이디 알려주기,
+        <b>garzette@para.com</b>). 이미 알려주셨으면 <b>다음</b> 버튼을 눌러주세요. :)</p>
+      <div class="start-actions">
+        <button id="google-notice-next" class="btn-primary">다음</button>
+        <button id="google-notice-cancel" class="secondary slim">취소</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 음악찾기 팝업 -->
   <div id="music-modal" class="modal-overlay hidden">

@@ -23,7 +23,11 @@
   .share-view.fx-slide .photo-layer { transition: opacity 1s ease, transform 1s ease; transform: translateX(6%); }
   .share-view.fx-slide .photo-layer.active { transform: translateX(0); }
   /* Ken Burns 확대는 사진에만 적용한다(동영상은 원본 그대로 재생) */
-  .share-view.fx-kenburns img.photo-layer.active { animation: kenburns var(--kb-duration, 12s) ease-out both; }
+  /* 켄번즈는 .active가 아니라 .kb-run으로 건다 — .active로 걸면 전환 순간 사라지는
+     레이어에서 애니메이션이 **함께 사라져** 확대돼 있던 사진이 원래 크기로 툭 되돌아간다
+     (그 상태로 페이드아웃되어 "전환 직전에 화면이 튀는" 것처럼 보였다).
+     .kb-run은 그 레이어가 다시 쓰일 때(=보이지 않을 때)만 벗기므로 끝까지 확대된 채 사라진다. */
+  .share-view.fx-kenburns img.photo-layer.kb-run { animation: kenburns var(--kb-duration, 12s) ease-out both; }
   .share-caption {
     position: absolute; right: 20px; bottom: 68px; z-index: 5; pointer-events: none; text-align: right;
     color: rgba(200,200,200,0.55); font-size: 13px; line-height: 1.5;
@@ -153,6 +157,8 @@
     <video class="photo-layer" id="video-layer" playsinline preload="metadata"></video>
 
     <div id="share-title" class="title-overlay hidden"></div>
+    <!-- 제목 바로 아래, 제목과 같은 크기로 "3 / 10"처럼 몇 번째 사진인지 알려준다 -->
+    <div id="share-counter" class="title-counter hidden"></div>
 
     <div id="share-loading" class="share-loading">사진을 불러오는 중...</div>
     <div id="share-error" class="share-error hidden"></div>

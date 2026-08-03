@@ -143,6 +143,11 @@ async function show() {
   const im = await preload(p.fullUrl);
   if (req !== idx) return;
   next.src = p.fullUrl;
+  // 켄번즈: 이 레이어에 새 애니메이션을 처음부터 다시 건다. 지금 보이는(나가는) 레이어의
+  // .kb-run은 **그대로 둔다** — 벗기면 확대돼 있던 사진이 원래 크기로 툭 되돌아가며 사라진다.
+  next.classList.remove('kb-run');
+  void next.offsetWidth;              // 리플로우 강제 — 안 하면 애니메이션이 재시작되지 않는다
+  next.classList.add('kb-run');
   applyBackdrop(nextLayer, im, p.fullUrl);       // 여백이 생기는 사진이면 흐린 배경을 함께 띄운다
   document.getElementById(`photo-${activeLayer}-bg`).classList.remove('active');
   next.classList.add('active');
@@ -150,6 +155,7 @@ async function show() {
   lastShownImg = im;
   activeLayer = nextLayer;
   renderCaption();
+  renderCounter();
   updateProgress();
   // 동영상 다음에 온 사진이면 멈춰 있던 자동 전환 타이머를 다시 걸어준다.
   if (!timer) resetTimer();
@@ -167,6 +173,15 @@ function renderCaption() {
     if (i > 0) el.appendChild(document.createElement('br'));
     el.appendChild(document.createTextNode(ln));
   });
+}
+
+// 제목 아래 사진 번호("3 / 10") — 지금 몇 번째 사진을 보고 있는지 바로 알 수 있게.
+function renderCounter() {
+  const el = document.getElementById('share-counter');
+  if (!el) return;
+  const show = photos.length > 1;   // 한 장뿐이면 "1 / 1"은 의미가 없다
+  el.textContent = show ? `${idx + 1} / ${photos.length}` : '';
+  el.classList.toggle('hidden', !show);
 }
 
 // 하단 진행바: 현재 사진이 전체에서 몇 번째인지 (희미한 참고용)
@@ -520,6 +535,8 @@ function applyManifest(data) {
   const title = (data.title || defaultTitle || '').trim();
   t.textContent = title;
   t.classList.toggle('hidden', !title);
+  // 제목이 있으면 사진 번호를 제목 **아래**로 내린다(.title-counter의 위치 계산에 쓰인다)
+  document.body.classList.toggle('has-title', !!title);
 
   // 전환 효과 · 간격
   const effect = ['fade', 'slide', 'kenburns'].includes(data.effect) ? data.effect : 'fade';

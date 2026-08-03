@@ -182,7 +182,7 @@ async function frameInfo(env, data, f) {
     isPublic: !!m?.isPublic, // "전체공유" 체크 상태 — 액자를 전환할 때 화면에 그대로 복원한다
     count: m?.items?.length || 0,
     thumbUrl: m?.items?.[0]?.thumbUrl || null,
-    url: m ? `${env.BASE_URL}/f/${f.id}` : null,
+    url: m ? shortUrlOf(env, f.id) : null,   // 화면에 보여주는 주소는 짧은 쪽
     updatedAt: m?.updatedAt || null,
     expiresAt: m?.expiresAt || null,
     expired: m ? isExpired(m) : false,
@@ -233,6 +233,18 @@ function randomId(bytes = 18) {
   crypto.getRandomValues(a);
   return b64url(a);
 }
+// 새 wepic id. 짧은 주소는 이 id의 앞 6자이므로, 앞 6자가 이미 쓰인 id는 피한다
+// (겹치면 /w/<코드>가 어느 wepic인지 알 수 없어 둘 다 404가 된다 — shortUrlOf 주석 참고).
+// 확률은 극히 낮지만 몇 번 더 뽑는 비용이 거의 없으므로 아예 없애 둔다.
+async function newShareId(env) {
+  for (let i = 0; i < 5; i++) {
+    const id = randomId(9);
+    const list = await env.SHARES.list({ prefix: id.slice(0, SHORT_LEN), delimiter: '/' });
+    if (!(list.delimitedPrefixes || []).length) return id;
+  }
+  return randomId(9);   // 5번 다 겹칠 일은 없다. 그래도 흐름을 멈추지는 않는다.
+}
+
 async function getSession(request, env) {
   const sid = parseCookies(request).sid || null;
   if (!sid) return { sid: null, data: null };
@@ -614,8 +626,12 @@ async function apiStatus(request, env) {
     hasShare: !!manifest,
     sharePin: manifest ? manifest.pin || null : null, // 현재 공유의 PIN(메인화면 표시용)
     sharePublic: manifest ? !!manifest.isPublic : false, // 전체공유 체크박스 초기 상태용
-    // 만들어 둔 wepic 주소 — 메인화면이 "링크변경 반영" 위에 바로 보여준다.
-    shareUrl: manifest ? `${env.BASE_URL}/f/${data.currentFrameId}` : null,
+    // 만들어 둔 wepic 주소 — 메인화면이 "공유하기" 아래에 바로 보여준다.
+    // 보여주고 나눠주는 건 **짧은 주소**(/w/앞6자)다. 원래 주소도 함께 준다.
+    shareUrl: manifest ? shortUrlOf(env, data.currentFrameId) : null,
+    shareLongUrl: manifest ? `${env.BASE_URL}/f/${data.currentFrameId}` : null,
+    // 댓글이 달린 wepic은 사진을 뺄 수 없다(추가만 가능) — 메인화면이 이 값으로 막는다.
+    shareCommentCount: manifest ? await commentCountOf(env, data.currentFrameId) : 0,
     isAdmin: loggedIn && user.role === 'admin',       // Admin 메뉴 노출 여부
     // 회원정보 화면에서 쓸 값(가입일·최근 로그인). 로그인 안 했으면 null.
     me: loggedIn ? meInfo(user, data.provider) : null,
@@ -639,7 +655,7 @@ async function apiFramesCreate(request, env, sess) {
   const body = await request.json().catch(() => ({}));
   const name = (typeof body.name === 'string' && body.name.trim().slice(0, 30))
     || `액자 ${data.frames.length + 1}`;
-  const id = randomId(9);
+  const id = await newShareId(env);
   data.frames.push({ id, name });
   data.currentFrameId = id;
   await putSession(env, sid, data);
@@ -757,7 +773,7 @@ async function listShares(env, filterFn) {
         expired: isExpired(m),
         count: (m.items || []).length,
         thumbUrl: m.items?.[0]?.thumbUrl || null,
-        url: `${env.BASE_URL}/f/${id}`,
+        url: shortUrlOf(env, id),   // 화면·목록에 보여주는 주소는 짧은 쪽
       });
     }
     cursor = list.truncated ? list.cursor : null;
@@ -1481,7 +1497,7 @@ async function shareCreate(request, env, token, sess) {
 
   ensureFrames(sess.data);
   if (!sess.data.currentFrameId) {
-    const newId = randomId(9);
+    const newId = await newShareId(env);
     sess.data.frames.push({ id: newId, name: wantName || `액자 ${sess.data.frames.length + 1}` });
     sess.data.currentFrameId = newId;
   }
@@ -1513,7 +1529,8 @@ async function shareCreate(request, env, token, sess) {
   const keepKeys = new Set([`${shareId}/photos.json`]); // 이번 저장 후에도 남겨둘 키
   const keyOf = (url) => (ownRe.test(url || '') ? `${shareId}/photos/${url.slice(url.lastIndexOf('/') + 1)}` : null);
 
-  const manifestItems = [];
+  const keptItems = [];   // 이미 이 wepic에 있던 사진(순서 유지)
+  const addedItems = [];  // 이번에 새로 받아온 사진(맨 뒤에 붙는다)
   for (const it of items) {
     const isVideo = it.type === 'video';
     // (1) 이미 이 액자에 있는 파일 → 그대로 유지
@@ -1539,7 +1556,7 @@ async function shareCreate(request, env, token, sess) {
         keep.type = 'video';
         keep.videoUrl = it.videoUrl;
       }
-      manifestItems.push(keep);
+      keptItems.push(keep);
       continue;
     }
     // (2) 새 항목 → 구글에서 내려받아 저장
@@ -1584,9 +1601,22 @@ async function shareCreate(request, env, token, sess) {
           console.warn(`동영상 저장 실패(${it.id}): ${err.message} → 정지 이미지로 대체`);
         }
       }
-      manifestItems.push(entry);
+      addedItems.push(entry);
     } catch { /* 개별 실패는 건너뜀 */ }
   }
+  // 이미 있던 사진은 **원래 순서 그대로**, 새로 추가한 사진은 **맨 뒤에** 촬영일 순으로.
+  //   → "사진 추가"로 넣은 사진이 촬영일이 더 앞서더라도 앞으로 끼어들지 않는다.
+  //     (댓글이 달린 wepic에서 사진 번호가 밀리면 남긴 글과 사진이 어긋난다)
+  const prev = await readManifest(env, shareId);   // 아래 PIN 유지에도 같은 값을 쓴다
+  const prevOrder = new Map((prev?.items || []).map((it, i) => [it.fullUrl, i]));
+  keptItems.sort((a, b) =>
+    (prevOrder.has(a.fullUrl) ? prevOrder.get(a.fullUrl) : 1e9) -
+    (prevOrder.has(b.fullUrl) ? prevOrder.get(b.fullUrl) : 1e9));
+  addedItems.sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
+  // 처음 만드는 wepic(기존 사진이 없음)은 예전처럼 촬영일 오름차순으로 정렬한다.
+  const manifestItems = keptItems.length
+    ? keptItems.concat(addedItems)
+    : addedItems;
   if (!manifestItems.length) {
     // 한 장도 못 넣은 이유가 용량이면 그렇게 알려준다(원인을 알 수 없는 500보다 낫다).
     if (quotaStopped) return quotaExceeded({ used: quotaBase, limit: quotaLimit, addBytes: 0 });
@@ -1597,11 +1627,10 @@ async function shareCreate(request, env, token, sess) {
   const old = await env.SHARES.list({ prefix: `${shareId}/` });
   const stale = (old.objects || []).map((o) => o.key).filter((k) => !keepKeys.has(k));
   if (stale.length) await env.SHARES.delete(stale);
-  manifestItems.sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
+  // (정렬은 위에서 이미 끝냈다 — 기존 사진 순서 유지 + 새 사진은 뒤)
   // PIN: 전체공유(isPublic)면 PIN을 아예 두지 않는다(비공개→공개로 바꾼 경우 기존 PIN도
   // 씻어낸다). 전체공유가 아니면 기존 로직 그대로 — 클라이언트가 보낸 값이 유효하면 그것
   // (=링크변경 반영 시 수정된 PIN), 없으면 기존 유지, 그것도 없으면 새로 4자리 발급.
-  const prev = await readManifest(env, shareId);
   const pin = isPublic ? null : (normalizePin(body.pin) || (prev && prev.pin) || genPin());
   const owner = sess.data?.email || sess.data?.name || null;
   // 전체공유 피드에는 이메일을 노출하지 않는다 — 이름만 스냅샷해 둔다.
@@ -1613,7 +1642,10 @@ async function shareCreate(request, env, token, sess) {
     frameName: curFrameName, items: manifestItems,
   });
   return json({
-    url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, isPublic,
+    // 화면에 보여주고 나눠주는 주소는 짧은 쪽이다(원래 주소도 함께 준다).
+    url: shortUrlOf(env, shareId), longUrl: `${env.BASE_URL}/f/${shareId}`,
+    count: manifestItems.length, pin, isPublic,
+    commentCount: await commentCountOf(env, shareId),
     frameId: shareId, frameName: curFrameName,
     // 용량 때문에 일부만 저장했으면 화면에서 안내할 수 있게 알려준다.
     ...(quotaStopped ? { quotaStopped: true, quotaLimitText: fmtBytes(quotaLimit) } : {}),
@@ -1639,7 +1671,7 @@ async function shareBlob(request, env, sess, user) {
   const { sid: ssid, data: sdata } = sess;
   ensureFrames(sdata);
   if (!sdata.currentFrameId) {
-    const newId = randomId(9);
+    const newId = await newShareId(env);
     sdata.frames.push({ id: newId, name: wantName || `액자 ${sdata.frames.length + 1}` });
     sdata.currentFrameId = newId;
   }
@@ -1675,7 +1707,9 @@ async function shareBlob(request, env, sess, user) {
     });
   }
   if (!manifestItems.length) return json({ error: '사진을 저장하지 못했습니다. (동영상은 공유 링크에 포함되지 않습니다)' }, 500);
-  manifestItems.sort((a, b) => new Date(a.createTime) - new Date(b.createTime));
+  // 촬영일로 다시 정렬하지 않는다 — **화면이 보낸 순서**가 곧 사진 순서다.
+  // (갤러리 경로는 매번 전체를 다시 올리므로, "사진 추가"로 뒤에 붙인 사진이
+  //  촬영일이 더 앞서더라도 앞으로 끼어들지 않는다)
 
   // 이번에 쓰이지 않는 예전 파일 정리(제외된 사진·이전 확장자 등)
   const old = await env.SHARES.list({ prefix: `${shareId}/` });
@@ -1692,7 +1726,12 @@ async function shareBlob(request, env, sess, user) {
     ownerUserId: user.id, // "My사진관리"에서 본인 소유만 걸러낼 고유 키(D1 회원 id)
     frameName: curFrameName, items: manifestItems,
   });
-  return json({ url: `${env.BASE_URL}/f/${shareId}`, count: manifestItems.length, pin, isPublic, frameId: shareId, frameName: curFrameName });
+  return json({
+    url: shortUrlOf(env, shareId), longUrl: `${env.BASE_URL}/f/${shareId}`,
+    count: manifestItems.length, pin, isPublic,
+    commentCount: await commentCountOf(env, shareId),
+    frameId: shareId, frameName: curFrameName,
+  });
 }
 
 // 공유 링크 즉시 폐기: "현재 액자"를 목록에서 완전히 제거한다.
@@ -1711,6 +1750,36 @@ async function shareDelete(request, env, sess) {
 }
 
 // 공개 보기 페이지: 매니페스트 확인 후 share.html(정적) 반환
+// ---------- 짧은(압축) 주소 ----------
+// wepic id는 randomId(9) = 12자다. 그 **앞 6자**를 짧은 주소로 쓴다:
+//   /f/DVjX2R_yBW8P  →  /w/DVjX2R
+// 별도 저장(매핑 테이블)이 필요 없다 — R2에 이미 `<id>/...` 키로 파일이 있으므로
+// prefix로 목록을 뽑으면 전체 id를 되찾을 수 있다. 그래서 **예전에 만든 wepic도**
+// 마이그레이션 없이 그대로 짧은 주소가 생긴다.
+const SHORT_LEN = 6;
+const shortCodeOf = (id) => String(id || '').slice(0, SHORT_LEN);
+const shortUrlOf = (env, id) => `${env.BASE_URL}/w/${shortCodeOf(id)}`;
+
+// 짧은 코드 → 전체 id. 같은 앞자리를 가진 wepic이 둘 이상이면(확률상 거의 없다)
+// 어느 것인지 알 수 없으므로 실패로 처리한다.
+async function resolveShortCode(env, code) {
+  if (!code) return null;
+  if (code.length > SHORT_LEN) return code;   // 전체 id를 그대로 넣은 경우도 받아준다
+  const list = await env.SHARES.list({ prefix: code, delimiter: '/' });
+  const ids = (list.delimitedPrefixes || []).map((k) => k.replace(/\/$/, ''));
+  return ids.length === 1 ? ids[0] : null;
+}
+
+// 이 wepic에 달린 댓글 수. 댓글이 하나라도 있으면 **사진 삭제를 막는다**
+// (보던 사람들이 남긴 글이 가리키는 사진이 사라지면 대화가 어긋난다).
+async function commentCountOf(env, id) {
+  try {
+    const r = await env.DB.prepare('SELECT COUNT(*) AS n FROM share_comments WHERE share_id = ?1')
+      .bind(id).first();
+    return Number(r?.n || 0);
+  } catch { return 0; }
+}
+
 async function shareViewPage(env, id) {
   const m = await readManifest(env, id);
   if (!m) return html('공유 사진을 찾을 수 없습니다. 링크가 만료되었거나 삭제되었을 수 있습니다.', 404);
@@ -1970,6 +2039,14 @@ export default {
 
       const mF = p.match(/^\/f\/([\w-]{6,})$/);
       if (mF && m === 'GET') return shareViewPage(env, mF[1]);
+      // 짧은(압축) 주소 — /w/<앞6자>. share.js가 주소의 마지막 조각을 wepic id로 읽으므로
+      // 여기서 원래 주소로 302 넘겨준다(나눠주는 링크만 짧으면 목적은 달성된다).
+      const mW = p.match(/^\/w\/([\w-]{4,})$/);
+      if (mW && m === 'GET') {
+        const full = await resolveShortCode(env, mW[1]);
+        if (!full) return html('공유 사진을 찾을 수 없습니다. 링크를 다시 확인해주세요.', 404);
+        return redirect(`/f/${full}`);
+      }
       if (p.startsWith('/shares/') && m === 'GET') return shareAsset(request, env, p, url);
 
       // 그 외에는 정적 자산(web/public)
