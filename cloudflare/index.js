@@ -889,6 +889,61 @@ async function requireViewableShare(request, env, id) {
   return { manifest: m };
 }
 
+// ---------- 함께 보고 있는 사람 (presence) ----------
+// 시청자가 PRESENCE_BEAT마다 자기 행을 갱신(UPSERT)하고, 서버는 최근 PRESENCE_TTL 안에
+// 갱신된 행만 "접속 중"으로 센다. 사진을 서로 맞추지는 않는다(요청) — 인원과 입장만 알린다.
+const PRESENCE_TTL = 45_000;      // 이 시간 안에 하트비트가 있었으면 접속 중으로 본다
+const PRESENCE_PURGE = 300_000;   // 이보다 오래된 행은 지운다(표가 무한히 커지지 않게)
+
+async function sharePresence(request, env, id) {
+  const guard = await requireViewableShare(request, env, id);
+  if (guard.error) return guard.error;
+
+  const body = await request.json().catch(() => ({}));
+  // 화면이 "여기까지는 이미 알림을 봤다"고 알려주는 시각. 그 뒤에 들어온 사람만 새 접속자다.
+  const since = Number(body.since) || 0;
+  const sess = await getSession(request, env);
+  const userId = sess.data?.userId || null;
+  // 로그인 회원은 회원 기준으로, 아니면 방문자 쿠키 기준으로 한 사람을 센다.
+  const visitor = userId ? { vid: null, setCookie: null } : visitorOf(request);
+  const who = userId ? `u${userId}` : visitor.vid;
+  const now = Date.now();
+
+  // 내 행 갱신 — first_seen은 처음 들어온 시각을 그대로 둔다(재방문이 "새 접속"으로 보이지
+  // 않게). 다만 오래 비웠다가(=TTL 지나 목록에서 빠진 뒤) 다시 오면 새로 들어온 것으로 본다.
+  await env.DB.prepare(
+    `INSERT INTO share_presence (share_id, visitor_id, first_seen, last_seen)
+     VALUES (?1, ?2, ?3, ?3)
+     ON CONFLICT (share_id, visitor_id) DO UPDATE SET
+       last_seen = ?3,
+       first_seen = CASE WHEN share_presence.last_seen < ?4 THEN ?3 ELSE share_presence.first_seen END`
+  ).bind(id, who, now, now - PRESENCE_TTL).run();
+
+  const cutoff = now - PRESENCE_TTL;
+  const cnt = await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM share_presence WHERE share_id = ?1 AND last_seen >= ?2'
+  ).bind(id, cutoff).first();
+  // 나 말고, 내가 마지막으로 확인한 시각 이후에 들어온 사람 수
+  let joined = 0;
+  if (since > 0) {
+    const j = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM share_presence
+        WHERE share_id = ?1 AND last_seen >= ?2 AND first_seen > ?3 AND visitor_id != ?4`
+    ).bind(id, cutoff, since, who).first();
+    joined = Number(j?.n || 0);
+  }
+  // 아주 오래된 행 청소(자주 할 필요가 없어 20번에 1번 정도만)
+  if (now % 20 === 0) {
+    await env.DB.prepare('DELETE FROM share_presence WHERE last_seen < ?1')
+      .bind(now - PRESENCE_PURGE).run().catch(() => {});
+  }
+  return json(
+    { viewers: Number(cnt?.n || 0), joined, now },
+    200,
+    visitor.setCookie ? { 'Set-Cookie': visitor.setCookie } : {},
+  );
+}
+
 // 좋아요 수(회원 + 비로그인 방문자를 합산)와 "내가 눌렀는지"
 async function likeStateOf(env, id, userId, vid) {
   const a = await env.DB.prepare('SELECT COUNT(*) as c FROM share_likes WHERE share_id = ?1').bind(id).first();
@@ -2015,6 +2070,9 @@ export default {
       // (PIN이 걸린 wepic은 PIN을 통과해야 통과한다 — requireViewableShare 참고)
       const mLike = p.match(/^\/api\/wepic\/([\w-]{6,})\/like$/);
       if (mLike && m === 'POST') return toggleShareLike(request, env, mLike[1]);
+      // 함께 보고 있는 사람 — 하트비트 겸 인원/새 접속자 조회
+      const mPres = p.match(/^\/api\/wepic\/([\w-]{6,})\/presence$/);
+      if (mPres && m === 'POST') return sharePresence(request, env, mPres[1]);
       const mCmt = p.match(/^\/api\/wepic\/([\w-]{6,})\/comments$/);
       if (mCmt && m === 'GET') return listComments(request, env, mCmt[1], url);
       if (mCmt && m === 'POST') return addComment(request, env, mCmt[1]);

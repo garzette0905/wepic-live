@@ -143,6 +143,60 @@
   @media (max-width: 600px) {
     .comment-pane { bottom: 58px; max-height: 44vh; }
   }
+
+  /* ---- 실시간 알림 팝업 (좋아요·댓글·새 접속) ----
+     사진 오른쪽 위에서 떠올라 잠깐 머물고 사라진다. 사진을 가리지 않게 폭을 제한한다. */
+  .live-popups {
+    position: absolute; right: 16px; top: 16px; z-index: 7;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+    max-width: min(300px, calc(100% - 32px)); pointer-events: none;
+  }
+  .live-pop {
+    max-width: 100%;
+    background: linear-gradient(rgba(11, 15, 23, 0.78), rgba(18, 24, 36, 0.78));
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--glass-border); border-radius: 14px;
+    padding: 8px 12px; font-size: 12.5px; line-height: 1.45; color: #f1f5fb;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
+    /* 떠오르면서 나타나고, 마지막 0.5초에 사라진다(총 표시 시간은 JS의 LIVE_POP_MS와 맞춘다) */
+    animation: livePopIn 0.28s ease-out, livePopOut 0.5s ease-in forwards;
+    animation-delay: 0s, calc(var(--pop-life, 4s) - 0.5s);
+  }
+  .live-pop b { color: #fff; }
+  .live-pop .live-pop-who { color: var(--peach); font-weight: 700; margin-right: 5px; }
+  .live-pop.like { color: #ffd7d0; }
+  .live-pop.join { color: #cfe0ff; }
+  @keyframes livePopIn  { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+  @keyframes livePopOut { to { opacity: 0; transform: translateY(-6px); } }
+
+  /* ---- 빈화면 모드 ----
+     사진만 남긴다. 제목·사진번호·촬영일/곡명·진행바·댓글창을 감추고, 아이콘 줄에서는
+     "빈화면 해제"와 "화면 작게(전체화면 토글)" 두 개만 남긴다. */
+  body.clean #share-title,
+  body.clean #share-counter,
+  body.clean #share-caption,
+  body.clean .progress-strip,
+  body.clean .comment-pane { display: none !important; }
+  /* ⚠️ !important가 필요하다 — #btn-music은 JS가 인라인 style.display를 직접 넣는데
+     (미리듣기/유튜브 유무에 따라 flex/none), 인라인 스타일은 보통 규칙보다 우선이라
+     !important 없이는 빈화면에서도 음표 아이콘이 남는다. */
+  body.clean .share-actions > * { display: none !important; }
+  body.clean .share-actions > #btn-clean,
+  body.clean .share-actions > #btn-fullscreen { display: flex !important; }
+
+  /* 빈화면에서는 그 두 아이콘도 조용히 숨어 있다가, 손을 대면 3초만 나타난다.
+     visibility까지 끄지 않으면 안 보이는 버튼이 눌린다. */
+  body.clean.ui-hidden .share-actions {
+    opacity: 0; visibility: hidden;
+    transition: opacity 0.5s ease, visibility 0.5s ease;
+  }
+  body.clean .share-actions { transition: opacity 0.2s ease; }
+
+  /* 빈화면 아이콘: 켜져 있을 때만 "해제" 모양(줄이 있는 쪽)을 보여준다 */
+  #btn-clean .icon-clean-off { display: none; }
+  body.clean #btn-clean .icon-clean-on { display: none; }
+  body.clean #btn-clean .icon-clean-off { display: block; }
+  body.clean #btn-clean { opacity: 1; }
 </style>
 </head>
 <body>
@@ -185,6 +239,18 @@
         <svg class="icon-shrink" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/>
           <path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/>
+        </svg>
+      </button>
+
+      <!-- 빈화면: 사진만 남기고 제목·번호·아이콘·촬영일/곡명·진행바를 모두 감춘다.
+           벽에 걸어두는 전자액자처럼 보이게 하는 모드다. -->
+      <button id="btn-clean" class="icon-btn" title="빈화면 (사진만 보기)">
+        <svg class="icon-clean-on" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="16" rx="2"/>
+        </svg>
+        <svg class="icon-clean-off" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="16" rx="2"/>
+          <line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="9" x2="8" y2="20"/>
         </svg>
       </button>
 
@@ -271,6 +337,9 @@
     </div>
 
     <div id="share-caption" class="share-caption"></div>
+
+    <!-- 같이 보는 사람의 좋아요·댓글, 새 접속 알림이 잠깐 떠올랐다 사라지는 자리 -->
+    <div id="live-popups" class="live-popups" aria-live="polite"></div>
 
     <div id="toast" class="toast hidden"></div>
     <div class="progress-strip"><div id="progress-strip-fill" class="progress-strip-fill"></div></div>

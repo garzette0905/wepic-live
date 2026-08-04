@@ -598,15 +598,70 @@ async function pollForUpdates() {
 // Durable Objects가 필요해 지금 구성(KV·D1·R2)보다 무거워지므로, 패널을 열어둔 동안 3초마다
 // **새로 달린 것만**(after=마지막 id) 받아온다 — 체감상 거의 실시간이고 트래픽도 적다.
 const CMT_POLL_OPEN = 3000;    // 댓글창을 열어둔 동안
-const CMT_POLL_IDLE = 20000;   // 닫아둔 동안(개수만 갱신)
+// 닫아둔 동안에도 5초로 당겼다 — 같이 보는 사람의 댓글·좋아요를 **팝업으로 알려주기** 때문에
+// 예전의 20초로는 "잠깐 떠올랐다 사라지는" 느낌이 나지 않았다.
+const CMT_POLL_IDLE = 5000;
 let lastCommentId = 0;
 let commentsOpen = false;
 let commentTimer = null;
 let likeCount = 0;
 let likedByMe = false;
 let commentTotal = 0;
+// 내가 방금 쓴 댓글 id — 폴링이 같은 글을 되돌려줄 때 나에게는 팝업을 띄우지 않기 위해 기억한다.
+const myCommentIds = new Set();
 
 const cmtListEl = () => document.getElementById('comment-list');
+
+// ---------- 잠깐 떠올랐다 사라지는 알림 팝업 ----------
+// 같이 보는 사람이 남긴 댓글·좋아요, 그리고 새 접속을 알린다.
+// 사라지는 시간은 CSS 애니메이션과 맞춰야 하므로 --pop-life 변수로 함께 넘긴다.
+const LIVE_POP_MS = 4200;
+const LIVE_POP_MAX = 4;          // 한꺼번에 너무 많이 쌓이면 사진을 가린다
+function livePopup(html, kind) {
+  const box = document.getElementById('live-popups');
+  if (!box) return;
+  while (box.children.length >= LIVE_POP_MAX) box.firstElementChild.remove();
+  const el = document.createElement('div');
+  el.className = 'live-pop' + (kind ? ' ' + kind : '');
+  el.style.setProperty('--pop-life', LIVE_POP_MS + 'ms');
+  el.innerHTML = html;
+  box.appendChild(el);
+  setTimeout(() => el.remove(), LIVE_POP_MS);
+}
+// 사용자가 쓴 글이 그대로 화면에 들어가면 위험하므로 항상 이스케이프해서 넣는다.
+const esc = (t) => String(t).replace(/[&<>"']/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// ---------- 함께 보고 있는 사람 ----------
+// 사진을 서로 맞추지는 않는다(요청). 들어올 때 한 번 알리고, 그 뒤에 누가 들어오면 알려준다.
+const PRESENCE_BEAT = 25000;
+let presenceSince = 0;        // 서버 시각 기준 — 이 시각 이후에 들어온 사람만 "새 접속"
+let presenceGreeted = false;  // 첫 안내를 이미 띄웠는지
+let presenceStarted = false;  // 하트비트를 이미 걸었는지(PIN 재시도로 두 번 걸리지 않게)
+async function beatPresence() {
+  try {
+    const r = await fetch(`/api/wepic/${encodeURIComponent(shareId)}/presence`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ since: presenceSince }),
+    });
+    if (!r.ok) return;   // PIN 게이트 등 — 조용히 넘어간다
+    const d = await r.json();
+    // 다음 호출부터는 "이 시각 이후에 들어온 사람"만 새 접속으로 본다.
+    // 서버가 준 시각을 쓰므로 내 PC 시계가 틀어져 있어도 상관없다.
+    presenceSince = d.now || presenceSince;
+    if (!presenceGreeted) {
+      presenceGreeted = true;
+      const others = Math.max(0, (d.viewers || 1) - 1);
+      showToast('현재 화면이 재생중입니다. 같이 참여합니다.'
+        + (others ? ` (${others}명이 함께 보고 있어요)` : ''));
+    } else if (d.joined > 0) {
+      livePopup(d.joined > 1
+        ? `새로운 사용자 <b>${d.joined}명</b>이 접속했습니다`
+        : '새로운 사용자가 접속했습니다', 'join');
+    }
+  } catch { /* 네트워크 순단 무시 */ }
+}
 
 function fmtCommentTime(iso) {
   const d = new Date(iso);
@@ -656,9 +711,17 @@ async function loadComments(initial) {
     const r = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
     if (!r.ok) return; // PIN 게이트 등 — 조용히 넘어간다(사진 재생은 계속)
     const d = await r.json();
+    // 좋아요가 늘었으면 = 같이 보는 누군가가 눌렀다는 뜻이라 팝업으로 알린다.
+    // (내가 누른 것은 아래 btn-like에서 likeCount를 이미 갱신해 두므로 델타에 걸리지 않는다)
+    const grew = (d.likeCount || 0) - likeCount;
     likeCount = d.likeCount || 0;
     likedByMe = !!d.likedByMe;
     renderLikeUI();
+    if (!initial && grew > 0) {
+      livePopup(grew > 1
+        ? `♥ 좋아요 <b>${grew}개</b>가 새로 눌렸어요`
+        : '♥ 누군가 좋아요를 눌렀어요', 'like');
+    }
     if (initial) {
       cmtListEl().innerHTML = '';
       lastCommentId = 0;
@@ -674,6 +737,12 @@ async function loadComments(initial) {
     } else if (d.comments.length) {
       commentTotal += d.comments.length;
       appendComments(d.comments, true);
+      // 댓글창을 닫고 보는 사람에게도 내용이 잠깐 보이도록 팝업으로 함께 띄운다.
+      // 내가 방금 쓴 글은 sendComment가 이미 화면에 넣었으므로 여기서 제외한다.
+      d.comments.forEach((c) => {
+        if (myCommentIds.has(c.id)) { myCommentIds.delete(c.id); return; }
+        livePopup(`<span class="live-pop-who">${esc(c.author)}</span>${esc(c.body)}`);
+      });
     }
     renderCommentCount();
   } catch { /* 네트워크 순단 무시 */ }
@@ -715,6 +784,7 @@ async function sendComment() {
     input.value = '';
     note.textContent = '';
     commentTotal += 1;
+    if (d.comment?.id) myCommentIds.add(d.comment.id);
     appendComments([d.comment], true);
     renderCommentCount();
   } catch (err) {
@@ -751,6 +821,43 @@ document.getElementById('btn-like').addEventListener('click', async () => {
     b.disabled = false;
   }
 });
+
+// ---------- 빈화면 모드 ----------
+// 사진만 남기고 제목·번호·촬영일/곡명·진행바·댓글창·나머지 아이콘을 감춘다(CSS의 body.clean).
+// 남는 두 아이콘(빈화면 해제 · 화면 작게)도 손을 대지 않으면 3초 뒤 조용히 사라진다 —
+// 벽에 걸어두는 전자액자처럼 보이게 하는 게 이 모드의 목적이다.
+const UI_HIDE_MS = 3000;
+let uiHideTimer = null;
+let cleanMode = false;
+
+// 손을 댔다는 신호가 오면 아이콘을 보여주고, 3초 뒤 다시 감춘다.
+function pokeUI() {
+  if (!cleanMode) return;
+  document.body.classList.remove('ui-hidden');
+  if (uiHideTimer) clearTimeout(uiHideTimer);
+  uiHideTimer = setTimeout(() => {
+    if (cleanMode) document.body.classList.add('ui-hidden');
+  }, UI_HIDE_MS);
+}
+
+function setCleanMode(on) {
+  cleanMode = !!on;
+  document.body.classList.toggle('clean', cleanMode);
+  const b = document.getElementById('btn-clean');
+  b.title = cleanMode ? '빈화면 해제 (제목·정보 다시 보기)' : '빈화면 (사진만 보기)';
+  b.setAttribute('aria-label', b.title);
+  if (cleanMode) {
+    setCommentsOpen(false);   // 댓글창이 열려 있으면 사진만 보이지 않는다
+    pokeUI();                 // 켠 직후에는 3초 동안 보여준다(끌 방법을 알 수 있게)
+  } else {
+    if (uiHideTimer) clearTimeout(uiHideTimer);
+    document.body.classList.remove('ui-hidden');
+  }
+}
+document.getElementById('btn-clean').addEventListener('click', () => setCleanMode(!cleanMode));
+// 마우스·터치·키보드 어느 쪽으로 건드려도 아이콘이 잠깐 나타난다.
+['mousemove', 'mousedown', 'touchstart', 'keydown', 'wheel'].forEach((ev) =>
+  window.addEventListener(ev, pokeUI, { passive: true }));
 
 // ---- PIN 입력 게이트 ----
 // PIN이 걸린 공유는 서버가 photos.json과 사진 파일까지 막는다(401 pinRequired).
@@ -837,6 +944,12 @@ async function start() {
   // 댓글·좋아요도 재생이 시작된 뒤(=볼 자격이 확인된 뒤) 불러온다.
   await loadComments(true);
   scheduleCommentPoll();
+  // "함께 보고 있는 사람"도 같은 시점부터 — 첫 호출이 입장 안내를 띄운다.
+  if (!presenceStarted) {
+    presenceStarted = true;
+    beatPresence();
+    setInterval(beatPresence, PRESENCE_BEAT);
+  }
   return true;
 }
 
