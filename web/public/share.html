@@ -2,7 +2,9 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<!-- 확대는 이 화면이 직접 처리한다(핀치 → 사진 줌). 브라우저 자체 확대까지 겹치면
+     주소창·아이콘까지 같이 커져 액자 화면이 흐트러지므로 브라우저 확대는 막는다. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>Wepic Live</title>
 <!-- 공유 링크는 검색엔진에 색인되면 안 된다(링크를 아는 사람만 보는 페이지) -->
 <meta name="robots" content="noindex, nofollow" />
@@ -16,6 +18,15 @@
 <style>
   /* 공유 보기 전용: 사진이 화면 전체를 채우는 단순 슬라이드쇼 */
   .share-view { position: fixed; inset: 0; background: #000; overflow: hidden; }
+  /* 사진·동영상 레이어를 한 겹 감싼 무대. 줌인/줌아웃은 이 무대 전체를 확대·이동시킨다
+     (사진 <img>에 직접 걸면 켄번즈 애니메이션의 transform과 서로 덮어써서 튄다). */
+  .photo-stage {
+    position: absolute; inset: 0; transform-origin: center center;
+    transition: transform 0.22s ease-out; will-change: transform;
+  }
+  /* 확대된 상태에서는 끌어서 옮길 수 있다(손가락·마우스 모두) */
+  .photo-stage.zoomed { cursor: grab; touch-action: none; }
+  .photo-stage.zoomed.grabbing { cursor: grabbing; transition: none; }
   .share-view .photo-layer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity 1.4s ease-in-out; }
   .share-view .photo-layer.active { opacity: 1; }
   .share-view video.photo-layer { background: #000; }
@@ -68,6 +79,56 @@
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     color: var(--text-muted); font-size: 15px; text-align: center; padding: 24px;
   }
+  /* 링크를 눌러 들어온 직후에는 사진이 아직 안 받아져 화면이 새까맣게 비어 보였다.
+     그 동안 wepic 로고를 띄우고, 뒤에는 이 wepic의 첫 사진을 아주 희미하게 깔아 둔다
+     (썸네일이라 금방 받아진다 → "빈 화면"이 아니라 곧 나올 사진이 어렴풋이 비친다). */
+  .share-loading { z-index: 15; background: #05070d; }
+  .splash-photo {
+    position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+    opacity: 0; transition: opacity 0.8s ease;
+    filter: blur(24px) brightness(0.42) saturate(1.1); transform: scale(1.14);
+  }
+  .splash-photo.show { opacity: 1; }
+  .splash-inner { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .splash-logo {
+    width: 76px; height: 76px; border-radius: 20px; opacity: 0.92;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.55);
+    animation: splashPulse 2.2s ease-in-out infinite;
+  }
+  .splash-name { font-size: 20px; font-weight: 700; letter-spacing: 1.5px; color: rgba(255,255,255,0.92); }
+  .splash-msg { font-size: 13px; color: rgba(255,255,255,0.55); }
+  @keyframes splashPulse { 0%,100% { opacity: 0.92; } 50% { opacity: 0.6; } }
+
+  /* 지금 화면을 함께 보고 있는 사람 수 — 나 말고 다른 사람이 있을 때만 나타난다 */
+  .viewers-pill {
+    position: absolute; right: 16px; top: 16px; z-index: 8;
+    background: linear-gradient(rgba(11, 15, 23, 0.78), rgba(18, 24, 36, 0.78));
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--glass-border); border-radius: 999px;
+    padding: 6px 12px; font-size: 12px; font-weight: 700; color: #cfe0ff;
+    display: flex; align-items: center; gap: 6px; pointer-events: none;
+  }
+  .viewers-pill .dot {
+    width: 7px; height: 7px; border-radius: 50%; background: #6ee7a8;
+    box-shadow: 0 0 0 0 rgba(110, 231, 168, 0.6); animation: viewerBeat 2s ease-out infinite;
+  }
+  @keyframes viewerBeat {
+    0% { box-shadow: 0 0 0 0 rgba(110, 231, 168, 0.55); }
+    70% { box-shadow: 0 0 0 8px rgba(110, 231, 168, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(110, 231, 168, 0); }
+  }
+  /* 참여 인원 알약이 떠 있으면 알림 팝업은 그 아래에서 시작한다(서로 겹치지 않게) */
+  body.has-viewers .live-popups { top: 56px; }
+
+  /* 확대 배율 표시 — 줌 조작 중에만 잠깐 보인다 */
+  .zoom-badge {
+    position: absolute; left: 50%; top: 16px; transform: translateX(-50%); z-index: 8;
+    background: rgba(0,0,0,0.55); backdrop-filter: blur(6px);
+    border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 700;
+    color: rgba(255,255,255,0.9); pointer-events: none;
+    opacity: 0; transition: opacity 0.25s ease;
+  }
+  .zoom-badge.show { opacity: 1; }
   .tap-hint {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     z-index: 8; background: rgba(0,0,0,0.35); color: #fff; font-size: 15px; cursor: pointer;
@@ -176,6 +237,7 @@
   body.clean #share-counter,
   body.clean #share-caption,
   body.clean .progress-strip,
+  body.clean .viewers-pill,
   body.clean .comment-pane { display: none !important; }
   /* ⚠️ !important가 필요하다 — #btn-music은 JS가 인라인 style.display를 직접 넣는데
      (미리듣기/유튜브 유무에 따라 flex/none), 인라인 스타일은 보통 규칙보다 우선이라
@@ -201,20 +263,31 @@
 </head>
 <body>
   <div class="share-view">
-    <!-- 세로 사진 등으로 생기는 검은 여백을 메우는 흐린 배경(styles.css의 .photo-backdrop).
-         사진 레이어보다 뒤에 깔리도록 DOM에서 먼저 둔다. -->
-    <img class="photo-backdrop" id="photo-a-bg" alt="" aria-hidden="true" />
-    <img class="photo-backdrop" id="photo-b-bg" alt="" aria-hidden="true" />
-    <img class="photo-layer" id="photo-a" />
-    <img class="photo-layer" id="photo-b" />
-    <!-- 동영상 항목 재생용 레이어 (사진과 같은 자리에 겹쳐 표시) -->
-    <video class="photo-layer" id="video-layer" playsinline preload="metadata"></video>
+    <!-- 사진·동영상 레이어를 감싼 "무대". 줌인/줌아웃은 이 무대를 통째로 확대·이동시킨다. -->
+    <div class="photo-stage" id="photo-stage">
+      <!-- 세로 사진 등으로 생기는 검은 여백을 메우는 흐린 배경(styles.css의 .photo-backdrop).
+           사진 레이어보다 뒤에 깔리도록 DOM에서 먼저 둔다. -->
+      <img class="photo-backdrop" id="photo-a-bg" alt="" aria-hidden="true" />
+      <img class="photo-backdrop" id="photo-b-bg" alt="" aria-hidden="true" />
+      <img class="photo-layer" id="photo-a" />
+      <img class="photo-layer" id="photo-b" />
+      <!-- 동영상 항목 재생용 레이어 (사진과 같은 자리에 겹쳐 표시) -->
+      <video class="photo-layer" id="video-layer" playsinline preload="metadata"></video>
+    </div>
 
     <div id="share-title" class="title-overlay hidden"></div>
     <!-- 제목 바로 아래, 제목과 같은 크기로 "3 / 10"처럼 몇 번째 사진인지 알려준다 -->
     <div id="share-counter" class="title-counter hidden"></div>
 
-    <div id="share-loading" class="share-loading">사진을 불러오는 중...</div>
+    <!-- 첫 사진이 준비될 때까지 보여주는 시작 화면 (로고 + 첫 사진을 희미하게) -->
+    <div id="share-loading" class="share-loading">
+      <img class="splash-photo" id="splash-photo" alt="" aria-hidden="true" />
+      <div class="splash-inner">
+        <img class="splash-logo" src="/icon-192-v2.png" alt="Wepic" />
+        <div class="splash-name">Wepic</div>
+        <div class="splash-msg" id="splash-msg">사진을 불러오는 중...</div>
+      </div>
+    </div>
     <div id="share-error" class="share-error hidden"></div>
 
     <!-- PIN 입력: PIN이 걸린 공유는 맞는 번호를 넣기 전까지 사진이 재생되지 않는다 -->
@@ -296,6 +369,20 @@
         </svg>
       </button>
 
+      <!-- 확대 / 축소. 조작하는 동안에는 사진 넘김이 10초 동안 멈춘다(share.js의 ZOOM_HOLD_MS). -->
+      <button id="btn-zoom-in" class="icon-btn" title="확대">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/>
+          <path d="M11 8v6"/><path d="M8 11h6"/>
+        </svg>
+      </button>
+      <button id="btn-zoom-out" class="icon-btn" title="축소">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/>
+          <path d="M8 11h6"/>
+        </svg>
+      </button>
+
       <!-- 누르면 현재 사진 1장을 바로 저장 -->
       <button id="btn-download" class="icon-btn" title="이 사진 저장">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -337,6 +424,14 @@
     </div>
 
     <div id="share-caption" class="share-caption"></div>
+
+    <!-- 지금 함께 보고 있는 사람 수. 나 혼자면 아예 나타나지 않는다. -->
+    <div id="viewers-pill" class="viewers-pill hidden" aria-live="polite">
+      <span class="dot"></span><span id="viewers-text"></span>
+    </div>
+
+    <!-- 확대 배율 표시(줌 조작 중에만) -->
+    <div id="zoom-badge" class="zoom-badge">100%</div>
 
     <!-- 같이 보는 사람의 좋아요·댓글, 새 접속 알림이 잠깐 떠올랐다 사라지는 자리 -->
     <div id="live-popups" class="live-popups" aria-live="polite"></div>

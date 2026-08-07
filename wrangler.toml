@@ -39,6 +39,20 @@ crons = ["0 * * * *"]
 
 # 시크릿은 대시보드(Settings → Variables and secrets, Encrypt)로 등록:
 #   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, KAKAO_CLIENT_ID, KAKAO_CLIENT_SECRET, SESSION_SECRET
+#   NAVER_CLIENT_ID, NAVER_CLIENT_SECRET        (선택 — 네이버 로그인을 쓸 때만)
+#   FACEBOOK_CLIENT_ID, FACEBOOK_CLIENT_SECRET  (선택 — 페이스북 로그인을 쓸 때만)
+# 값이 없는 제공자는 로그인 화면에 "(준비중)"으로 비활성 표시되므로, 등록하는 즉시 켜진다.
+#
+# 네이버: https://developers.naver.com > 애플리케이션 등록
+#   · 사용 API: "네이버 로그인" + "OpenID Connect" 사용 설정
+#   · Callback URL: https://<BASE_URL>/auth/naver/callback
+#   · 제공 정보(동의항목)에서 이름·이메일을 켜야 회원 이름이 채워진다.
+#     (id_token 서명이 ES256이라 서버에서 ES256 검증을 함께 지원한다)
+#
+# 페이스북: https://developers.facebook.com > 앱 만들기 > "Facebook 로그인" 제품 추가
+#   · 유효한 OAuth 리디렉션 URI: https://<BASE_URL>/auth/facebook/callback
+#   · 앱 ID = FACEBOOK_CLIENT_ID, 앱 시크릿 코드 = FACEBOOK_CLIENT_SECRET
+#   · 권한: public_profile, email (email은 앱 검수를 받아야 외부 사용자에게 열린다)
 # 배경음악의 "음악찾기"(30초 미리듣기)는 iTunes Search API를 쓴다 —
 # **API 키·앱 등록이 전혀 필요 없는 공개 엔드포인트**라 추가할 시크릿이 없다.
 # 카카오 값은 카카오 개발자센터(https://developers.kakao.com) > 내 애플리케이션 > 앱 키의

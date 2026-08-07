@@ -49,6 +49,37 @@ const OIDC_PROVIDERS = {
     clientSecret: (env) => env.KAKAO_CLIENT_SECRET,
     grantsPhotos: false,
   },
+  // 네이버 — 네이버 아이디로 로그인의 OpenID Connect. 서명이 **ES256**이라 JWT_ALGS에
+  // ES256을 함께 지원해 두었다(구글·카카오·페이스북은 RS256).
+  // 토큰 교환 때 state를 함께 보내야 한다(needsStateInToken) — 네이버만의 요구사항이다.
+  // 이름·이메일 같은 동의항목은 네이버 개발자센터의 앱 설정에서 켠다(scope 파라미터가 아니다).
+  naver: {
+    label: '네이버',
+    authUrl: 'https://nid.naver.com/oauth2.0/authorize',
+    tokenUrl: 'https://nid.naver.com/oauth2.0/token',
+    jwksUrl: 'https://nid.naver.com/oauth2.0/certs',
+    issuers: ['https://nid.naver.com'],
+    scope: 'openid',
+    extraAuthParams: {},
+    needsStateInToken: true,
+    clientId: (env) => env.NAVER_CLIENT_ID,
+    clientSecret: (env) => env.NAVER_CLIENT_SECRET,
+    grantsPhotos: false,
+  },
+  // 페이스북 — Facebook Login의 OpenID Connect. scope에 openid를 넣어야 id_token이 온다.
+  // 이메일은 사용자가 동의를 거부할 수 있어 없을 수도 있다(스키마가 NULL을 허용한다).
+  facebook: {
+    label: 'Facebook',
+    authUrl: 'https://www.facebook.com/v21.0/dialog/oauth',
+    tokenUrl: 'https://graph.facebook.com/v21.0/oauth/access_token',
+    jwksUrl: 'https://www.facebook.com/.well-known/oauth/openid/jwks/',
+    issuers: ['https://www.facebook.com', 'https://facebook.com'],
+    scope: 'openid email public_profile',
+    extraAuthParams: {},
+    clientId: (env) => env.FACEBOOK_CLIENT_ID,
+    clientSecret: (env) => env.FACEBOOK_CLIENT_SECRET,
+    grantsPhotos: false,
+  },
 };
 const isProvider = (p) => Object.prototype.hasOwnProperty.call(OIDC_PROVIDERS, p);
 
@@ -294,28 +325,41 @@ async function getAccessToken(env, sid, data) {
 // ---------- OIDC id_token 검증 ----------
 // 제공자의 공개키(JWKS)로 서명을 검증하고 iss·aud·exp·nonce까지 확인한다.
 // 이렇게 하면 프로필 조회 API를 따로 호출하지 않고도 신원을 신뢰할 수 있다.
+// 지원하는 서명 알고리즘. 구글·카카오·페이스북은 RS256, 네이버는 ES256으로 서명한다.
+// (알고리즘을 헤더에서 그대로 믿지 않고, 여기 표에 있는 것만 통과시킨다 — "alg: none" 같은
+//  고전적인 JWT 우회를 막기 위함이다.)
+const JWT_ALGS = {
+  RS256: {
+    importAlg: { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    verifyAlg: { name: 'RSASSA-PKCS1-v1_5' },
+    jwkOf: (k) => ({ kty: k.kty, n: k.n, e: k.e, alg: 'RS256', ext: true }),
+  },
+  ES256: {
+    importAlg: { name: 'ECDSA', namedCurve: 'P-256' },
+    verifyAlg: { name: 'ECDSA', hash: 'SHA-256' },
+    jwkOf: (k) => ({ kty: k.kty, crv: k.crv || 'P-256', x: k.x, y: k.y, ext: true }),
+  },
+};
+
 async function verifyIdToken(env, providerKey, idToken, expectedNonce) {
   const p = OIDC_PROVIDERS[providerKey];
   const parts = String(idToken || '').split('.');
   if (parts.length !== 3) throw new Error('id_token 형식이 올바르지 않습니다.');
   const header = b64urlToJson(parts[0]);
   const payload = b64urlToJson(parts[1]);
-  if (header.alg !== 'RS256') throw new Error(`지원하지 않는 서명 알고리즘입니다: ${header.alg}`);
+  const alg = JWT_ALGS[header.alg];
+  if (!alg) throw new Error(`지원하지 않는 서명 알고리즘입니다: ${header.alg}`);
 
   const jwks = await fetch(p.jwksUrl).then((r) => (r.ok ? r.json() : null));
   if (!jwks) throw new Error('공개키(JWKS)를 가져오지 못했습니다.');
-  const jwk = (jwks.keys || []).find((k) => k.kid === header.kid);
+  // kid가 없는 제공자도 있어, 키가 하나뿐이면 그것을 쓴다.
+  const keys = jwks.keys || [];
+  const jwk = keys.find((k) => k.kid === header.kid) || (keys.length === 1 ? keys[0] : null);
   if (!jwk) throw new Error('id_token에 해당하는 공개키를 찾을 수 없습니다.');
 
-  const key = await crypto.subtle.importKey(
-    'jwk',
-    { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: 'RS256', ext: true },
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false,
-    ['verify']
-  );
+  const key = await crypto.subtle.importKey('jwk', alg.jwkOf(jwk), alg.importAlg, false, ['verify']);
   const ok = await crypto.subtle.verify(
-    'RSASSA-PKCS1-v1_5',
+    alg.verifyAlg,
     key,
     b64urlToBytes(parts[2]),
     new TextEncoder().encode(`${parts[0]}.${parts[1]}`)
@@ -329,7 +373,12 @@ async function verifyIdToken(env, providerKey, idToken, expectedNonce) {
   const now = Math.floor(Date.now() / 1000);
   if (payload.exp && now >= payload.exp) throw new Error('id_token이 만료되었습니다.');
   // nonce: 로그인 시작 때 우리가 만든 값과 같아야 한다(재사용 공격 방지).
-  if (expectedNonce && payload.nonce !== expectedNonce) throw new Error('id_token nonce가 일치하지 않습니다.');
+  // nonce는 **서명된 본문 안에** 있으므로 공격자가 떼어낼 수 없다. 다만 제공자에 따라
+  // 아예 넣어주지 않는 경우가 있어(네이버 등), 값이 있을 때만 일치를 요구한다.
+  // 없더라도 로그인 요청 자체는 1회용 state(KV에 보관 후 즉시 삭제)로 이미 확인했다.
+  if (expectedNonce && payload.nonce && payload.nonce !== expectedNonce) {
+    throw new Error('id_token nonce가 일치하지 않습니다.');
+  }
   return payload;
 }
 
@@ -548,7 +597,11 @@ async function authCallback(env, url, providerKey) {
     const p = OIDC_PROVIDERS[providerKey];
     const d = await tokenRequest(
       env,
-      { code, grant_type: 'authorization_code', redirect_uri: oidcRedirectUri(env, providerKey) },
+      {
+        code, grant_type: 'authorization_code', redirect_uri: oidcRedirectUri(env, providerKey),
+        // 네이버는 토큰 교환에도 state를 요구한다(다른 제공자는 무시한다).
+        ...(p.needsStateInToken ? { state } : {}),
+      },
       providerKey
     );
 
@@ -1744,11 +1797,48 @@ async function shareBlob(request, env, sess, user) {
   // 유효한 새 파일이 실제로 저장된 뒤에만 이전 파일을 정리한다.
   const keepKeys = new Set([`${shareId}/photos.json`]);
   const manifestItems = [];
+  // 동영상은 한 개당 크기 상한(maxShareVideoBytes)을 넘으면 담지 않는다. 몇 개를 건너뛰었는지
+  // 화면에 알려줘야 "왜 빠졌는지"를 알 수 있으므로 세어 둔다.
+  let skippedBigVideos = 0;
+  const videoLimit = maxShareVideoBytes(env);
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
-    if (!/^image\//.test(f.type || '')) continue; // 사진만 (동영상 제외)
+    const isVideo = /^video\//.test(f.type || '');
+    // 사진과 동영상을 모두 받는다(예전에는 동영상을 여기서 버렸다).
+    if (!isVideo && !/^image\//.test(f.type || '')) continue;
+    if (isVideo && (f.size || 0) > videoLimit) { skippedBigVideos++; continue; }
     const m = meta[i] || {};
     const n = String(i + 1).padStart(3, '0');
+
+    if (isVideo) {
+      // (1) 동영상 원본
+      const vExt = /quicktime/.test(f.type) ? 'mov' : (/webm/.test(f.type) ? 'webm' : 'mp4');
+      const vKey = `${shareId}/photos/${n}_video.${vExt}`;
+      await env.SHARES.put(vKey, new Uint8Array(await f.arrayBuffer()),
+        { httpMetadata: { contentType: f.type || 'video/mp4' } });
+      keepKeys.add(vKey);
+      // (2) 정지 프레임(포스터) — 화면이 canvas로 뽑아 함께 올려준다. 없으면 포스터 없이 둔다
+      //     (목록 썸네일은 화면 쪽에서 재생 배지가 있는 빈 칸으로 대체된다).
+      const poster = form.get(`poster_${i}`);
+      let posterUrl = null;
+      if (poster && typeof poster.size === 'number' && poster.size > 0) {
+        const pKey = `${shareId}/photos/${n}_poster.jpg`;
+        await env.SHARES.put(pKey, new Uint8Array(await poster.arrayBuffer()),
+          { httpMetadata: { contentType: 'image/jpeg' } });
+        keepKeys.add(pKey);
+        posterUrl = `/shares/${pKey}`;
+      }
+      manifestItems.push({
+        id: `blob-${i}`, createTime: m.createTime || new Date().toISOString(),
+        width: m.width || null, height: m.height || null,
+        type: 'video',
+        videoUrl: `/shares/${vKey}`,
+        fullUrl: posterUrl || `/shares/${vKey}`,
+        thumbUrl: posterUrl || `/shares/${vKey}`,
+      });
+      continue;
+    }
+
     const ext = f.type === 'image/png' ? 'png' : 'jpg';
     const key = `${shareId}/photos/${n}_full.${ext}`;
     const bytes = new Uint8Array(await f.arrayBuffer());
@@ -1761,7 +1851,13 @@ async function shareBlob(request, env, sess, user) {
       thumbUrl: `/shares/${shareId}/photos/${n}_full.${ext}`,
     });
   }
-  if (!manifestItems.length) return json({ error: '사진을 저장하지 못했습니다. (동영상은 공유 링크에 포함되지 않습니다)' }, 500);
+  if (!manifestItems.length) {
+    return json({
+      error: skippedBigVideos
+        ? `동영상이 너무 커서 담지 못했습니다. (1개당 ${fmtBytes(videoLimit)} 이하)`
+        : '사진을 저장하지 못했습니다. 다시 시도해주세요.',
+    }, skippedBigVideos ? 413 : 500);
+  }
   // 촬영일로 다시 정렬하지 않는다 — **화면이 보낸 순서**가 곧 사진 순서다.
   // (갤러리 경로는 매번 전체를 다시 올리므로, "사진 추가"로 뒤에 붙인 사진이
   //  촬영일이 더 앞서더라도 앞으로 끼어들지 않는다)
@@ -1786,6 +1882,8 @@ async function shareBlob(request, env, sess, user) {
     count: manifestItems.length, pin, isPublic,
     commentCount: await commentCountOf(env, shareId),
     frameId: shareId, frameName: curFrameName,
+    // 용량이 커서 건너뛴 동영상이 있으면 화면이 그렇게 안내한다.
+    ...(skippedBigVideos ? { skippedBigVideos, videoLimitText: fmtBytes(videoLimit) } : {}),
   });
 }
 
@@ -1835,6 +1933,39 @@ async function commentCountOf(env, id) {
   } catch { return 0; }
 }
 
+// HTML 속성 안에 그대로 넣어도 안전하게 (제목은 사용자가 쓴 값이다)
+const htmlAttr = (s) => String(s || '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// 카카오톡·문자·메신저에 링크를 붙였을 때 보이는 미리보기 카드(Open Graph).
+// 예전에는 이 태그가 없어서 카드가 제목 한 줄만 있는 **빈 상자**로 보였다.
+// → wepic 제목과 대표 사진(없거나 PIN이 걸렸으면 wepic 로고)을 실어 준다.
+function shareOgTags(env, id, m) {
+  const title = (m.title || m.frameName || '').trim() || 'Wepic';
+  const count = (m.items || []).length;
+  // ⚠️ PIN이 걸린 wepic은 대표 사진을 카드에 실으면 안 된다 — 링크만 받아도 PIN 없이
+  //    사진 한 장을 보게 되는 셈이다. 그럴 때는 로고만 보여준다.
+  const first = (m.items || [])[0];
+  const shot = !m.pin && first ? (first.thumbUrl || first.fullUrl) : null;
+  const image = shot ? `${env.BASE_URL}${shot}` : `${env.BASE_URL}/icon-512-v2.png`;
+  const desc = m.pin
+    ? `사진 ${count}장 · PIN 번호를 넣으면 바로 재생됩니다.`
+    : `사진 ${count}장이 담겨 있습니다. 눌러서 함께 보세요.`;
+  const url = `${env.BASE_URL}/f/${id}`;
+  return [
+    `<meta property="og:type" content="website" />`,
+    `<meta property="og:site_name" content="Wepic" />`,
+    `<meta property="og:title" content="${htmlAttr(title)}" />`,
+    `<meta property="og:description" content="${htmlAttr(desc)}" />`,
+    `<meta property="og:image" content="${htmlAttr(image)}" />`,
+    `<meta property="og:url" content="${htmlAttr(url)}" />`,
+    `<meta name="twitter:card" content="summary_large_image" />`,
+    `<meta name="twitter:title" content="${htmlAttr(title)}" />`,
+    `<meta name="twitter:description" content="${htmlAttr(desc)}" />`,
+    `<meta name="twitter:image" content="${htmlAttr(image)}" />`,
+  ].join('\n');
+}
+
 async function shareViewPage(env, id) {
   const m = await readManifest(env, id);
   if (!m) return html('공유 사진을 찾을 수 없습니다. 링크가 만료되었거나 삭제되었을 수 있습니다.', 404);
@@ -1842,11 +1973,24 @@ async function shareViewPage(env, id) {
     await deleteShare(env, id);
     return html('링크가 만료되었습니다. 공유한 분에게 새 링크를 요청해주세요.', 404);
   }
-  // 검색엔진 색인 금지 헤더를 붙여 내려준다(share.html의 meta robots와 이중 안전장치).
   const res = await env.ASSETS.fetch(new Request(env.BASE_URL + '/share.html'));
-  const h = new Headers(res.headers);
-  h.set('X-Robots-Tag', 'noindex, nofollow');
-  return new Response(res.body, { status: res.status, headers: h });
+  let body = await res.text();
+  // 미리보기 카드용 태그를 <head> 끝에 끼워 넣고, 문서 제목도 이 wepic 제목으로 바꾼다.
+  const shareTitle = (m.title || m.frameName || '').trim();
+  if (shareTitle) {
+    body = body.replace('<title>Wepic Live</title>', `<title>${htmlAttr(shareTitle)} · Wepic</title>`);
+  }
+  body = body.replace('</head>', `${shareOgTags(env, id, m)}\n</head>`);
+  // 검색엔진 색인 금지 헤더를 붙여 내려준다(share.html의 meta robots와 이중 안전장치).
+  // 본문 길이가 달라졌으므로 원본의 Content-Length·ETag는 그대로 쓰면 안 된다.
+  return new Response(body, {
+    status: res.status,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'X-Robots-Tag': 'noindex, nofollow',
+      'Cache-Control': 'no-store',
+    },
+  });
 }
 
 // /shares/<id>/... → R2에서 서빙

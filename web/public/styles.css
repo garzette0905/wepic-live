@@ -830,6 +830,8 @@ select optgroup {
 .btn-provider.prov-kakao .prov-icon { background: #191600; color: #fee500; }
 .btn-provider.prov-naver { background: #03c75a; color: #ffffff; }
 .btn-provider.prov-naver .prov-icon { background: #ffffff; color: #03c75a; }
+.btn-provider.prov-facebook { background: #1877f2; color: #ffffff; }
+.btn-provider.prov-facebook .prov-icon { background: #ffffff; color: #1877f2; }
 /* 아직 설정되지 않은 제공자: 눌러도 오류가 나므로 비활성 표시 */
 .btn-provider.prov-soon { background: rgba(255,255,255,0.10); color: rgba(255,255,255,0.55); border-color: rgba(255,255,255,0.18); cursor: not-allowed; }
 .btn-provider.prov-soon:hover { filter: none; }

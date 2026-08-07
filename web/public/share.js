@@ -103,7 +103,8 @@ function showVideo(p) {
   };
   v.onended = () => goNext(0);
   // 진짜 디코딩 실패(코덱 미지원 등)일 때만 즉시 넘어간다.
-  v.onerror = () => goNext(1500);
+  // 그냥 조용히 지나가면 "왜 이 동영상만 안 나오지?"가 되므로 이유를 알려준다.
+  v.onerror = () => { showVideoFormatError(); goNext(1500); };
 
   let started = false;
   const tryPlay = () => {
@@ -121,7 +122,21 @@ function showVideo(p) {
   v.oncanplay = tryPlay;
   tryPlay(); // 이미 준비돼 있으면(작은 동영상 등) 곧바로 재생
   // 그래도 너무 오래 멈춰 있으면(정말 재생 불가) 넘어간다.
-  videoStallTimer = setTimeout(() => { if (!started) goNext(0); }, 15000);
+  videoStallTimer = setTimeout(() => {
+    if (!started) { showVideoFormatError(); goNext(0); }
+  }, 15000);
+}
+
+// 재생 실패 안내. 같은 동영상에서 여러 신호(onerror + 정체 타임아웃)가 겹쳐 들어오므로
+// 항목당 한 번만 띄운다. 동영상은 이제 그대로 올릴 수 있고(사진 추가에서 막지 않는다),
+// 브라우저가 못 트는 코덱일 때만 이렇게 이유를 알려준다.
+let videoErrorShownFor = null;
+function showVideoFormatError() {
+  const p = photos[idx];
+  const key = p ? (p.videoUrl || p.id || idx) : idx;
+  if (videoErrorShownFor === key) return;
+  videoErrorShownFor = key;
+  showToast('이 동영상은 포맷(코덱)이 맞지 않아 재생할 수 없습니다. 다음 사진으로 넘어갑니다.');
 }
 
 async function show() {
@@ -159,6 +174,23 @@ async function show() {
   updateProgress();
   // 동영상 다음에 온 사진이면 멈춰 있던 자동 전환 타이머를 다시 걸어준다.
   if (!timer) resetTimer();
+}
+
+// ---- 시작 화면(스플래시) ----
+// 링크를 눌러 들어온 직후에는 원본 사진(수 MB)이 아직 안 받아져 화면이 새까맣게 비어 있었다.
+// 그 사이에 wepic 로고를 띄우고, 뒤에는 이 wepic의 **첫 사진 썸네일**(수십 KB라 곧바로
+// 받아진다)을 크게 흐려 깔아 둔다 → 빈 화면 대신 곧 나올 사진이 어렴풋이 비친다.
+function showSplashPhoto(p) {
+  const el = document.getElementById('splash-photo');
+  if (!el || !p) return;
+  const url = p.thumbUrl || p.fullUrl;
+  if (!url) return;
+  el.onload = () => el.classList.add('show');
+  el.src = url;
+}
+function setSplashMessage(msg) {
+  const el = document.getElementById('splash-msg');
+  if (el) el.textContent = msg;
 }
 
 // 캡션: 우측 하단에 날짜(시계 자리) + 그 아래 곡목(♪). 소리 여부와 무관하게 곡목을 표시한다.
@@ -199,6 +231,7 @@ function advance() { if (photos.length) { idx = (idx + 1) % photos.length; show(
 // 방금 넘긴 사진이 곧바로 지나가 버리지 않게 한다. (멈춤 상태면 멈춘 채로 한 장만 이동)
 function step(delta) {
   if (!photos.length) return;
+  if (zoomScale > 1) resetZoom();   // 다른 사진으로 넘어가면 확대는 원래대로
   idx = (idx + delta + photos.length) % photos.length;
   if (timer) { clearInterval(timer); timer = null; }
   show();
@@ -516,7 +549,17 @@ function setSlidePaused(paused) {
   }
   updateSlideBtn();
 }
-document.getElementById('btn-slide').addEventListener('click', () => setSlidePaused(!slidePaused));
+document.getElementById('btn-slide').addEventListener('click', () => {
+  const next = !slidePaused;
+  // 사용자가 직접 ▶로 재개하면 "줌 조작 중 10초 멈춤"도 끝난 것으로 보고 확대를 푼다.
+  if (!next && zoomHoldTimer) {
+    clearTimeout(zoomHoldTimer);
+    zoomHoldTimer = null;
+    zoomPausedByUs = false;
+    resetZoom();
+  }
+  setSlidePaused(next);
+});
 document.getElementById('btn-prev').addEventListener('click', () => step(-1));
 document.getElementById('btn-next').addEventListener('click', () => step(1));
 
@@ -633,11 +676,28 @@ const esc = (t) => String(t).replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // ---------- 함께 보고 있는 사람 ----------
-// 사진을 서로 맞추지는 않는다(요청). 들어올 때 한 번 알리고, 그 뒤에 누가 들어오면 알려준다.
+// 사진을 서로 맞추지는 않는다(요청) — 인원과 입장만 알린다.
+//
+// 들어올 때 띄우던 "현재 화면이 재생중입니다. 같이 참여합니다." 안내는 없앴다(요청).
+// 혼자 보는 경우가 대부분인데 매번 토스트가 떠서 사진을 가렸다. 대신 **나 말고 다른
+// 사람이 실제로 같이 보고 있을 때만** 우측 위에 "N명이 참여중입니다." 알약을 띄운다.
 const PRESENCE_BEAT = 25000;
 let presenceSince = 0;        // 서버 시각 기준 — 이 시각 이후에 들어온 사람만 "새 접속"
-let presenceGreeted = false;  // 첫 안내를 이미 띄웠는지
+let presenceFirstBeat = true; // 첫 응답에서는 "새로 들어왔다" 팝업을 띄우지 않는다
 let presenceStarted = false;  // 하트비트를 이미 걸었는지(PIN 재시도로 두 번 걸리지 않게)
+
+// 동시 접속자 표시. 1명(=나뿐)이면 아무것도 보여주지 않는다.
+function renderViewers(n) {
+  const pill = document.getElementById('viewers-pill');
+  const txt = document.getElementById('viewers-text');
+  if (!pill || !txt) return;
+  const show = Number(n) > 1;
+  if (show) txt.textContent = `${n}명이 참여중입니다.`;
+  pill.classList.toggle('hidden', !show);
+  // 알림 팝업이 알약과 겹치지 않도록 body에 표시를 남긴다(CSS의 body.has-viewers).
+  document.body.classList.toggle('has-viewers', show);
+}
+
 async function beatPresence() {
   try {
     const r = await fetch(`/api/wepic/${encodeURIComponent(shareId)}/presence`, {
@@ -650,12 +710,12 @@ async function beatPresence() {
     // 다음 호출부터는 "이 시각 이후에 들어온 사람"만 새 접속으로 본다.
     // 서버가 준 시각을 쓰므로 내 PC 시계가 틀어져 있어도 상관없다.
     presenceSince = d.now || presenceSince;
-    if (!presenceGreeted) {
-      presenceGreeted = true;
-      const others = Math.max(0, (d.viewers || 1) - 1);
-      showToast('현재 화면이 재생중입니다. 같이 참여합니다.'
-        + (others ? ` (${others}명이 함께 보고 있어요)` : ''));
-    } else if (d.joined > 0) {
+    renderViewers(d.viewers || 1);
+    if (presenceFirstBeat) {
+      presenceFirstBeat = false;   // 입장 안내는 띄우지 않는다
+      return;
+    }
+    if (d.joined > 0) {
       livePopup(d.joined > 1
         ? `새로운 사용자 <b>${d.joined}명</b>이 접속했습니다`
         : '새로운 사용자가 접속했습니다', 'join');
@@ -822,6 +882,195 @@ document.getElementById('btn-like').addEventListener('click', async () => {
   }
 });
 
+// ---------- 화면 줌인 / 줌아웃 ----------
+// 사진(동영상 포함)을 확대해서 자세히 볼 수 있게 한다. 조작 방법은 세 가지 —
+//   · 아이콘의 ⊕ / ⊖ 버튼
+//   · 마우스 휠(사진 위) · 두 손가락 오므리기(핀치)
+//   · 두 번 누르기(더블탭/더블클릭)로 확대 ↔ 원래대로 토글
+// 확대된 상태에서는 끌어서 보고 싶은 곳으로 옮길 수 있다.
+//
+// 규칙(요청): 줌 조작을 하는 동안에는 사진 넘김을 멈춘다. 마지막 줌 조작 뒤 10초 동안
+// 아무 줌 조작이 없으면 원래 배율로 되돌리고 다시 사진이 재생된다.
+const ZOOM_HOLD_MS = 10000;   // 마지막 줌 조작 뒤 이만큼 지나면 재생 재개
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 4;
+const ZOOM_STEP = 0.5;
+
+let zoomScale = 1;
+let zoomX = 0, zoomY = 0;      // 확대 상태에서 끌어 옮긴 거리(화면 픽셀)
+let zoomHoldTimer = null;
+let zoomPausedByUs = false;    // ⏸를 직접 누른 사용자를 우리가 멋대로 재개시키지 않기 위한 표시
+let zoomBadgeTimer = null;
+
+const stageEl = () => document.getElementById('photo-stage');
+
+// 확대해도 사진이 화면 밖으로 완전히 빠져나가지 않도록 이동 범위를 제한한다.
+function clampPan() {
+  const box = document.querySelector('.share-view');
+  const w = box?.clientWidth || 0, h = box?.clientHeight || 0;
+  const maxX = ((zoomScale - 1) / 2) * w;
+  const maxY = ((zoomScale - 1) / 2) * h;
+  zoomX = Math.max(-maxX, Math.min(maxX, zoomX));
+  zoomY = Math.max(-maxY, Math.min(maxY, zoomY));
+}
+
+function applyZoom() {
+  const st = stageEl();
+  if (!st) return;
+  clampPan();
+  st.style.transform = `translate(${zoomX}px, ${zoomY}px) scale(${zoomScale})`;
+  st.classList.toggle('zoomed', zoomScale > 1);
+}
+
+// 배율을 잠깐 보여준다(조작 중에만).
+function flashZoomBadge() {
+  const b = document.getElementById('zoom-badge');
+  if (!b) return;
+  b.textContent = Math.round(zoomScale * 100) + '%';
+  b.classList.add('show');
+  if (zoomBadgeTimer) clearTimeout(zoomBadgeTimer);
+  zoomBadgeTimer = setTimeout(() => b.classList.remove('show'), 1400);
+}
+
+// 줌 조작이 있었다 → 사진 넘김을 멈추고, 10초 뒤 원래대로 되돌릴 예약을 새로 건다.
+function markZoomActivity() {
+  if (!slidePaused) { zoomPausedByUs = true; setSlidePaused(true); }
+  if (zoomHoldTimer) clearTimeout(zoomHoldTimer);
+  zoomHoldTimer = setTimeout(endZoomHold, ZOOM_HOLD_MS);
+}
+
+// 10초 동안 줌 조작이 없었다 → 원래 배율로 돌아가고 재생을 재개한다.
+function endZoomHold() {
+  zoomHoldTimer = null;
+  resetZoom();
+  if (zoomPausedByUs) { zoomPausedByUs = false; setSlidePaused(false); }
+}
+
+// 배율·위치를 원래대로. (재생 재개 여부는 건드리지 않는다)
+function resetZoom() {
+  zoomScale = 1; zoomX = 0; zoomY = 0;
+  applyZoom();
+}
+
+// 배율을 delta만큼 바꾼다. center를 주면 그 지점을 기준으로 확대되도록 위치도 함께 옮긴다.
+function zoomBy(delta, center) {
+  const before = zoomScale;
+  const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, +(before + delta).toFixed(2)));
+  if (next === before) { markZoomActivity(); flashZoomBadge(); return; }
+  if (center) {
+    // 누른 지점이 제자리에 남도록 이동량을 비례해서 조정한다.
+    const box = document.querySelector('.share-view');
+    const rect = box.getBoundingClientRect();
+    const cx = center.x - rect.left - rect.width / 2;
+    const cy = center.y - rect.top - rect.height / 2;
+    const k = next / before;
+    zoomX = cx - (cx - zoomX) * k;
+    zoomY = cy - (cy - zoomY) * k;
+  }
+  zoomScale = next;
+  if (zoomScale === 1) { zoomX = 0; zoomY = 0; }
+  applyZoom();
+  flashZoomBadge();
+  markZoomActivity();
+}
+
+document.getElementById('btn-zoom-in').addEventListener('click', () => zoomBy(ZOOM_STEP));
+document.getElementById('btn-zoom-out').addEventListener('click', () => zoomBy(-ZOOM_STEP));
+
+// 마우스 휠 — 사진 위에서 굴리면 확대/축소. 페이지 스크롤은 없으므로 그대로 가로챈다.
+document.querySelector('.share-view').addEventListener('wheel', (e) => {
+  e.preventDefault();
+  zoomBy(e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP, { x: e.clientX, y: e.clientY });
+}, { passive: false });
+
+// 두 번 누르기 — 확대 ↔ 원래대로. (버튼 위에서는 동작하지 않게 막는다)
+document.querySelector('.share-view').addEventListener('dblclick', (e) => {
+  if (e.target.closest('button, .comment-pane, .pin-gate')) return;
+  if (zoomScale > 1) { resetZoom(); flashZoomBadge(); markZoomActivity(); }
+  else zoomBy(1, { x: e.clientX, y: e.clientY });
+});
+
+// ---- 손가락 조작: 핀치 확대 · 끌어서 옮기기 ----
+let pinchStartDist = 0, pinchStartScale = 1;
+let dragging = false, dragFromX = 0, dragFromY = 0, dragBaseX = 0, dragBaseY = 0;
+const touchDist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+
+const shareViewEl = document.querySelector('.share-view');
+shareViewEl.addEventListener('touchstart', (e) => {
+  if (e.target.closest('button, input, .comment-pane, .pin-gate')) return;
+  if (e.touches.length === 2) {
+    pinchStartDist = touchDist(e.touches);
+    pinchStartScale = zoomScale;
+    markZoomActivity();
+  } else if (e.touches.length === 1 && zoomScale > 1) {
+    dragging = true;
+    dragFromX = e.touches[0].clientX; dragFromY = e.touches[0].clientY;
+    dragBaseX = zoomX; dragBaseY = zoomY;
+  }
+}, { passive: true });
+
+shareViewEl.addEventListener('touchmove', (e) => {
+  if (e.touches.length === 2 && pinchStartDist > 0) {
+    e.preventDefault();
+    const k = touchDist(e.touches) / pinchStartDist;
+    zoomScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, +(pinchStartScale * k).toFixed(2)));
+    if (zoomScale === 1) { zoomX = 0; zoomY = 0; }
+    applyZoom();
+    flashZoomBadge();
+    markZoomActivity();
+  } else if (dragging && e.touches.length === 1) {
+    e.preventDefault();
+    zoomX = dragBaseX + (e.touches[0].clientX - dragFromX);
+    zoomY = dragBaseY + (e.touches[0].clientY - dragFromY);
+    applyZoom();
+    markZoomActivity();
+  }
+}, { passive: false });
+
+['touchend', 'touchcancel'].forEach((ev) => shareViewEl.addEventListener(ev, () => {
+  pinchStartDist = 0;
+  dragging = false;
+}, { passive: true }));
+
+// ---- 마우스로 끌어서 옮기기 (확대된 상태에서만) ----
+shareViewEl.addEventListener('mousedown', (e) => {
+  if (zoomScale <= 1 || e.button !== 0) return;
+  if (e.target.closest('button, input, .comment-pane, .pin-gate')) return;
+  e.preventDefault();
+  dragging = true;
+  dragFromX = e.clientX; dragFromY = e.clientY;
+  dragBaseX = zoomX; dragBaseY = zoomY;
+  stageEl()?.classList.add('grabbing');
+});
+window.addEventListener('mousemove', (e) => {
+  if (!dragging) return;
+  zoomX = dragBaseX + (e.clientX - dragFromX);
+  zoomY = dragBaseY + (e.clientY - dragFromY);
+  applyZoom();
+  markZoomActivity();
+});
+window.addEventListener('mouseup', () => {
+  if (!dragging) return;
+  dragging = false;
+  stageEl()?.classList.remove('grabbing');
+});
+
+// 키보드 +/- 로도 확대·축소 (액자로 세워둔 PC에서 리모컨처럼 쓸 수 있게)
+window.addEventListener('keydown', (e) => {
+  if (e.target.matches('input, textarea')) return;
+  if (e.key === '+' || e.key === '=') zoomBy(ZOOM_STEP);
+  else if (e.key === '-' || e.key === '_') zoomBy(-ZOOM_STEP);
+  else if (e.key === '0') { resetZoom(); flashZoomBadge(); markZoomActivity(); }
+});
+
+// 사파리(iOS/macOS)는 user-scalable=no를 무시하고 자체 핀치 확대를 건다 → 그것만 막는다
+// (우리 핀치 처리는 위 touchmove가 담당한다).
+['gesturestart', 'gesturechange', 'gestureend'].forEach((ev) =>
+  document.addEventListener(ev, (e) => e.preventDefault()));
+
+// 화면 크기가 바뀌면 이동 한계도 달라진다 → 다시 맞춘다.
+window.addEventListener('resize', applyZoom);
+
 // ---------- 빈화면 모드 ----------
 // 사진만 남기고 제목·번호·촬영일/곡명·진행바·댓글창·나머지 아이콘을 감춘다(CSS의 body.clean).
 // 남는 두 아이콘(빈화면 해제 · 화면 작게)도 손을 대지 않으면 3초 뒤 조용히 사라진다 —
@@ -929,9 +1178,13 @@ async function start() {
     return false;
   }
 
-  document.getElementById('share-loading').classList.add('hidden');
+  // 첫 사진이 실제로 화면에 뜰 때까지는 시작 화면(로고 + 첫 사진을 흐리게)을 유지한다.
+  // 예전에는 여기서 곧바로 감춰서, 원본을 받는 동안 새까만 화면이 그대로 보였다.
+  showSplashPhoto(photos[0]);
+  setSplashMessage('곧 시작합니다...');
   idx = 0;
   await show();
+  document.getElementById('share-loading').classList.add('hidden');
   resetTimer();
   updateSlideBtn(); // 슬라이드 멈춤/재개 버튼 초기 상태(재생 중 = ⏸ 표시)
 

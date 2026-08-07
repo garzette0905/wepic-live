@@ -479,6 +479,9 @@ async function showCurrent() {
     // 재생 불가(코덱 미지원·손상 등)로 onended가 안 오면 슬라이드쇼가 멈추므로,
     // 오류 시 잠시 뒤 다음 항목으로 넘어가 정지되지 않게 한다.
     video.onerror = () => {
+      // 조용히 지나가면 "왜 이 동영상만 안 나오지?"가 되므로 이유를 알려준다.
+      // (동영상은 이제 사진 추가에서 막지 않는다 — 대신 못 트는 포맷일 때만 이렇게 안내한다)
+      showToast('이 동영상은 포맷(코덱)이 맞지 않아 재생할 수 없습니다. 다음 사진으로 넘어갑니다.');
       setTimeout(() => { if (!slideshowPaused && filteredPhotos[currentIndex] === photo) advance(); }, 1500);
     };
     if (!slideshowPaused) {
@@ -1224,11 +1227,11 @@ function startPickerOrGallery() {
 async function pushShare() {
   const mode = currentShareUrl ? 'update' : 'create';
   const btn = document.getElementById('btn-share');
-  // 사진과 동영상을 모두 공유한다. 다만 구글 포토 "공유"로 받은 사진(isSharedMode)은
-  // 브라우저가 든 파일을 올리는 방식이라 동영상을 지원하지 않아 그때만 제외한다.
-  const sharePhotos = isSharedMode ? allPhotos.filter((p) => p.type !== 'video') : allPhotos;
-  const excludedVideos = allPhotos.length - sharePhotos.length;
-  if (!sharePhotos.length) { showToast('공유할 사진이 없습니다. (동영상은 공유 링크에 포함되지 않습니다)'); return; }
+  // 사진과 동영상을 **모두** 공유한다. 예전에는 브라우저가 든 파일을 올리는 경로
+  // (구글 포토 "공유" 수신·기기 갤러리)에서만 동영상을 빼고 "포함되지 않는다"고 안내했는데,
+  // 이제는 그 경로도 동영상 원본을 그대로 올려 공유 화면에서 재생된다.
+  const sharePhotos = allPhotos;
+  if (!sharePhotos.length) { showToast('공유할 사진이 없습니다.'); return; }
   const hasVideo = sharePhotos.some((p) => p.type === 'video');
   const orig = btn.innerHTML;
   btn.disabled = true;
@@ -1252,10 +1255,23 @@ async function pushShare() {
       const form = new FormData();
       const meta = [];
       for (const p of sharePhotos) {
-        const blob = await fetch(p.fullUrl).then((res) => res.blob());
-        const ext = blob.type === 'image/png' ? 'png' : 'jpg';
+        const isVid = p.type === 'video' && p.videoUrl;
+        const src = isVid ? p.videoUrl : p.fullUrl;
+        const blob = await fetch(src).then((res) => res.blob());
+        const ext = isVid
+          ? (/quicktime/.test(blob.type) ? 'mov' : (/webm/.test(blob.type) ? 'webm' : 'mp4'))
+          : (blob.type === 'image/png' ? 'png' : 'jpg');
         form.append('files', blob, `${p.id}.${ext}`);
-        meta.push({ createTime: p.createTime, width: p.width, height: p.height });
+        // 동영상은 정지 프레임(포스터)을 함께 올린다 — 목록 썸네일·재생 전 화면·공유 미리보기에 쓰인다.
+        // 고를 때 못 뽑았으면(코덱 문제 등) 여기서 한 번 더 시도한다.
+        if (isVid) {
+          const poster = p.posterBlob || (await videoPosterBlob(src).catch(() => null));
+          if (poster) form.append(`poster_${meta.length}`, poster, `${p.id}_poster.jpg`);
+        }
+        meta.push({
+          createTime: p.createTime, width: p.width, height: p.height,
+          type: isVid ? 'video' : 'photo',
+        });
       }
       form.append('meta', JSON.stringify(meta));
       form.append('musicUrl', musicUrl);
@@ -1300,7 +1316,10 @@ async function pushShare() {
       // 팝업 없이 토스트로만 알린다 — 주소는 버튼 바로 아래 "wepic 주소" 줄에 나타난다.
       const pinNote = r.isPublic ? '전체공유(PIN 없음)' : `PIN ${r.pin || '없음'}`;
       showToast(`wepic을 만들었습니다. (사진 ${r.count}장, ${pinNote}) 주소는 아래에서 복사할 수 있습니다.`);
-      if (excludedVideos) showToast(`동영상 ${excludedVideos}개는 공유 링크에서 제외되었습니다.`);
+    }
+    // 동영상이 너무 커서 담기지 못한 경우 — 왜 빠졌는지 알려준다.
+    if (r.skippedBigVideos) {
+      showToast(`동영상 ${r.skippedBigVideos}개는 용량이 너무 커서(1개 ${r.videoLimitText} 초과) 담지 못했습니다.`);
     }
     // 저장용량 한도에 걸려 일부만 저장된 경우 — 조용히 넘기면 사진이 왜 빠졌는지 알 수 없다.
     if (r.quotaStopped) {
@@ -1601,22 +1620,71 @@ document.getElementById('btn-local-add').addEventListener('click', (e) => {
   if (intervalHandle) clearInterval(intervalHandle);
   openLocalPicker(true);
 });
+// 동영상 파일에서 정지 프레임(포스터)을 뽑는다. 목록 썸네일과 재생 전 화면에 쓴다.
+// 브라우저가 못 여는 코덱이면 null을 돌려주고, 그 동영상은 포스터 없이 그대로 진행한다
+// (재생 자체가 안 되는 포맷이면 재생 시점에 "포맷이 맞지 않는다"고 안내한다).
+function videoPosterBlob(src) {
+  return new Promise((resolve) => {
+    const v = document.createElement('video');
+    let settled = false;
+    const done = (blob) => { if (!settled) { settled = true; resolve(blob); } };
+    v.preload = 'metadata';
+    v.muted = true;
+    v.playsInline = true;
+    v.onloadeddata = () => {
+      // 맨 첫 프레임은 검은 화면인 경우가 많아 조금 뒤로 옮겨 잡는다.
+      try { v.currentTime = Math.min(0.5, (v.duration || 1) / 3); } catch { done(null); }
+    };
+    v.onseeked = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = v.videoWidth || 640;
+        c.height = v.videoHeight || 360;
+        c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+        c.toBlob((b) => done(b), 'image/jpeg', 0.82);
+      } catch { done(null); }
+    };
+    v.onerror = () => done(null);
+    setTimeout(() => done(null), 8000); // 아주 큰 파일에서 무한정 기다리지 않는다
+    v.src = src;
+  });
+}
+
 document.getElementById('local-file-input').addEventListener('change', async (e) => {
-  const files = [...(e.target.files || [])].filter((f) => /^image\//.test(f.type || ''));
+  // 사진과 **동영상**을 모두 받는다. 예전에는 동영상을 여기서 걸러내 "지원하지 않는다"고
+  // 안내했는데, 지금은 공유 링크에도 동영상이 그대로 담겨 재생된다.
+  const files = [...(e.target.files || [])]
+    .filter((f) => /^(image|video)\//.test(f.type || ''));
   e.target.value = ''; // 같은 파일을 다시 골라도 change가 뜨도록 초기화
   const statusEl = document.getElementById('local-pick-status');
   if (!files.length) {
-    statusEl.textContent = '사진을 선택하지 않았습니다. (동영상은 지원하지 않습니다)';
+    statusEl.textContent = '사진·동영상을 선택하지 않았습니다.';
     statusEl.classList.remove('hidden');
     return;
   }
-  statusEl.textContent = `사진 ${files.length}장 준비 중...`;
+  statusEl.textContent = `${files.length}개 준비 중...`;
   statusEl.classList.remove('hidden');
   try {
     const items = [];
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
       const objUrl = URL.createObjectURL(f);
+      const isVideo = /^video\//.test(f.type || '');
+      if (isVideo) {
+        // 정지 프레임을 미리 뽑아 두면 목록 썸네일과 재생 전 화면이 곧바로 채워진다.
+        const poster = await videoPosterBlob(objUrl);
+        const posterUrl = poster ? URL.createObjectURL(poster) : objUrl;
+        items.push({
+          id: `local-${Date.now()}-${i}`,
+          type: 'video',
+          createTime: new Date(f.lastModified || Date.now()).toISOString(), // 동영상은 EXIF가 없다
+          width: null, height: null,
+          fullUrl: posterUrl, thumbUrl: posterUrl,
+          videoUrl: objUrl,
+          posterBlob: poster || null,   // 공유할 때 함께 올린다
+        });
+        continue;
+      }
       items.push({
         id: `local-${Date.now()}-${i}`,
         type: 'photo',
@@ -1638,7 +1706,7 @@ document.getElementById('local-file-input').addEventListener('change', async (e)
     boot(finalItems);
   } catch (err) {
     localAppendMode = false;
-    statusEl.textContent = '사진을 읽지 못했습니다: ' + err.message;
+    statusEl.textContent = '사진·동영상을 읽지 못했습니다: ' + err.message;
   }
 });
 
@@ -2237,6 +2305,7 @@ const LOGIN_PROVIDERS = [
   { key: 'google', name: 'Google로', icon: 'G', href: '/auth/login' },
   { key: 'kakao', name: '카카오로', icon: 'K', href: '/auth/kakao/login' },
   { key: 'naver', name: '네이버로', icon: 'N', href: '/auth/naver/login' },
+  { key: 'facebook', name: 'Facebook으로', icon: 'f', href: '/auth/facebook/login' },
 ];
 // 로그인 화면과 회원가입 화면이 같은 버튼을 쓰므로 대상 컨테이너를 인자로 받는다.
 // verb: 버튼에 쓸 동작 이름("계속하기" / "가입하기")
@@ -2377,7 +2446,7 @@ function applyLoginState(status) {
 }
 
 // 제공자 코드를 사람이 읽는 이름으로
-const PROVIDER_LABELS = { google: 'Google', kakao: '카카오', naver: '네이버' };
+const PROVIDER_LABELS = { google: 'Google', kakao: '카카오', naver: '네이버', facebook: 'Facebook' };
 
 // 회원정보 패널: **이메일만** 수정 가능하고 나머지(이름 포함)는 읽기 전용으로 표시한다.
 //   이름은 로그인 제공자에서 온 값이므로 여기서 고치지 않는다. 다만 PUT /api/me는 name도
