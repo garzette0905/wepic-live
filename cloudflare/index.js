@@ -7,9 +7,13 @@
 const PICKER_BASE = 'https://photospicker.googleapis.com/v1';
 const PHOTOS_SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
 const MAX_SHARE_ITEMS = 60;
-// 공유에 담을 동영상 1개의 최대 크기. 넘으면 그 동영상은 정지 이미지(포스터)로만 담긴다.
+// 공유에 담을 동영상 1개의 최대 크기(기본 30MB). 넘으면 구글 포토 경로에서는 정지
+// 이미지(포스터)로만 담기고, 기기 갤러리 업로드 경로에서는 그 동영상만 건너뛴다.
+// 회원 기본 저장용량이 100MB라 예전 기본값(100MB)은 동영상 하나로 할당량이 꽉 찼다.
 // (저장공간·전송량 보호. 변수 MAX_SHARE_VIDEO_MB로 조절)
-const maxShareVideoBytes = (env) => Math.max(1, Number(env.MAX_SHARE_VIDEO_MB) || 100) * 1024 * 1024;
+const DEFAULT_MAX_VIDEO_MB = 30;
+const maxShareVideoBytes = (env) =>
+  Math.max(1, Number(env.MAX_SHARE_VIDEO_MB) || DEFAULT_MAX_VIDEO_MB) * 1024 * 1024;
 
 // ---------- OIDC 로그인 제공자 ----------
 // 회원가입·로그인은 OIDC(id_token을 JWKS로 검증)로 처리한다. 우리 DB(D1)에는 신원을 알아볼
@@ -2158,7 +2162,14 @@ export default {
       if (mPin && m === 'POST') return verifyPin(request, env, mPin[1]);
 
       // Default 정보관리 / wepic 관리자
-      if (p === '/api/settings' && m === 'GET') return json(await readSettings(env));
+      if (p === '/api/settings' && m === 'GET') {
+        // 동영상 1개 크기 상한도 함께 알려준다 — 화면이 **고르는 순간** 큰 동영상을
+        // 걸러낼 수 있어야 다 올리고 나서야 빠진 걸 알게 되는 일이 없다.
+        return json({
+          ...(await readSettings(env)),
+          maxVideoMb: Math.round(maxShareVideoBytes(env) / (1024 * 1024)),
+        });
+      }
       if (p === '/api/admin/settings' && m === 'PUT') {
         return requireAdmin(request, env, async (rq, en) =>
           json(await writeSettings(en, await rq.json().catch(() => ({})))));

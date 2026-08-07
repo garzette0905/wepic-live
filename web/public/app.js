@@ -1653,14 +1653,25 @@ function videoPosterBlob(src) {
 document.getElementById('local-file-input').addEventListener('change', async (e) => {
   // 사진과 **동영상**을 모두 받는다. 예전에는 동영상을 여기서 걸러내 "지원하지 않는다"고
   // 안내했는데, 지금은 공유 링크에도 동영상이 그대로 담겨 재생된다.
-  const files = [...(e.target.files || [])]
+  const picked = [...(e.target.files || [])]
     .filter((f) => /^(image|video)\//.test(f.type || ''));
   e.target.value = ''; // 같은 파일을 다시 골라도 change가 뜨도록 초기화
   const statusEl = document.getElementById('local-pick-status');
+  // 너무 큰 동영상은 **고르는 순간** 걸러낸다. 서버도 같은 기준으로 한 번 더 막지만,
+  // 다 올리고 나서야 빠진 걸 알게 되면 무엇이 왜 빠졌는지 알기 어렵다.
+  const limit = maxVideoBytes();
+  const tooBig = picked.filter((f) => /^video\//.test(f.type || '') && f.size > limit);
+  const files = picked.filter((f) => !tooBig.includes(f));
   if (!files.length) {
-    statusEl.textContent = '사진·동영상을 선택하지 않았습니다.';
+    statusEl.textContent = tooBig.length
+      ? `동영상 용량이 너무 큽니다. 1개당 ${globalSettings.maxVideoMb}MB 이하만 올릴 수 있습니다.`
+      : '사진·동영상을 선택하지 않았습니다.';
     statusEl.classList.remove('hidden');
     return;
+  }
+  if (tooBig.length) {
+    showToast(`동영상 ${tooBig.length}개는 용량이 커서 제외했습니다. `
+      + `(1개당 ${globalSettings.maxVideoMb}MB 이하)`);
   }
   statusEl.textContent = `${files.length}개 준비 중...`;
   statusEl.classList.remove('hidden');
@@ -1946,7 +1957,10 @@ document.getElementById('btn-extra-options').addEventListener('click', (e) => {
 
 // ---------- Default 정보관리 (전역 설정) ----------
 // 모든 화면(데모·wepic 메인화면·wepic 공유화면)이 로딩 시 이 값을 먼저 읽어 적용한다.
-let globalSettings = { title: '', musicUrl: '', titleFont: 'cursive', titleSize: 'medium' };
+// maxVideoMb: 동영상 1개의 크기 상한(서버의 MAX_SHARE_VIDEO_MB). /api/settings가 알려주며,
+// 못 받아오면 서버 기본값과 같은 30을 쓴다.
+let globalSettings = { title: '', musicUrl: '', titleFont: 'cursive', titleSize: 'medium', maxVideoMb: 30 };
+const maxVideoBytes = () => Math.max(1, Number(globalSettings.maxVideoMb) || 30) * 1024 * 1024;
 
 function applyGlobalSettingsToBody(s) {
   const b = document.body;
@@ -1961,6 +1975,9 @@ async function loadGlobalSettings() {
     globalSettings = { ...globalSettings, ...s };
   } catch { /* 실패해도 기본값으로 진행 */ }
   applyGlobalSettingsToBody(globalSettings);
+  // 갤러리 업로드 안내 문구의 용량도 서버가 정한 값으로 맞춘다(관리자가 바꾸면 함께 바뀐다).
+  const hint = document.getElementById('hint-video-mb');
+  if (hint) hint.textContent = `동영상은 1개당 ${globalSettings.maxVideoMb}MB까지`;
   return globalSettings;
 }
 
