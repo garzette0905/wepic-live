@@ -495,6 +495,18 @@ select optgroup {
 .share-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .share-btn-row { display: flex; gap: 6px; }
 .share-btn-row .share-btn { flex: 1; min-width: 0; }
+/* "보내기" — 폰·PC의 기본 공유 화면을 여는 버튼. 저장 버튼 옆에 딱 필요한 만큼만 차지한다. */
+.share-send-btn {
+  flex: none; display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding-left: 12px; padding-right: 14px; white-space: nowrap;
+  background: rgba(255, 107, 87, 0.28); color: #fff; border-color: rgba(255, 107, 87, 0.45);
+}
+.share-send-btn:hover { background: rgba(255, 107, 87, 0.42); filter: none; }
+/* 아주 좁은 화면에서는 아이콘만 남긴다(글자까지 두면 저장 버튼이 눌려 찌그러진다) */
+@media (max-width: 380px) {
+  .share-send-btn span { display: none; }
+  .share-send-btn { padding-left: 12px; padding-right: 12px; }
+}
 #btn-update-share { background: rgba(255, 107, 87, 0.28); color: #fff; }
 #btn-update-share:hover { background: rgba(255, 107, 87, 0.42); filter: none; }
 .share-url-row { display: flex; gap: 6px; margin: 4px 0 6px; }

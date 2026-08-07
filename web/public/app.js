@@ -1008,16 +1008,26 @@ let currentShareUrl = '';
 let shareCommentCount = 0;
 const photosAreLocked = () => shareCommentCount > 0;
 
-// 버튼은 "공유하기" 하나뿐이다. 아직 안 만들었으면 눌러서 만들고, 이미 만들었으면
-// 같은 링크에 최신 내용을 반영한다. 만들어진 뒤에만 링크 복사·삭제 아이콘과 주소가 보인다.
+// 저장 버튼의 이름·설명을 지금 상태에 맞춘다.
+//   · 아직 wepic이 없으면 → "공유하기" (누르면 만들어진다)
+//   · 이미 만들었으면    → "수정저장" (같은 링크에 최신 내용을 반영할 뿐, 새로 보내지는 않는다)
+// 실제로 남에게 보내는 일은 옆의 "보내기"(공유 아이콘)가 맡는다.
+function renderShareButton(has) {
+  const btn = document.getElementById('btn-share');
+  btn.textContent = has ? '수정저장' : '공유하기';
+  btn.title = has
+    ? '사진·제목·배경음악·PIN의 변경 내용을 이 링크에 반영합니다'
+    : '사진·제목·배경음악·PIN을 저장하고 공유 링크를 만듭니다';
+  // "보내기"는 보낼 링크가 있을 때만 의미가 있다.
+  document.getElementById('btn-share-send').classList.toggle('hidden', !has);
+}
+
+// 만들어진 뒤에만 링크 복사·삭제 아이콘과 주소, 그리고 "보내기" 버튼이 보인다.
 function setShareLinkState(hasLink, url) {
   const has = !!hasLink;
   document.getElementById('btn-frame-copy').classList.toggle('hidden', !has);
   document.getElementById('btn-frame-delete').classList.toggle('hidden', !has);
-  const btn = document.getElementById('btn-share');
-  btn.title = has
-    ? '사진·제목·배경음악·PIN의 변경 내용을 이 링크에 반영합니다'
-    : '사진·제목·배경음악·PIN을 저장하고 공유 링크를 만듭니다';
+  renderShareButton(has);
   if (url !== undefined) currentShareUrl = url || '';
   showShareUrlInline(has ? currentShareUrl : '');
 }
@@ -1223,7 +1233,7 @@ function startPickerOrGallery() {
 
 // 현재 화면의 사진·제목·음악·전환설정을 서버에 올린다.
 // 서버는 세션마다 같은 shareId를 재사용하므로, 다시 올리면 "같은 링크"의 내용이 갱신된다.
-// 버튼은 "공유하기" 하나뿐이고, 이미 만든 wepic이 있으면(update) 같은 링크에 반영한다.
+// 아직 wepic이 없으면 "공유하기"로 만들고, 이미 있으면 "수정저장"으로 같은 링크에 반영한다.
 async function pushShare() {
   const mode = currentShareUrl ? 'update' : 'create';
   const btn = document.getElementById('btn-share');
@@ -1233,7 +1243,6 @@ async function pushShare() {
   const sharePhotos = allPhotos;
   if (!sharePhotos.length) { showToast('공유할 사진이 없습니다.'); return; }
   const hasVideo = sharePhotos.some((p) => p.type === 'video');
-  const orig = btn.innerHTML;
   btn.disabled = true;
   btn.textContent = mode === 'update'
     ? '반영 중...'
@@ -1315,7 +1324,8 @@ async function pushShare() {
     } else {
       // 팝업 없이 토스트로만 알린다 — 주소는 버튼 바로 아래 "wepic 주소" 줄에 나타난다.
       const pinNote = r.isPublic ? '전체공유(PIN 없음)' : `PIN ${r.pin || '없음'}`;
-      showToast(`wepic을 만들었습니다. (사진 ${r.count}장, ${pinNote}) 주소는 아래에서 복사할 수 있습니다.`);
+      showToast(`wepic을 만들었습니다. (사진 ${r.count}장, ${pinNote}) `
+        + '옆의 "보내기"로 카카오톡·문자에 바로 보낼 수 있습니다.');
     }
     // 동영상이 너무 커서 담기지 못한 경우 — 왜 빠졌는지 알려준다.
     if (r.skippedBigVideos) {
@@ -1330,11 +1340,42 @@ async function pushShare() {
     showToast((mode === 'update' ? '반영 실패: ' : '공유 링크 생성 실패: ') + err.message);
   } finally {
     btn.disabled = false;
-    btn.innerHTML = orig;
+    // 저장에 성공했으면 이제 wepic이 있는 상태 → 버튼 이름이 "수정저장"으로 바뀌고
+    // 옆에 "보내기"가 나타난다. (실패했다면 원래 이름 그대로 되돌아간다)
+    renderShareButton(!!currentShareUrl);
   }
 }
 
 document.getElementById('btn-share').addEventListener('click', () => pushShare());
+
+// ---------- 보내기 (폰·PC의 기본 공유 화면) ----------
+// Web Share API가 있으면 카카오톡·문자·메일 등 기기에 설치된 앱 목록이 그대로 뜬다
+// (안드로이드 크롬·iOS 사파리·윈도우11 엣지 등). 지원하지 않는 브라우저(데스크톱 크롬 일부)
+// 에서는 주소를 클립보드에 복사해 붙여넣을 수 있게 한다 — 어느 쪽이든 빈손으로 끝나지 않는다.
+async function sendShareLink() {
+  if (!currentShareUrl) { showToast('먼저 "공유하기"로 wepic을 만들어주세요.'); return; }
+  const title = document.getElementById('title-input').value.trim() || 'Wepic';
+  // PIN이 걸려 있으면 받는 분이 번호를 알아야 볼 수 있다 → 문구에 함께 담아준다.
+  const pin = getSharePin();
+  const text = pin
+    ? `${title} — 사진을 함께 보세요. (PIN ${pin})`
+    : `${title} — 사진을 함께 보세요.`;
+
+  if (navigator.share) {
+    try {
+      await navigator.share({ title, text, url: currentShareUrl });
+      return;
+    } catch (err) {
+      // 사용자가 공유 창을 그냥 닫은 경우(AbortError)는 실패가 아니다 — 조용히 넘어간다.
+      if (err && err.name === 'AbortError') return;
+      // 그 외(정책 차단 등)는 아래 복사 방식으로 넘어간다.
+    }
+  }
+  if (await copyShareUrl()) {
+    showToast('이 브라우저는 바로 보내기를 지원하지 않아 주소를 복사했습니다. 카카오톡 등에 붙여넣어 주세요.');
+  }
+}
+document.getElementById('btn-share-send').addEventListener('click', sendShareLink);
 
 // 아이콘 줄 ① 링크 복사하기
 document.getElementById('btn-frame-copy').addEventListener('click', async () => {
