@@ -1970,19 +1970,26 @@ const htmlAttr = (s) => String(s || '')
 // 카카오톡·문자·메신저에 링크를 붙였을 때 보이는 미리보기 카드(Open Graph).
 // 예전에는 이 태그가 없어서 카드가 제목 한 줄만 있는 **빈 상자**로 보였다.
 //
-// 카드에 쓰는 그림은 **원본 사진이 아니라 크게 흐린 표지**(<id>/og.jpg)다.
-// 링크만 받아 본 사람에게 사진 한 장이 그대로 노출되지 않도록, 화면(app.js)이 저장할 때
-// 캔버스로 강하게 blur해서 만들어 올린다. 표지가 아직 없는 예전 wepic은 로고를 쓴다
-// (원본 사진으로 되돌아가면 흐리게 만든 의미가 없다).
+// 카드에 쓰는 그림은 **공개 여부에 따라 다르다**:
+//   · 전체공유(PIN 없음) → 첫 사진을 그대로. 누구나 볼 수 있는 wepic이라 가릴 이유가 없다.
+//   · PIN이 걸린 wepic  → 크게 흐린 표지(<id>/og.jpg). 링크만 받은 사람에게 사진이
+//     선명하게 노출되면 PIN을 걸어둔 의미가 없다. 표지는 화면(app.js)이 저장할 때
+//     캔버스로 blur해서 만들어 올린다(Worker에는 이미지 처리 수단이 없다).
+//     아직 표지가 없는 예전 wepic은 로고를 쓴다 — 원본으로 되돌아가지는 않는다.
 function shareOgTags(env, id, m, hasCover) {
   const title = (m.title || m.frameName || '').trim() || 'Wepic';
   const count = (m.items || []).length;
-  const image = hasCover
-    ? `${env.BASE_URL}/shares/${id}/${OG_COVER_NAME}`
-    : `${env.BASE_URL}/icon-512-v2.png`;
+  const logo = `${env.BASE_URL}/icon-512-v2.png`;
+  const first = (m.items || [])[0];
+  // 동영상 항목이면 fullUrl이 정지 프레임(포스터)이라 그대로 쓸 수 있다.
+  const shot = first ? (first.fullUrl || first.thumbUrl) : null;
+  const usingCover = !!m.pin;                       // PIN이 걸렸을 때만 흐린 표지를 쓴다
+  const image = usingCover
+    ? (hasCover ? `${env.BASE_URL}/shares/${id}/${OG_COVER_NAME}` : logo)
+    : (shot ? `${env.BASE_URL}${shot}` : logo);
   // 제목: wepic 아이콘 + 제목 + (사진 N장)
   const ogTitle = `📸 ${title} (사진 ${count}장)`;
-  const desc = m.pin ? 'PIN 번호를 입력하면 재생됩니다.' : 'wepic 사진을 감상하세요.';
+  const desc = m.pin ? 'PIN 번호를 입력하고, 사진을 감상하세요' : '사진을 감상하세요';
   const url = `${env.BASE_URL}/f/${id}`;
   return [
     `<meta property="og:type" content="website" />`,
@@ -1990,8 +1997,12 @@ function shareOgTags(env, id, m, hasCover) {
     `<meta property="og:title" content="${htmlAttr(ogTitle)}" />`,
     `<meta property="og:description" content="${htmlAttr(desc)}" />`,
     `<meta property="og:image" content="${htmlAttr(image)}" />`,
-    `<meta property="og:image:width" content="${OG_COVER_W}" />`,
-    `<meta property="og:image:height" content="${OG_COVER_H}" />`,
+    // 크기는 우리가 만든 표지일 때만 알려준다. 원본 사진은 크기가 제각각이라
+    // 엉뚱한 값을 적으면 메신저가 카드를 이상한 비율로 그린다.
+    ...(usingCover && hasCover
+      ? [`<meta property="og:image:width" content="${OG_COVER_W}" />`,
+         `<meta property="og:image:height" content="${OG_COVER_H}" />`]
+      : []),
     `<meta property="og:url" content="${htmlAttr(url)}" />`,
     `<meta name="twitter:card" content="summary_large_image" />`,
     `<meta name="twitter:title" content="${htmlAttr(ogTitle)}" />`,

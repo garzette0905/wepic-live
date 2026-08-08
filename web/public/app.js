@@ -1232,9 +1232,12 @@ function startPickerOrGallery() {
 }
 
 // ---------- 링크 카드용 흐린 표지 (og.jpg) ----------
-// 카카오톡 등에 링크를 붙이면 미리보기 카드에 그림이 붙는다. 거기에 원본 사진을 그대로
-// 쓰면 **링크만 받은 사람에게 사진 한 장이 선명하게 노출된다**. 그래서 첫 사진을 캔버스로
-// 크게 흐리게 만들어(색만 남는 수준) 표지로 올린다.
+// 카카오톡 등에 링크를 붙이면 미리보기 카드에 그림이 붙는다. **PIN이 걸린 wepic**은 거기에
+// 원본을 쓰면 링크만 받은 사람에게 사진이 선명하게 노출되어 PIN을 건 의미가 없다.
+// 그래서 첫 사진을 캔버스로 크게 흐리게 만들어(색만 남는 수준) 표지로 올려 둔다.
+// (전체공유 wepic은 어차피 누구나 볼 수 있으므로 서버가 첫 사진을 그대로 카드에 쓴다.)
+//
+// PIN은 나중에 "My사진관리"에서 걸 수도 있으므로 표지는 **공개 여부와 무관하게 항상** 만든다.
 //
 // 서버(Worker)에서 흐리게 만들 수단이 없어서 화면이 맡는다 — Worker에는 이미지 처리 API가
 // 없고, 무료 플랜은 요청당 CPU가 10ms라 JS로 인코딩하는 것도 위험하다(QR 때 겪었다).
@@ -1411,16 +1414,13 @@ document.getElementById('btn-share').addEventListener('click', () => pushShare()
 // 에서는 주소를 클립보드에 복사해 붙여넣을 수 있게 한다 — 어느 쪽이든 빈손으로 끝나지 않는다.
 async function sendShareLink() {
   if (!currentShareUrl) { showToast('먼저 "공유하기"로 wepic을 만들어주세요.'); return; }
-  const title = document.getElementById('title-input').value.trim() || 'Wepic';
-  // PIN이 걸려 있으면 받는 분이 번호를 알아야 볼 수 있다 → 문구에 함께 담아준다.
-  const pin = getSharePin();
-  const text = pin
-    ? `${title} — 사진을 함께 보세요. (PIN ${pin})`
-    : `${title} — 사진을 함께 보세요.`;
 
   if (navigator.share) {
     try {
-      await navigator.share({ title, text, url: currentShareUrl });
+      // ⚠️ **주소만** 보낸다. title·text를 함께 넘기면 카카오톡이 그 문구를 메시지 본문으로
+      //    따로 찍어("바다사진 — 사진을 함께 보세요. https://...") 바로 아래 미리보기 카드와
+      //    같은 말이 두 번 나온다. 제목·설명·사진은 카드가 이미 보여주므로 주소면 충분하다.
+      await navigator.share({ url: currentShareUrl });
       return;
     } catch (err) {
       // 사용자가 공유 창을 그냥 닫은 경우(AbortError)는 실패가 아니다 — 조용히 넘어간다.
