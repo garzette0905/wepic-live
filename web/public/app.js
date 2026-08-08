@@ -146,6 +146,22 @@ async function api(url, opts) {
   return res.json();
 }
 
+// ---------- 로그인 상태 읽기 ----------
+// /api/status는 화면 전체(로그인 버튼·메뉴·사진 패널)의 출발점이라, 한 번 실패했다고
+// 그대로 포기하면 로그인 버튼이 전부 "(준비중)"으로 죽어버린다(모바일에서 겪은 증상).
+// 그래서 여기서만 짧게 다시 시도하고, 그래도 안 되면 실패했다는 표시(statusFailed)를
+// 달아 돌려준다 — 화면은 그 표시를 보고 "제공자가 없음"이 아니라 "아직 모름"으로 그린다.
+async function loadStatus() {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch('/api/status', { credentials: 'same-origin', cache: 'no-store' });
+      if (res.ok) return await res.json();
+    } catch { /* 네트워크 오류 — 아래에서 다시 시도 */ }
+    await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+  }
+  return { loggedIn: false, statusFailed: true };
+}
+
 // ---------- 로그인 안내 ----------
 const AUTH_ERROR_MESSAGES = {
   missing_photos_scope:
@@ -1353,6 +1369,19 @@ async function uploadOgCover(frameId, photo) {
   } catch { /* 표지는 있으면 좋은 것이라 실패해도 흐름을 막지 않는다 */ }
 }
 
+// 표지가 아직 없는 wepic(이 기능이 생기기 전에 만든 것)을 주인이 열었을 때 조용히 만들어 둔다.
+// 이렇게 해두면 예전 wepic도 "수정저장"을 누르지 않고 열어보기만 해도 링크 카드가 새 모양
+// (흐린 첫 사진 + wepic 로고)으로 바뀐다. 표지 파일은 PIN 검사에서 제외되어 있어 그냥 읽힌다.
+async function ensureOgCover(frameId, photo) {
+  if (!frameId || !photo) return;
+  try {
+    // /shares/* 라우트는 GET만 받는다(HEAD는 404가 되어 "없음"으로 잘못 읽힌다).
+    const r = await fetch(`/shares/${encodeURIComponent(frameId)}/og.jpg`);
+    if (r.ok) return;                       // 이미 있으면 그대로 둔다
+    await uploadOgCover(frameId, photo);
+  } catch { /* 실패해도 화면 동작에는 영향이 없다 */ }
+}
+
 // 현재 화면의 사진·제목·음악·전환설정을 서버에 올린다.
 // 서버는 세션마다 같은 shareId를 재사용하므로, 다시 올리면 "같은 링크"의 내용이 갱신된다.
 // 아직 wepic이 없으면 "공유하기"로 만들고, 이미 있으면 "수정저장"으로 같은 링크에 반영한다.
@@ -1443,8 +1472,8 @@ async function pushShare() {
     updateExcludeAvailability();
     await loadFrames(); // 액자 이름·설정 갱신(자동 생성된 첫 액자 포함)
     if (mode === 'update') {
-      const pinNote = r.isPublic ? '전체공유(PIN 없음)' : `PIN ${r.pin || '없음'}`;
-      showToast(`사진·제목·배경음악·PIN을 모두 반영했습니다. (사진 ${r.count}장, ${pinNote})`);
+      // 무엇이 반영됐는지는 화면에 그대로 보이므로(사진·PIN·주소) 문구는 짧게만 둔다.
+      showToast('수정되었습니다');
     } else {
       // 팝업 없이 토스트로만 알린다 — 주소는 버튼 바로 아래 "wepic 주소" 줄에 나타난다.
       const pinNote = r.isPublic ? '전체공유(PIN 없음)' : `PIN ${r.pin || '없음'}`;
@@ -2233,6 +2262,9 @@ function shareRow(s, scope, pinMode) {
   const img = document.createElement('img');
   img.className = 'admin-thumb';
   img.alt = '';
+  // 대표사진을 못 가져오면(동영상만 있는 액자·지워진 파일 등) 브라우저가 "깨진 이미지"
+  // 아이콘을 그려버린다. 그럴 때는 이미지를 지우고 빈 회색 칸으로만 남긴다.
+  img.addEventListener('error', () => { img.removeAttribute('src'); img.classList.add('is-empty'); });
   if (s.thumbUrl) img.src = s.thumbUrl;
   row.appendChild(img);
 
@@ -2486,12 +2518,35 @@ const LOGIN_PROVIDERS = [
   { key: 'naver', name: '네이버로', icon: 'N', href: '/auth/naver/login' },
   { key: 'facebook', name: 'Facebook으로', icon: 'f', href: '/auth/facebook/login' },
 ];
+// 마지막으로 서버에게서 확인한 "쓸 수 있는 제공자" 목록을 브라우저에 남겨둔다.
+// /api/status 한 번이 실패했다고 로그인 화면이 통째로 "(준비중)"이 되어서는 안 된다 —
+// 모바일에서 실제로 그렇게 막혔다(눌리는 버튼이 하나도 없어 들어갈 방법이 없었다).
+const PROVIDERS_CACHE_KEY = 'wepic.availableProviders';
+function rememberProviders(list) {
+  if (!Array.isArray(list) || !list.length) return;
+  try { localStorage.setItem(PROVIDERS_CACHE_KEY, JSON.stringify(list)); } catch { /* 무시 */ }
+}
+function recallProviders() {
+  try {
+    const v = JSON.parse(localStorage.getItem(PROVIDERS_CACHE_KEY) || 'null');
+    return Array.isArray(v) && v.length ? v : null;
+  } catch { return null; }
+}
 // 로그인 화면과 회원가입 화면이 같은 버튼을 쓰므로 대상 컨테이너를 인자로 받는다.
 // verb: 버튼에 쓸 동작 이름("계속하기" / "가입하기")
 function renderLoginProviders(available, boxId = 'login-providers', verb = '계속하기') {
   const box = document.getElementById(boxId);
   if (!box) return;
-  const ready = Array.isArray(available) ? available : [];
+  // available이 배열이 아니면 "제공자가 없다"가 아니라 **"서버에 못 물어봤다"** 는 뜻이다.
+  //   1순위: 전에 확인해 둔 목록  ·  2순위: 전부 켜둔다(눌러보면 서버가 알려준다)
+  // 어느 쪽이든 버튼이 하나도 안 눌리는 상태로는 두지 않는다.
+  let ready;
+  if (Array.isArray(available)) {
+    ready = available;
+    rememberProviders(available);
+  } else {
+    ready = recallProviders() || LOGIN_PROVIDERS.map((p) => p.key);
+  }
   box.innerHTML = '';
   LOGIN_PROVIDERS.forEach((p) => {
     const on = ready.includes(p.key);
@@ -2592,6 +2647,10 @@ function applyLoginState(status) {
   renderLoginProviders(status.availableProviders, 'login-providers', '계속하기');
   renderLoginProviders(status.availableProviders, 'signup-providers', '가입하기');
   refreshSignupGate();
+  // 서버에 상태를 못 물어봤으면 그 사실을 적어준다. 버튼은 (위에서) 눌리게 그려두었으므로
+  // 로그인은 그대로 시도할 수 있고, 이 문구는 안 될 때 새로고침하라는 안내 역할만 한다.
+  const netErr = document.getElementById('login-neterror');
+  if (netErr) netErr.classList.toggle('hidden', !status.statusFailed);
   if (isLoggedIn) {
     providers.classList.add('hidden');
     loginActions.classList.remove('hidden');
@@ -2908,7 +2967,7 @@ async function init() {
       frameManifest = m;
       // 하단 링크(구글 전용 vs 갤러리)와 상단 이름 표시가 로그인 제공자에 맞게 나오도록
       // 여기서도 로그인 상태를 반영한다 — 이 분기는 아래 공통 처리까지 가지 않고 return한다.
-      applyLoginState(await api('/api/status').catch(() => ({ loggedIn: false })));
+      applyLoginState(await loadStatus());
       if (m.musicUrl) document.getElementById('music-url').value = m.musicUrl;
       // 액자에 저장된 동영상은 type/videoUrl을 그대로 살려야 한다 — 그렇지 않으면
       // "링크변경 반영"으로 다시 저장할 때 동영상이 사진으로 바뀌어 사라진다.
@@ -2920,6 +2979,8 @@ async function init() {
         fullUrl: it.fullUrl, thumbUrl: it.thumbUrl || it.fullUrl,
         ...(it.videoUrl ? { videoUrl: it.videoUrl } : {}),
       })));
+      // 링크 카드 표지가 아직 없는 예전 wepic이면 지금 만들어 둔다(화면은 기다리지 않는다).
+      ensureOgCover(frameId, (m.items || [])[0]);
       return;
     } catch (err) {
       alert(err.message);
@@ -2936,7 +2997,7 @@ async function init() {
       isSharedMode = true;
       // 실제 로그인한 회원이 공유로 받은 사진을 올릴 수도 있으므로(업로드는 로그인 필요),
       // isLoggedIn을 먼저 정확히 반영해둔다 — boot()의 guest 판정이 이 값을 쓴다.
-      const status = await api('/api/status').catch(() => ({ loggedIn: false }));
+      const status = await loadStatus();
       applyLoginState(status);
       boot(shared);
       return;
@@ -2952,7 +3013,7 @@ async function init() {
   //    받으면 곧바로 로그인 패널로 이동시키는데, 그러면 게스트가 홈만 열어도 매번 로그인
   //    화면으로 튕기게 된다. 여기서는 결과가 필요 없으니 그냥 무시한다.
   await fetch('/api/frames/deselect', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
-  const status = await api('/api/status').catch(() => ({ loggedIn: false }));
+  const status = await loadStatus();
   applyLoginState(status);
 
   // 3) 로그인 오류(auth_error)가 있으면 로그인 패널에 안내, 아니면 항상 홈(소개)부터

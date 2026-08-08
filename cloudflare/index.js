@@ -1430,6 +1430,11 @@ async function canViewShare(request, env, id, manifest) {
   if (!manifest || !manifest.pin) return true;                 // 하위 호환
   const sess = await getSession(request, env);
   if (sess.data?.role === 'admin') return true;                 // 관리자 통과
+  // 만든 본인은 PIN 없이 통과한다. 판정 기준은 **회원 id(ownerUserId)** 다 —
+  // 세션의 frames 목록은 로그인할 때마다 빈 배열로 새로 만들어지므로(authCallback),
+  // 그것만 보면 "다시 로그인한 본인"이 자기 액자에서 막힌다. 실제로 My사진관리의
+  // 썸네일(<img src="/shares/...">)이 401을 받아 전부 깨져 보이던 원인이었다.
+  if (manifest.ownerUserId && sess.data?.userId === manifest.ownerUserId) return true;
   if ((sess.data?.frames || []).some((f) => f.id === id)) return true; // 만든 본인(다중 액자)
   if (sess.data?.shareId === id) return true;                   // 구버전 세션 안전망
   const want = await pinToken(env, id, manifest.pin);
@@ -1638,7 +1643,13 @@ async function putVideoToR2(env, base, token, key, budgetBytes) {
 }
 
 // 로그인 사용자: 현재 고른 사진을 구글에서 받아 R2에 저장하고 공유 링크 생성
-async function shareCreate(request, env, token, sess) {
+//
+// ⚠️ 구글 토큰은 "구글에서 **새로** 받아올 사진이 있을 때"만 필요하다. 그래서 입구를
+//    requireLogin(구글 토큰 필수)이 아니라 requireMember(회원이면 통과)로 두고, 정말
+//    필요한 경우에만 아래에서 토큰을 확인한다.
+//    예전에는 입구에서 막아, 카카오·네이버 회원이 이미 저장된 wepic을 열어 PIN·제목만
+//    고치고 "수정저장"을 누르면 401이 나고 화면이 로그인 창으로 튕겼다(저장도 안 됐다).
+async function shareCreate(request, env, sess) {
   const body = await request.json().catch(() => ({}));
   const items = Array.isArray(body.items) ? body.items : [];
   const musicUrl = typeof body.musicUrl === 'string' ? body.musicUrl : '';
@@ -1686,6 +1697,22 @@ async function shareCreate(request, env, token, sess) {
   }
   const keepKeys = new Set([`${shareId}/photos.json`, `${shareId}/${OG_COVER_NAME}`]); // 이번 저장 후에도 남겨둘 키(미리보기 표지 포함)
   const keyOf = (url) => (ownRe.test(url || '') ? `${shareId}/photos/${url.slice(url.lastIndexOf('/') + 1)}` : null);
+
+  // 구글 토큰이 정말 필요한가 = 이 액자에 아직 없는 사진(=구글에서 받아와야 하는 것)이 있는가.
+  // 하나도 없으면(예: PIN·제목만 고쳐 "수정저장") 토큰 없이 그대로 진행한다.
+  // 있는데 토큰을 못 얻으면(구글 세션 만료 등) 예전처럼 401로 알려 다시 로그인하게 한다 —
+  // 여기서 조용히 건너뛰면 새로 고른 사진이 소리 없이 사라진다.
+  let token = null;
+  if (items.some((it) => !ownRe.test(it.fullUrl || ''))) {
+    try {
+      token = await getAccessToken(env, sess.sid, sess.data);
+    } catch (err) {
+      if (err.message === 'NOT_LOGGED_IN') {
+        return json({ error: '구글 사진을 가져오려면 구글 계정으로 다시 로그인해주세요.' }, 401);
+      }
+      throw err;
+    }
+  }
 
   const keptItems = [];   // 이미 이 wepic에 있던 사진(순서 유지)
   const addedItems = [];  // 이번에 새로 받아온 사진(맨 뒤에 붙는다)
@@ -2016,23 +2043,19 @@ const htmlAttr = (s) => String(s || '')
 // 카카오톡·문자·메신저에 링크를 붙였을 때 보이는 미리보기 카드(Open Graph).
 // 예전에는 이 태그가 없어서 카드가 제목 한 줄만 있는 **빈 상자**로 보였다.
 //
-// 카드에 쓰는 그림은 **공개 여부에 따라 다르다**:
-//   · 전체공유(PIN 없음) → 첫 사진을 그대로. 누구나 볼 수 있는 wepic이라 가릴 이유가 없다.
-//   · PIN이 걸린 wepic  → 크게 흐린 표지(<id>/og.jpg). 링크만 받은 사람에게 사진이
-//     선명하게 노출되면 PIN을 걸어둔 의미가 없다. 표지는 화면(app.js)이 저장할 때
-//     캔버스로 blur해서 만들어 올린다(Worker에는 이미지 처리 수단이 없다).
-//     아직 표지가 없는 예전 wepic은 로고를 쓴다 — 원본으로 되돌아가지는 않는다.
+// 카드 그림은 **공개 여부와 상관없이 언제나 같다** — 첫 사진을 살짝 흐리게 하고 왼쪽 아래에
+// wepic 로고를 찍은 표지(<id>/og.jpg)다. 표지는 화면(app.js의 buildOgCover)이 저장할 때
+// 캔버스로 만들어 올린다(Worker에는 이미지 처리 수단이 없다).
+//   · 예전에는 전체공유만 원본 사진을 그대로 썼는데, 그러면 같은 wepic이라도 공개 여부에
+//     따라 카드 모양(흐림·로고·1200×630 비율)이 달라져 보는 사람이 헷갈렸다. 하나로 통일한다.
+//   · PIN이 걸린 wepic에서 원본으로 되돌아가면 링크만 받은 사람에게 사진이 그대로 노출된다.
+//     그래서 표지가 아직 없는 예전 wepic은 원본이 아니라 **로고**를 쓴다
+//     (그 wepic도 주인이 한 번 "수정저장"하면 표지가 만들어져 같은 카드가 된다).
 function shareOgTags(env, id, m, hasCover) {
   const title = (m.title || m.frameName || '').trim() || 'Wepic';
   const count = (m.items || []).length;
   const logo = `${env.BASE_URL}/icon-512-v2.png`;
-  const first = (m.items || [])[0];
-  // 동영상 항목이면 fullUrl이 정지 프레임(포스터)이라 그대로 쓸 수 있다.
-  const shot = first ? (first.fullUrl || first.thumbUrl) : null;
-  const usingCover = !!m.pin;                       // PIN이 걸렸을 때만 흐린 표지를 쓴다
-  const image = usingCover
-    ? (hasCover ? `${env.BASE_URL}/shares/${id}/${OG_COVER_NAME}` : logo)
-    : (shot ? `${env.BASE_URL}${shot}` : logo);
+  const image = hasCover ? `${env.BASE_URL}/shares/${id}/${OG_COVER_NAME}` : logo;
   // 제목: 제목 + (사진 N장).
   // 예전에는 앞에 📸 이모지를 붙였는데, og:title은 **문자열**이라 진짜 로고를 넣을 수 없어
   // 남의 카메라 아이콘을 빌려 쓰는 꼴이었다. 지금은 표지 그림(`og.jpg`) 왼쪽 아래에
@@ -2046,9 +2069,9 @@ function shareOgTags(env, id, m, hasCover) {
     `<meta property="og:title" content="${htmlAttr(ogTitle)}" />`,
     `<meta property="og:description" content="${htmlAttr(desc)}" />`,
     `<meta property="og:image" content="${htmlAttr(image)}" />`,
-    // 크기는 우리가 만든 표지일 때만 알려준다. 원본 사진은 크기가 제각각이라
-    // 엉뚱한 값을 적으면 메신저가 카드를 이상한 비율로 그린다.
-    ...(usingCover && hasCover
+    // 크기는 우리가 만든 표지일 때만 알려준다. 로고로 대체된 경우는 비율이 달라
+    // 엉뚱한 값을 적으면 메신저가 카드를 이상하게 그린다.
+    ...(hasCover
       ? [`<meta property="og:image:width" content="${OG_COVER_W}" />`,
          `<meta property="og:image:height" content="${OG_COVER_H}" />`]
       : []),
@@ -2249,7 +2272,11 @@ export default {
       if (p === '/img' && m === 'GET') return requireLogin(request, env, (rq, en, tok) => imgProxy(en, tok, url));
       if (p === '/video' && m === 'GET') return requireLogin(request, env, (rq, en, tok) => videoProxy(rq, en, tok, url));
 
-      if (p === '/api/share' && m === 'POST') return requireLogin(request, env, (rq, en, tok, sess) => shareCreate(rq, en, tok, sess));
+      // 회원이면 통과시킨다. 구글 토큰은 "구글에서 새로 받아올 사진"이 있을 때만
+      // shareCreate 안에서 확인한다(위 함수 주석 참고).
+      if (p === '/api/share' && m === 'POST') {
+        return requireMember(request, env, (rq, en, sess) => shareCreate(rq, en, sess));
+      }
       if (p === '/api/share' && m === 'DELETE') {
         return requireMember(request, env, (rq, en, sess) => shareDelete(rq, en, sess));
       }

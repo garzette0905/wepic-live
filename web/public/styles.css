@@ -901,6 +901,8 @@ button.social-btn:hover { filter: none; transform: none; background: rgba(255, 2
   width: 56px; height: 56px; object-fit: cover; border-radius: 8px; flex: none;
   background: rgba(255,255,255,0.08);
 }
+/* 대표사진을 못 읽었을 때(app.js가 src를 지우고 붙인다) — 빈 회색 칸으로만 둔다 */
+.admin-row img.admin-thumb.is-empty { background: rgba(255,255,255,0.06); }
 .admin-row .admin-meta { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.6; }
 .admin-row .admin-meta b { color: #fff; }
 .admin-row .admin-meta .dim { color: var(--text-muted); }

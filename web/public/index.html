@@ -12,7 +12,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Dancing+Script:wght@600&family=Nanum+Pen+Script&display=swap" rel="stylesheet" />
 <!-- 한글 본문용 Pretendard (라틴은 Inter가 받는다) -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
-<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="styles.css?v=20260808" />
 </head>
 <body>
 
@@ -159,6 +159,10 @@
           <p id="login-status" class="account-notice hidden"></p>
           <!-- 실제로 설정된 제공자만 app.js가 여기에 버튼으로 그린다 -->
           <div id="login-providers" class="login-providers"></div>
+          <!-- 서버 상태를 못 읽었을 때만 보인다(app.js). 버튼은 그래도 눌리게 그려둔다. -->
+          <p id="login-neterror" class="error hidden">
+            연결 상태를 확인하지 못했습니다. 로그인이 되지 않으면 화면을 새로고침해주세요.
+          </p>
           <p class="hint" style="margin:10px 0 0;">
             <b>Google</b> 계정은 Google 포토에서 바로 골라올 수 있고,<br />
             <b>카카오·네이버</b> 계정은 기기 갤러리에서 사진을 올려 쓰시면 됩니다.
@@ -806,6 +810,6 @@
       } catch { return ''; }
     };
   </script>
-  <script src="app.js"></script>
+  <script src="app.js?v=20260808"></script>
 </body>
 </html>
