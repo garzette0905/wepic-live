@@ -708,6 +708,13 @@ select optgroup {
 .social-btn:hover {
   color: #fff; border-color: var(--menu-accent); background: rgba(255, 255, 255, 0.10);
 }
+/* 소개(i) 아이콘은 버튼이라 기본 버튼 스타일이 얹히지 않도록 눌러 둔다.
+   지금 소개 화면을 보고 있으면 켜진 상태로 표시한다(메뉴 글자의 밑줄과 같은 역할). */
+button.social-btn { padding: 0; background: none; box-shadow: none; font: inherit; cursor: pointer; }
+button.social-btn:hover { filter: none; transform: none; background: rgba(255, 255, 255, 0.10); }
+.social-btn.active {
+  color: #fff; border-color: var(--menu-accent); background: rgba(255, 255, 255, 0.14);
+}
 /* 관리자 화면 진입 메뉴는 글자색으로만 구분한다(상단 바에 상자를 두지 않으므로) */
 .top-menu .menu-admin { color: #ff8b7a; }
 .top-menu .menu-admin:hover, .top-menu .menu-admin.active { color: #ffb0a3; }

@@ -85,7 +85,9 @@ function selectPanel(name) {
   // 상단 메뉴: 관리자/My사진관리 패널을 보고 있으면 그 상위 메뉴 항목을 켠 상태로 둔다.
   // 홈 아이콘(.menu-home)도 함께 다룬다. 로그인 상태 표시(.menu-status)는 누를 수 없는
   // 항목이라 active 대상에서 제외한다.
-  document.querySelectorAll('#home-menu .menu-item, #home-menu .menu-home').forEach((b) => {
+  document.querySelectorAll(
+    '#home-menu .menu-item, #home-menu .menu-home, #home-menu .social-btn[data-panel]'
+  ).forEach((b) => {
     if (b.classList.contains('menu-status')) return;
     // 로고(홈)는 "사진 보기"와 같은 패널을 가리키므로, 켜면 둘이 함께 강조돼 헷갈린다.
     // 로고는 언제나 로고로만 보이게 두고 강조는 메뉴 항목에만 준다.
@@ -125,6 +127,7 @@ function selectPanel(name) {
 // data-panel이 있는 항목만 클릭으로 이동한다(로그인 상태 표시는 data-panel이 없어 제외됨).
 document.querySelectorAll(
   '#home-menu .menu-item[data-panel], #home-menu .menu-home[data-panel],'
+  + ' #home-menu .social-btn[data-panel],'   // 우측 (i) 소개 아이콘
   + ' #admin-side-menu .menu-item, #my-side-menu .menu-item'
 ).forEach((b) => b.addEventListener('click', () => selectPanel(b.dataset.panel)));
 document.querySelectorAll('[data-goto]').forEach((el) =>

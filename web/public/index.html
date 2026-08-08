@@ -50,8 +50,19 @@
         <button class="menu-item menu-admin hidden" data-panel="admin-screens" id="menu-admin">관리자 화면</button>
       </div>
 
-      <!-- 우측 소셜. 링크가 정해지면 href만 바꾸면 된다. -->
+      <!-- 우측: 소개(i) + 소셜. 링크가 정해지면 href만 바꾸면 된다. -->
       <div class="menu-social">
+        <!-- 소개 — 홈이 사진 목록으로 바뀌면서 서비스 설명이 갈 곳이 없어졌다.
+             궁금한 사람만 눌러 보도록 상단 바 오른쪽에 작은 (i) 아이콘으로 둔다. -->
+        <button class="social-btn" id="menu-about" data-panel="about"
+                aria-label="Wepic 소개" title="Wepic 소개">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor"
+               stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 11v5" /><circle cx="12" cy="7.8" r="1.05" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
+
         <a class="social-btn" id="link-instagram" href="#" aria-label="Instagram"
            title="Instagram (링크 준비 중)">
           <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor"
@@ -95,6 +106,52 @@
       </nav>
 
       <section class="home-frame">
+        <!-- 소개 — 상단 바 오른쪽의 (i) 아이콘으로 연다. 홈은 사진 목록이 차지하므로
+             여기 설명은 "이게 뭐 하는 서비스인지" 궁금할 때만 펼쳐 보는 자리다. -->
+        <div class="panel hidden" id="panel-about">
+          <p class="panel-eyebrow">wepic — Real-time Audio-Visual Frame Platform</p>
+          <h2>사진과 30초 음악을, 멀리 있는 액자로 실시간 송출</h2>
+          <p>사진을 고르고 음악을 얹으면 링크 하나가 만들어집니다. 그 링크를 받은 분은
+            앱 설치도, 로그인도 없이 <b>바로 그 순간의 사진과 음악</b>을 함께 봅니다.</p>
+          <!-- 아이콘은 Lucide(zap · music · heart)를 인라인 SVG로 옮겨 담았다.
+               빌드 단계가 없는 프로젝트라 아이콘 라이브러리를 번들할 수 없어, 쓰는 3개만 직접 넣었다. -->
+          <div class="feature-grid">
+            <div class="feature-card">
+              <div class="feature-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M4 14h7l-2 7 9-11h-7l2-7z" />
+                </svg>
+              </div>
+              <h3>실시간 반영</h3>
+              <p>사진을 더하거나 바꾸면 이미 열려 있는 액자에도 곧바로 나타납니다.</p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M9 18V5l12-2v13" />
+                  <circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
+                </svg>
+              </div>
+              <h3>음악과 함께</h3>
+              <p>곡을 검색해 고르면 30초 미리듣기가, YouTube 링크를 넣으면 전곡이 흐릅니다.</p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M19 14c1.5-1.5 3-3.4 3-5.5A5.5 5.5 0 0 0 12 5.4 5.5 5.5 0 0 0 2 8.5c0 2.1 1.5 4 3 5.5l7 7z" />
+                </svg>
+              </div>
+              <h3>같이 보는 재미</h3>
+              <p>보는 사람들이 좋아요와 한마디를 남기고, 그 글이 서로의 화면에 실시간으로 뜹니다.</p>
+            </div>
+          </div>
+          <p class="panel-muted">위쪽 메뉴의 <b>사진 선택</b>으로 나만의 액자를 만들고,
+            <b>사진 보기</b>에서 다른 분들이 공개한 액자를 구경해보세요.</p>
+        </div>
+
         <!-- 로그인 (OIDC: 구글 / 카카오 / 네이버) -->
         <div class="panel hidden" id="panel-login">
           <h2>로그인</h2>
