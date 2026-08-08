@@ -210,7 +210,13 @@ video.photo-layer { background: #000; }
   opacity: 0.55; transition: opacity 0.2s ease, background 0.2s ease;
 }
 .icon-btn:hover { opacity: 1; background: rgba(0,0,0,0.7); filter: none; }
-.photo-actions { position: absolute; left: 16px; bottom: 16px; display: flex; gap: 8px; z-index: 5; }
+/* 아이콘 줄. 폭이 좁은 기기에서 마지막 아이콘이 화면 밖으로 밀려 잘리지 않도록,
+   모자란 만큼만 줄 전체를 축소한다(--fit은 app.js의 fitActionRow()가 넣는다.
+   wepic 공유화면의 .share-actions와 같은 방식이다). */
+.photo-actions {
+  position: absolute; left: 16px; bottom: 16px; display: flex; flex-wrap: nowrap; gap: 8px; z-index: 5;
+  transform: scale(var(--fit, 1)); transform-origin: left bottom;
+}
 /* 사진 저장(다운로드)만 PC 전용이다. 폰·태블릿의 인앱 브라우저는 다운로드가 막히거나
    불안정한 경우가 많아 오해를 부르므로, 마우스가 있는 기기(hover+정밀 포인터)에서만 보인다.
    전체화면·홈·음악·이전/다음·멈춤 아이콘은 wepic 공유화면과 마찬가지로 모바일에서도 보인다. */

@@ -2033,8 +2033,11 @@ function shareOgTags(env, id, m, hasCover) {
   const image = usingCover
     ? (hasCover ? `${env.BASE_URL}/shares/${id}/${OG_COVER_NAME}` : logo)
     : (shot ? `${env.BASE_URL}${shot}` : logo);
-  // 제목: wepic 아이콘 + 제목 + (사진 N장)
-  const ogTitle = `📸 ${title} (사진 ${count}장)`;
+  // 제목: 제목 + (사진 N장).
+  // 예전에는 앞에 📸 이모지를 붙였는데, og:title은 **문자열**이라 진짜 로고를 넣을 수 없어
+  // 남의 카메라 아이콘을 빌려 쓰는 꼴이었다. 지금은 표지 그림(`og.jpg`) 왼쪽 아래에
+  // wepic 로고를 직접 찍으므로(app.js의 `drawWepicBadge`) 제목에서는 이모지를 뺀다.
+  const ogTitle = `${title} (사진 ${count}장)`;
   const desc = m.pin ? 'PIN 번호를 입력하고, 사진을 감상하세요' : '사진을 감상하세요';
   const url = `${env.BASE_URL}/f/${id}`;
   return [

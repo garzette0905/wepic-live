@@ -54,12 +54,31 @@ function clearBackdrops() {
   document.getElementById('photo-a-bg').classList.remove('active');
   document.getElementById('photo-b-bg').classList.remove('active');
 }
+// ---- 조작 아이콘 줄이 잘리지 않게 맞추기 ----
+// 아이콘이 11개(전체화면·빈화면·홈·음악·이전·재생·다음·확대·축소·좋아요·댓글)라
+// 폭이 좁은 기기에서는 줄이 화면 밖으로 밀려 **마지막 아이콘(댓글)이 잘려** 보였다.
+// CSS에서 크기·간격을 먼저 줄이지만(share.html의 max-width:600px), 320px대 화면이나
+// 좋아요 숫자가 세 자리가 되면 그것만으로는 모자란다 → 모자란 만큼만 줄 전체를 축소한다.
+// 폭이 달라지는 순간(회전·전체화면·음악 버튼 등장·숫자 변화)마다 다시 재야 한다.
+function fitActionRow() {
+  const row = document.querySelector('.share-actions');
+  if (!row) return;
+  const left = row.getBoundingClientRect().left;   // 화면 폭에 따라 12~16px
+  const avail = window.innerWidth - left * 2;      // 오른쪽에도 같은 여백을 남긴다
+  const need = row.scrollWidth;                    // transform은 배치 폭을 바꾸지 않는다
+  const k = (need > avail && need > 0) ? Math.max(0.55, avail / need) : 1;
+  row.style.setProperty('--fit', String(Math.round(k * 1000) / 1000));
+}
+
 // 전체화면 전환·화면 회전으로 화면비가 바뀌면 여백 여부도 달라진다 → 지금 보이는 사진만 다시 판단.
 function refreshBackdrop() {
   if (!lastShownImg) return;
   applyBackdrop(activeLayer, lastShownImg, lastShownImg.src);
 }
 window.addEventListener('resize', refreshBackdrop);
+// 가로/세로 회전은 resize보다 늦게 폭이 확정되는 기기가 있어 한 박자 뒤에 한 번 더 잰다.
+window.addEventListener('resize', fitActionRow);
+window.addEventListener('orientationchange', () => setTimeout(fitActionRow, 250));
 
 let videoStallTimer = null;
 
@@ -390,6 +409,7 @@ async function changeMusic(id) {
   readMusicTitleSoon();
   document.getElementById('btn-music').style.display = 'flex';
   updateMusicBtn();
+  fitActionRow();   // 음악 아이콘이 하나 늘어 줄이 길어졌다
 }
 
 async function playSound() {
@@ -606,6 +626,7 @@ function applyManifest(data) {
         try { ytPlayer?.pauseVideo?.(); } catch {}
         musicTitle = '';
         document.getElementById('btn-music').style.display = 'none';
+        fitActionRow();
         renderCaption();
       } else {
         changeMusic(newId); // 최초 생성/곡 교체 모두 여기서 처리(중복 생성 없음)
@@ -733,9 +754,11 @@ function renderLikeUI() {
   const b = document.getElementById('btn-like');
   b.classList.toggle('liked', likedByMe);
   b.title = likedByMe ? '좋아요 취소' : '좋아요';
+  fitActionRow();   // 0 → 12 → 345로 자릿수가 늘면 줄도 길어진다
 }
 function renderCommentCount() {
   document.getElementById('comment-count').textContent = String(commentTotal);
+  fitActionRow();
 }
 
 // 댓글을 목록에 덧붙인다. fresh=true면 방금 도착한 것처럼 살짝 강조한다.
@@ -1102,6 +1125,7 @@ function setCleanMode(on) {
     if (uiHideTimer) clearTimeout(uiHideTimer);
     document.body.classList.remove('ui-hidden');
   }
+  fitActionRow();   // 빈화면에서는 아이콘 두 개만 남으므로 축소가 필요 없다
 }
 document.getElementById('btn-clean').addEventListener('click', () => setCleanMode(!cleanMode));
 // 마우스·터치·키보드 어느 쪽으로 건드려도 아이콘이 잠깐 나타난다.
@@ -1217,6 +1241,7 @@ async function init() {
     defaultMusicUrl = s.musicUrl || '';
   } catch { /* 실패해도 기본값으로 진행 */ }
 
+  fitActionRow();  // 첫 그림이 오기 전에 아이콘 줄부터 화면 폭에 맞춰 둔다
   await start(); // 폴링은 start() 안에서 재생 시작 후 설정된다
 }
 init();

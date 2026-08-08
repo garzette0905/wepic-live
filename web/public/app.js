@@ -405,6 +405,20 @@ function refreshBackdrop() {
 }
 window.addEventListener('resize', refreshBackdrop);
 
+// ---- 조작 아이콘 줄이 잘리지 않게 맞추기 (공유화면 share.js의 fitActionRow와 같은 방식) ----
+// 폭이 좁은 기기에서는 아이콘 줄이 화면 밖으로 밀려 마지막 아이콘이 잘려 보인다.
+// 모자란 만큼만 줄 전체를 축소해(styles.css의 .photo-actions transform) 항상 다 보이게 한다.
+function fitActionRow() {
+  const row = document.querySelector('.photo-actions');
+  if (!row || !row.offsetParent) return;           // 슬라이드쇼 화면이 아닐 때는 잴 수 없다
+  const avail = (row.parentElement?.clientWidth || window.innerWidth) - 32; // 좌우 16px씩
+  const need = row.scrollWidth;                    // transform은 배치 폭을 바꾸지 않는다
+  const k = (need > avail && need > 0 && avail > 0) ? Math.max(0.55, avail / need) : 1;
+  row.style.setProperty('--fit', String(Math.round(k * 1000) / 1000));
+}
+window.addEventListener('resize', fitActionRow);
+window.addEventListener('orientationchange', () => setTimeout(fitActionRow, 250));
+
 // ---------- 화면 자동 꺼짐 방지 (Screen Wake Lock) ----------
 // 액자로 세워둔 태블릿·PC가 절전으로 화면을 끄면 사진이 안 보인다 → 슬라이드쇼를 보는 동안은
 // 화면을 깨워 둔다. 지원하지 않는 브라우저(iOS 사파리 등)나 사용자가 막은 경우에는 조용히
@@ -716,6 +730,7 @@ function syncMusicButton() {
     iconBtn.classList.toggle('hidden', !musicLoaded); // 곡이 준비되기 전에는 숨긴다(공유화면과 동일)
     iconBtn.classList.toggle('paused', !musicPlaying);
     iconBtn.title = musicPlaying ? '배경음악 일시정지' : '배경음악 재생';
+    fitActionRow();   // 음악 아이콘이 늘고 줄면 줄 길이도 달라진다
   }
 }
 
@@ -1244,7 +1259,7 @@ function startPickerOrGallery() {
 // ---------- 링크 카드용 흐린 표지 (og.jpg) ----------
 // 카카오톡 등에 링크를 붙이면 미리보기 카드에 그림이 붙는다. **PIN이 걸린 wepic**은 거기에
 // 원본을 쓰면 링크만 받은 사람에게 사진이 선명하게 노출되어 PIN을 건 의미가 없다.
-// 그래서 첫 사진을 캔버스로 크게 흐리게 만들어(색만 남는 수준) 표지로 올려 둔다.
+// 그래서 첫 사진을 캔버스로 흐리게 만들어 표지로 올려 둔다.
 // (전체공유 wepic은 어차피 누구나 볼 수 있으므로 서버가 첫 사진을 그대로 카드에 쓴다.)
 //
 // PIN은 나중에 "My사진관리"에서 걸 수도 있으므로 표지는 **공개 여부와 무관하게 항상** 만든다.
@@ -1253,13 +1268,49 @@ function startPickerOrGallery() {
 // 없고, 무료 플랜은 요청당 CPU가 10ms라 JS로 인코딩하는 것도 위험하다(QR 때 겪었다).
 const OG_COVER_W = 1200;
 const OG_COVER_H = 630;
+// 흐림 정도. 예전에는 44px이라 "무슨 사진인지조차 알 수 없는 색 덩어리"였다.
+// 지금은 **어떤 장면인지는 보이되 사람 얼굴은 알아볼 수 없는** 수준으로 낮췄다
+// (1200px 폭 기준 16px ≒ 원본 얼굴 크기의 대부분을 뭉갠다).
+// ⚠️ 이 값을 더 낮추면 PIN을 걸어둔 사진이 링크만 받은 사람에게도 알아볼 만큼 드러난다.
+const OG_COVER_BLUR = 16;
+const OG_LOGO_URL = '/icon-192-v2.png';
+
+// 표지 왼쪽 아래에 찍는 wepic 로고 + 워드마크.
+// 카카오톡 카드 제목에는 그림을 넣을 수 없어서(문자열이다) 예전에는 📸 이모지를 붙였는데,
+// 그림 쪽에 진짜 로고를 찍는 편이 브랜드가 훨씬 분명하게 보인다.
+function drawWepicBadge(ctx, logo) {
+  const size = 96;
+  const x = 44;
+  const y = OG_COVER_H - size - 44;
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+  ctx.shadowBlur = 18;
+  ctx.shadowOffsetY = 4;
+  if (logo) ctx.drawImage(logo, x, y, size, size);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '700 46px Pretendard, Inter, "Apple SD Gothic Neo", system-ui, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Wepic', x + size + 18, y + size / 2 + 2);
+  ctx.restore();
+}
+
+// 로고는 같은 출처(정적 자산)라 캔버스를 오염시키지 않는다. 못 받아와도 표지는 만든다.
+function loadLogo() {
+  return new Promise((resolve) => {
+    const im = new Image();
+    im.onload = () => resolve(im);
+    im.onerror = () => resolve(null);
+    im.src = OG_LOGO_URL;
+  });
+}
 
 function buildOgCover(url) {
   return new Promise((resolve) => {
     const im = new Image();
     im.onerror = () => resolve(null);
-    im.onload = () => {
+    im.onload = async () => {
       try {
+        const logo = await loadLogo();
         const c = document.createElement('canvas');
         c.width = OG_COVER_W;
         c.height = OG_COVER_H;
@@ -1268,15 +1319,18 @@ function buildOgCover(url) {
         const s = Math.max(OG_COVER_W / im.naturalWidth, OG_COVER_H / im.naturalHeight);
         const w = im.naturalWidth * s;
         const h = im.naturalHeight * s;
-        // 2) 아주 강하게 흐리게. blur는 그림 가장자리에서 잘려 테두리가 비어 보이므로
-        //    12% 크게 그려 경계를 화면 밖으로 밀어낸다(공유화면의 흐린 배경과 같은 요령).
-        ctx.filter = 'blur(44px)';
+        // 2) 흐리게. blur는 그림 가장자리에서 잘려 테두리가 비어 보이므로 6% 크게 그려
+        //    경계를 화면 밖으로 밀어낸다(공유화면의 흐린 배경과 같은 요령).
+        ctx.filter = `blur(${OG_COVER_BLUR}px)`;
         ctx.drawImage(im,
-          (OG_COVER_W - w * 1.12) / 2, (OG_COVER_H - h * 1.12) / 2, w * 1.12, h * 1.12);
+          (OG_COVER_W - w * 1.06) / 2, (OG_COVER_H - h * 1.06) / 2, w * 1.06, h * 1.06);
         ctx.filter = 'none';
-        // 3) 살짝 어둡게 눌러 카드 위 글자가 잘 읽히게 한다(공유화면과 같은 톤)
-        ctx.fillStyle = 'rgba(6, 10, 20, 0.3)';
+        // 3) 아주 살짝만 눌러 로고·글자가 밝은 사진 위에서도 읽히게 한다.
+        //    (예전 0.3은 사진이 어두컴컴해 보였다 — 흐림을 줄인 만큼 이것도 줄였다)
+        ctx.fillStyle = 'rgba(6, 10, 20, 0.16)';
         ctx.fillRect(0, 0, OG_COVER_W, OG_COVER_H);
+        // 4) 왼쪽 아래에 wepic 로고
+        drawWepicBadge(ctx, logo);
         c.toBlob((b) => resolve(b), 'image/jpeg', 0.72);
       } catch { resolve(null); } // 다른 출처 이미지 등으로 캔버스를 읽을 수 없는 경우
     };
