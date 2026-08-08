@@ -12,7 +12,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Dancing+Script:wght@600&family=Nanum+Pen+Script&display=swap" rel="stylesheet" />
 <!-- 한글 본문용 Pretendard (라틴은 Inter가 받는다) -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
-<link rel="stylesheet" href="styles.css?v=20260808c" />
+<link rel="stylesheet" href="styles.css?v=20260808d" />
 </head>
 <body>
 
@@ -217,7 +217,10 @@
                 사람(또는 PIN을 아는 사람)이 볼 수 있습니다.</li>
               <li><b>보관 기간</b>: 회원 정보는 탈퇴 요청 시까지, 사진은 직접 삭제할 때까지.</li>
               <li><b>제3자 제공 없음.</b> 광고·마케팅에 쓰지 않습니다.</li>
-              <li>문의·삭제 요청: <b>garzette@paran.com</b></li>
+              <!-- 연락 창구는 인스타그램 DM 하나로 모은다(소개 패널의 "문의 · Contact"와 동일). -->
+              <li>문의·삭제 요청: 인스타그램
+                <a href="https://www.instagram.com/wepickr/" target="_blank" rel="noopener noreferrer"
+                   class="text-link">@wepickr</a> 계정으로 <b>다이렉트 메시지(DM)</b></li>
             </ul>
           </div>
 
@@ -341,8 +344,11 @@
           <p class="modal-block">필요한 기능을 요청하거나, 오류·불편한 점을 남겨주세요.</p>
           <p class="modal-block modal-en">Send feature requests, or report bugs and issues you run into.</p>
           <textarea id="feedback-text" class="feedback-text" rows="5" placeholder="여기에 의견을 적어주세요 · Write your feedback here"></textarea>
-          <button id="btn-feedback-send" class="btn-primary">이메일로 보내기 · Send via email</button>
-          <p class="hint" style="margin:8px 0 0;">보내기를 누르면 메일 앱이 열립니다 · Opens your email app (to: garzette@paran.com)</p>
+          <button id="btn-feedback-send" class="btn-primary">인스타그램 DM으로 보내기 · Send via Instagram DM</button>
+          <p class="hint" style="margin:8px 0 0;">누르면 적으신 내용을 복사하고 인스타그램
+            <a href="https://www.instagram.com/wepickr/" target="_blank" rel="noopener noreferrer"
+               class="text-link">@wepickr</a> 계정이 열립니다 — DM 창에 붙여넣어 주세요 ·
+            Copies your text and opens Instagram @wepickr — paste it into a DM.</p>
         </div>
 
         <!-- ===== wepic 관리자: 화면관리 ===== -->
@@ -786,8 +792,10 @@
       <h2 style="margin:0 0 6px;">Google 인증 전에 확인해주세요</h2>
       <p class="modal-block">Google 인증을 위해서는 구글포토 등 구글 프로그램 활용을 위한
         <b>운영자의 최초 1회 등록</b>이 필요합니다. 운영자에게 연락을 해서 최초 등록을
-        요청해주시기 바랍니다 (구글 아이디 알려주기,
-        <b>garzette@para.com</b>). 이미 알려주셨으면 <b>다음</b> 버튼을 눌러주세요. :)</p>
+        요청해주시기 바랍니다. 구글 아이디를 적어서 인스타그램
+        <a href="https://www.instagram.com/wepickr/" target="_blank" rel="noopener noreferrer"
+           class="text-link">@wepickr</a> 계정으로 <b>다이렉트 메시지(DM)</b>를 보내주세요.
+        이미 알려주셨으면 <b>다음</b> 버튼을 눌러주세요. :)</p>
       <div class="start-actions">
         <button id="google-notice-next" class="btn-primary">다음</button>
         <button id="google-notice-cancel" class="secondary slim">취소</button>
@@ -845,6 +853,6 @@
       } catch { return ''; }
     };
   </script>
-  <script src="app.js?v=20260808c"></script>
+  <script src="app.js?v=20260808d"></script>
 </body>
 </html>

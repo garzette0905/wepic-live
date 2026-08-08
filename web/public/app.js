@@ -1086,20 +1086,25 @@ function showShareUrlInline(url) {
   box.classList.toggle('hidden', !has);
 }
 
-// 공유 주소를 클립보드로. (구형 브라우저·비보안 컨텍스트에서는 임시 textarea로 폴백)
-async function copyShareUrl() {
-  if (!currentShareUrl) { showToast('아직 공유 링크가 없습니다.'); return false; }
+// 글자를 클립보드로. (구형 브라우저·비보안 컨텍스트에서는 임시 textarea로 폴백)
+async function copyToClipboard(text) {
   try {
-    await navigator.clipboard.writeText(currentShareUrl);
+    await navigator.clipboard.writeText(text);
   } catch {
     const t = document.createElement('textarea');
-    t.value = currentShareUrl;
+    t.value = text;
     t.style.position = 'fixed';
     t.style.opacity = '0';
     document.body.appendChild(t);
     t.select();
     try { document.execCommand('copy'); } finally { t.remove(); }
   }
+}
+
+// 공유 주소를 클립보드로.
+async function copyShareUrl() {
+  if (!currentShareUrl) { showToast('아직 공유 링크가 없습니다.'); return false; }
+  await copyToClipboard(currentShareUrl);
   return true;
 }
 
@@ -2032,11 +2037,17 @@ document.getElementById('btn-logout-home').addEventListener('click', async (e) =
   await api('/api/logout', { method: 'POST' }).catch(() => {});
   location.href = '/';
 });
-document.getElementById('btn-feedback-send').addEventListener('click', () => {
+// 피드백은 메일이 아니라 **인스타그램 DM**으로 받는다(연락 창구를 @wepickr 하나로 모았다).
+// 인스타그램에는 mailto처럼 **내용을 미리 채워 여는 주소가 없다** — 그래서 적은 내용을
+// 클립보드에 담아 두고 계정 화면을 연다. 사용자는 DM 창에 붙여넣기만 하면 된다.
+document.getElementById('btn-feedback-send').addEventListener('click', async () => {
   const txt = document.getElementById('feedback-text').value.trim();
-  const subject = encodeURIComponent('Wepic Feedback');
-  const body = encodeURIComponent(txt);
-  window.location.href = `mailto:garzette@paran.com?subject=${subject}&body=${body}`;
+  if (txt) {
+    await copyToClipboard(txt);
+    showToast('내용을 복사했습니다 · 인스타그램 DM에 붙여넣어 주세요.');
+  }
+  // 새 탭으로 연다 — 지금 화면(적어둔 내용)이 사라지면 복사가 실패했을 때 다시 쓸 수 없다.
+  window.open('https://www.instagram.com/wepickr/', '_blank', 'noopener');
 });
 
 // 슬라이드쇼 하단의 "홈페이지로 가기"(데모/공유 모드)
