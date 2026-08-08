@@ -201,6 +201,29 @@ function baseUrlOf(request, env) {
   return env.BASE_URL;
 }
 
+// ---------- www → 대표 주소로 정규화 ----------
+// 모바일 브라우저·주소창 자동완성이 "www."를 붙이는 일이 잦다. 그러면 같은 사이트인데도
+// OAuth 콜백이 https://www.wepic.kr/auth/callback 으로 조립되어, 콘솔에 등록해 둔
+// https://wepic.kr/auth/callback 과 달라 로그인이 redirect_uri_mismatch로 막힌다
+// (실제로 "PC는 되는데 폰만 안 되는" 증상으로 나타났다).
+//
+// 콜백 주소를 두 벌씩 등록해 두는 대신, 들어오자마자 대표 주소로 넘겨 **주소를 하나로** 만든다.
+// 세션 쿠키도 한 도메인에만 생겨 로그인 상태가 갈리지 않는다.
+// GET/HEAD만 넘긴다 — POST를 301로 넘기면 메서드·본문이 사라진다.
+function wwwRedirect(request, env) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return null;
+  const u = new URL(request.url);
+  if (!/^www\./i.test(u.hostname)) return null;
+  const apex = u.hostname.replace(/^www\./i, '');
+  const listed = String(env.SITE_HOSTS || '')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (!listed.includes(apex.toLowerCase())) return null;  // 우리가 아는 도메인일 때만
+  u.hostname = apex;
+  u.protocol = 'https:';
+  u.port = '';
+  return new Response(null, { status: 301, headers: { Location: u.toString() } });
+}
+
 function sameOriginRequest(request) {
   if (request.method === 'GET' || request.method === 'HEAD') return true;
   const origin = request.headers.get('Origin');
@@ -2178,6 +2201,9 @@ export default {
     // 아니라 **지금 이 요청이 들어온 주소**를 써야 어긋나지 않는다. 아래 한 줄로 이후의
     // 모든 `env.BASE_URL` 사용처가 자동으로 그 값을 보게 된다(호출부를 고칠 필요가 없다).
     env = { ...env, BASE_URL: baseUrlOf(request, env) };
+    // www로 들어왔으면 대표 주소로 넘긴다(주소가 둘로 갈리면 OAuth 콜백이 어긋난다).
+    const wwwFix = wwwRedirect(request, env);
+    if (wwwFix) return wwwFix;
     try {
       // CSRF 방어: 상태를 바꾸는 요청은 같은 출처에서 온 것만 받는다.
       // 라우팅 맨 앞에서 한 번 검사해 엔드포인트를 하나라도 빠뜨리는 일이 없게 한다.
