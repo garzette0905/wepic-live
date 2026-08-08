@@ -291,6 +291,76 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') acquireWakeLock();
 });
 
+// ---- 시계 · 날씨 위젯 (우측 상단) ----
+// 메인화면(app.js)과 같은 동작을 공유화면에도 둔다 — 예전에는 메인화면에만 있어서
+// "메인에서는 보이는데 공유 링크에서는 안 보인다"는 차이가 있었다.
+// 켤지 말지는 보는 사람의 설정이 아니라 **만든 사람이 저장한 값**(매니페스트 ambient)을 따른다.
+// 날씨는 보는 사람의 위치 기준이다(액자가 놓인 곳의 날씨가 의미 있으므로).
+let clockTimer = null;
+let weatherTimer = null;
+let weatherRequested = false;
+
+function startClock() {
+  if (clockTimer) return;
+  const tick = () => {
+    const now = new Date();
+    document.getElementById('amb-time').textContent =
+      new Intl.DateTimeFormat('ko-KR', { hour: '2-digit', minute: '2-digit' }).format(now);
+    document.getElementById('amb-date').textContent =
+      new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' }).format(now);
+  };
+  tick();
+  clockTimer = setInterval(tick, 10000);
+}
+function stopClock() { if (clockTimer) { clearInterval(clockTimer); clockTimer = null; } }
+
+// WMO 날씨 코드 → 아이콘·한글 라벨
+function weatherFromCode(code) {
+  if (code === 0) return { icon: '☀️', label: '맑음' };
+  if ([1, 2].includes(code)) return { icon: '🌤️', label: '대체로 맑음' };
+  if (code === 3) return { icon: '☁️', label: '흐림' };
+  if ([45, 48].includes(code)) return { icon: '🌫️', label: '안개' };
+  if ([51, 53, 55, 56, 57].includes(code)) return { icon: '🌦️', label: '이슬비' };
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return { icon: '🌧️', label: '비' };
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return { icon: '❄️', label: '눈' };
+  if ([95, 96, 99].includes(code)) return { icon: '⛈️', label: '뇌우' };
+  return { icon: '🌡️', label: '' };
+}
+
+async function fetchWeather(lat, lon) {
+  try {
+    // 프라이버시: 외부(open-meteo)로 보내는 좌표는 소수 2자리(~1km)로만 반올림.
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(2)}&longitude=${lon.toFixed(2)}&current=temperature_2m,weather_code`;
+    const r = await fetch(url);
+    if (!r.ok) return;
+    const d = await r.json();
+    const t = Math.round(d.current?.temperature_2m);
+    const { icon, label } = weatherFromCode(d.current?.weather_code);
+    if (Number.isFinite(t)) document.getElementById('amb-weather').textContent = `${icon} ${t}° ${label}`.trim();
+  } catch { /* 날씨는 있으면 좋은 것 — 실패하면 시계만 보인다 */ }
+}
+
+// 위치 권한은 최초 1회만 묻는다. 거부하거나 지원하지 않으면 시계만 표시된다.
+function initWeatherOnce() {
+  if (weatherRequested || !navigator.geolocation) return;
+  weatherRequested = true;
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const { latitude: lat, longitude: lon } = pos.coords;
+      fetchWeather(lat, lon);
+      if (!weatherTimer) weatherTimer = setInterval(() => fetchWeather(lat, lon), 15 * 60 * 1000);
+    },
+    () => {},
+    { timeout: 8000, maximumAge: 600000 }
+  );
+}
+
+function applyAmbient(on) {
+  document.getElementById('ambient-widget').classList.toggle('hidden', !on);
+  if (on) { startClock(); initWeatherOnce(); }
+  else { stopClock(); }
+}
+
 // ---- 전체화면 ----
 function setFullscreen(on) {
   document.body.classList.toggle('fullscreen', on);
@@ -495,6 +565,59 @@ function resumeMusicAfterVideo() {
 }
 document.getElementById('btn-music').addEventListener('click', () => (soundOn ? muteSound() : playSound()));
 
+// ---- 이 화면이 실제로 보이고 있을 때만 소리가 나게 (떠도는 배경음악 방지) ----
+// 창·탭을 닫거나 다른 앱으로 넘어간 뒤에도 배경음악만 계속 흐르는 경우가 있었다.
+// 그때는 이 화면이 없으니 **끌 방법조차 없다.** 그래서 화면이 살아 있는지를 직접 확인해서
+// 보이지 않으면 멈추고, 돌아오면 원래 상태로 되돌린다.
+//
+// 세 가지를 모두 듣는다 — 하나만으로는 새는 경우가 있다:
+//  · visibilitychange … 다른 탭·앱으로 전환 (되돌아올 수 있으므로 "일시정지")
+//  · pagehide ………… 탭·창을 닫거나 다른 주소로 이동 (iOS 사파리는 unload가 안 온다)
+//  · freeze …………… 브라우저가 백그라운드 탭을 얼릴 때 (Page Lifecycle)
+let mediaHeldForHidden = false;   // 화면이 가려져서 우리가 멈춰 둔 상태인가
+function suspendMediaWhileHidden() {
+  if (mediaHeldForHidden) return;
+  mediaHeldForHidden = true;
+  try { document.getElementById('video-layer')?.pause(); } catch { /* 무시 */ }
+  if (usingPreview()) { try { previewAudio.pause(); } catch { /* 무시 */ } return; }
+  try { ytPlayer?.pauseVideo?.(); } catch { /* 무시 */ }
+}
+function resumeMediaWhenVisible() {
+  if (!mediaHeldForHidden) return;
+  mediaHeldForHidden = false;
+  // 동영상은 화면이 그 항목을 보여주고 있을 때만 되살린다(사진으로 넘어갔으면 그냥 둔다).
+  if (isVideoItem(photos[idx])) {
+    try { document.getElementById('video-layer')?.play?.().catch(() => {}); } catch { /* 무시 */ }
+  }
+  if (musicPausedForVideo) return; // 동영상 때문에 멈춘 것은 그쪽 로직이 되살린다
+  if (usingPreview()) { try { previewAudio.play().catch(() => {}); } catch { /* 무시 */ } return; }
+  try { ytPlayer?.playVideo?.(); } catch { /* 무시 */ }
+}
+// 화면을 아주 떠날 때는 되살릴 일이 없으므로 완전히 끊는다(유튜브 iframe까지 없앤다).
+function stopAllMediaForGoodbye() {
+  try { const v = document.getElementById('video-layer'); v?.pause(); v?.removeAttribute('src'); } catch { /* 무시 */ }
+  stopPreviewMusic();
+  try { ytPlayer?.stopVideo?.(); } catch { /* 무시 */ }
+  try { ytPlayer?.destroy?.(); } catch { /* 무시 */ }
+  ytPlayer = null;
+  playerPromise = null; // 다시 만들 수 있게 (destroy 뒤 옛 약속이 남아 있으면 영영 못 만든다)
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') suspendMediaWhileHidden();
+  else resumeMediaWhenVisible();
+});
+// ⚠️ pagehide는 **뒤로가기 캐시(bfcache)로 들어갈 때도** 온다. 그때 플레이어를 없애면
+//    뒤로가기로 돌아왔을 때 음악이 영영 살아나지 않는다 → 되돌아올 수 있는 경우(persisted)는
+//    멈추기만 하고, 정말 떠나는 경우에만 끊는다.
+window.addEventListener('pagehide', (e) => {
+  if (e.persisted) suspendMediaWhileHidden();
+  else stopAllMediaForGoodbye();
+});
+window.addEventListener('pageshow', (e) => { if (e.persisted) resumeMediaWhenVisible(); });
+// 브라우저가 백그라운드 탭을 얼렸다 녹이는 경우(Page Lifecycle) — 되살아날 수 있으므로 멈추기만.
+window.addEventListener('freeze', suspendMediaWhileHidden);
+window.addEventListener('resume', resumeMediaWhenVisible);
+
 // ---- 홈으로 이동 ----
 // 홈페이지의 "사진 보기" 안에 iframe으로 끼워져 열린 경우에는 이미 홈페이지 위에 있는
 // 셈이라 "홈으로"가 의미가 없다(눌러도 iframe 안에 홈페이지가 또 열릴 뿐). → 그때는 숨긴다.
@@ -608,6 +731,10 @@ function applyManifest(data) {
   const sec = Math.min(60, Math.max(3, Number(data.intervalSec) || 10));
   intervalMs = sec * 1000;
   view.style.setProperty('--kb-duration', sec + 's');
+
+  // 시계·날씨 — 만든 사람이 켜 둔 값이 매니페스트로 함께 온다.
+  // 이 값이 없는 예전 wepic은 켜진 것으로 본다(메인화면 기본값과 같게).
+  applyAmbient(data.ambient !== false);
 
   // 배경음악: 곡이 바뀌면 새 곡으로 교체(무음/소리 상태는 유지).
   // 공유에 음악이 없으면 관리자 Default 배경음악을 쓴다.

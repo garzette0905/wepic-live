@@ -123,6 +123,10 @@ function selectPanel(name) {
   }
   // "사진 보기": 전체공유 카드 목록을 매번 새로 불러온다(다른 회원이 그새 새로 공개했을 수 있음).
   if (name === 'feed') loadPublicFeed();
+  // 다른 메뉴로 옮기면 "사진 보기"에서 열어둔 wepic(iframe)을 반드시 끈다.
+  // 패널만 숨기면 iframe은 그대로 살아 있어 **보이지도 않는 곳에서 배경음악이 계속 흐르고**,
+  // 화면이 없으니 끌 방법도 없다. src를 비우는 것이 유일하게 확실한 정지 방법이다.
+  else closePublicViewer();
 }
 // data-panel이 있는 항목만 클릭으로 이동한다(로그인 상태 표시는 data-panel이 없어 제외됨).
 document.querySelectorAll(
@@ -910,6 +914,61 @@ document.getElementById('btn-music-clear').addEventListener('click', () => {
   const i = document.getElementById('music-url'); i.value = ''; i.focus();
 });
 
+// ---------- 이 화면이 실제로 보이고 있을 때만 소리가 나게 (떠도는 배경음악 방지) ----------
+// wepic 공유화면(share.js)에 넣은 것과 같은 가드를 메인화면에도 둔다. 창·탭을 닫거나
+// 다른 앱으로 넘어간 뒤에 배경음악만 남아 흐르면, 그 화면이 없으니 **끌 방법조차 없다.**
+//  · visibilitychange … 다른 탭·앱으로 전환 (돌아올 수 있으므로 "일시정지")
+//  · pagehide ………… 탭·창을 닫거나 다른 주소로 이동 (iOS 사파리는 unload가 오지 않는다)
+//  · freeze ………… 브라우저가 백그라운드 탭을 얼릴 때 (Page Lifecycle)
+let mediaHeldForHidden = false;   // 화면이 가려져서 우리가 멈춰 둔 상태인가
+let musicWasPlayingBeforeHidden = false;
+let videoWasPlayingBeforeHidden = false;
+function suspendMediaWhileHidden() {
+  if (mediaHeldForHidden) return;
+  mediaHeldForHidden = true;
+  const v = document.getElementById('video-layer');
+  // ⚠️ 멈추기 **전에** 기록해야 한다 — 멈추면 musicPlaying이 false로 바뀌어,
+  //    "사용자가 직접 꺼둔 것"과 구분할 수 없게 된다.
+  musicWasPlayingBeforeHidden = musicPlaying;
+  videoWasPlayingBeforeHidden = !!(v && v.getAttribute('src') && !v.paused && !v.ended);
+  try { v?.pause(); } catch { /* 무시 */ }
+  if (musicIsPreview()) { try { previewAudio?.pause?.(); } catch { /* 무시 */ } }
+  else { try { ytPlayer?.pauseVideo?.(); } catch { /* 무시 */ } }
+}
+function resumeMediaWhenVisible() {
+  if (!mediaHeldForHidden) return;
+  mediaHeldForHidden = false;
+  if (videoWasPlayingBeforeHidden) {
+    try { document.getElementById('video-layer')?.play?.().catch(() => {}); } catch { /* 무시 */ }
+  }
+  if (!musicWasPlayingBeforeHidden) return; // 원래 꺼져 있던 음악을 켜주면 안 된다
+  if (musicPausedForVideo) return;          // 동영상 때문에 멈춘 것은 그쪽 로직이 되살린다
+  if (musicIsPreview()) { try { previewAudio?.play?.().catch(() => {}); } catch { /* 무시 */ } }
+  else { try { ytPlayer?.playVideo?.(); } catch { /* 무시 */ } }
+}
+// 화면을 아주 떠날 때는 되살릴 일이 없으므로 완전히 끊는다(유튜브 iframe까지 없앤다).
+function stopAllMediaForGoodbye() {
+  stopSlideshowPlayback();
+  try { previewAudio?.removeAttribute?.('src'); } catch { /* 무시 */ }
+  try { ytPlayer?.stopVideo?.(); } catch { /* 무시 */ }
+  try { ytPlayer?.destroy?.(); } catch { /* 무시 */ }
+  ytPlayer = null;
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') suspendMediaWhileHidden();
+  else resumeMediaWhenVisible();
+});
+// ⚠️ pagehide는 **뒤로가기 캐시(bfcache)로 들어갈 때도** 온다. 그때 플레이어를 없애면
+//    뒤로가기로 돌아왔을 때 음악이 영영 살아나지 않는다 → 되돌아올 수 있는 경우(persisted)는
+//    멈추기만 하고, 정말 떠나는 경우에만 끊는다.
+window.addEventListener('pagehide', (e) => {
+  if (e.persisted) suspendMediaWhileHidden();
+  else stopAllMediaForGoodbye();
+});
+window.addEventListener('pageshow', (e) => { if (e.persisted) resumeMediaWhenVisible(); });
+window.addEventListener('freeze', suspendMediaWhileHidden);
+window.addEventListener('resume', resumeMediaWhenVisible);
+
 // ---------- 음악찾기 팝업 ----------
 const musicModal = document.getElementById('music-modal');
 document.getElementById('btn-music-find').addEventListener('click', () => {
@@ -1178,6 +1237,11 @@ function applyFrameSettingsToUI(m) {
     const r = document.querySelector(`#effect-radios input[value="${m.effect}"]`);
     if (r) { r.checked = true; applyEffect(m.effect); }
   }
+  // 시계·날씨도 그 wepic에 저장된 값으로 되돌린다(값이 없는 예전 wepic은 건드리지 않는다).
+  if (typeof m.ambient === 'boolean') {
+    document.getElementById('ambient-toggle').checked = m.ambient;
+    applyAmbient(m.ambient);
+  }
 }
 
 // 현재 선택된 액자에 맞춰 공유 상태(URL·PIN·반영 버튼)와 제목·음악·전환설정을 화면에 반영한다.
@@ -1413,6 +1477,9 @@ async function pushShare() {
     const pin = getSharePin();
     // 전체공유: 체크하면 서버가 PIN 없이 저장한다(기존 PIN이 있었다면 지운다).
     const isPublic = document.getElementById('share-public').checked;
+    // 시계·날씨 표시도 제목·전환설정처럼 함께 저장한다 — 이 값을 안 보내면 공유화면은
+    // 켜졌는지 꺼졌는지 알 길이 없다(브라우저 localStorage는 보는 사람 기기에 없다).
+    const ambient = document.getElementById('ambient-toggle').checked;
     let r;
     if (isSharedMode || isLocalMode) {
       // 구글 포토 "공유"로 받은 사진(isSharedMode)이나 기기 갤러리에서 고른 사진
@@ -1449,6 +1516,7 @@ async function pushShare() {
       form.append('intervalSec', String(intervalSec));
       form.append('effect', slideEffect);
       form.append('isPublic', isPublic ? '1' : '0');
+      form.append('ambient', ambient ? '1' : '0');
       if (pin) form.append('pin', pin);
       r = await api('/api/share/blob', { method: 'POST', body: form });
     } else {
@@ -1463,7 +1531,7 @@ async function pushShare() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          items, musicUrl, title, intervalSec, effect: slideEffect, pin, isPublic,
+          items, musicUrl, title, intervalSec, effect: slideEffect, pin, isPublic, ambient,
           musicTitle: musicTitle || '', // 미리듣기용 곡목 스냅샷(위 blob 경로 주석 참고)
           frameName: currentFrameName(), // 이 wepic의 이름(화면 입력칸)
         }),

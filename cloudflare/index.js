@@ -261,6 +261,7 @@ async function frameInfo(env, data, f) {
     effect: m?.effect || null,
     pin: m?.pin || null,
     isPublic: !!m?.isPublic, // "전체공유" 체크 상태 — 액자를 전환할 때 화면에 그대로 복원한다
+    ambient: m ? m.ambient !== false : null, // 시계·날씨 표시 (값이 없는 예전 wepic은 켜짐)
     count: m?.items?.length || 0,
     thumbUrl: m?.items?.[0]?.thumbUrl || null,
     url: m ? shortUrlOf(env, f.id) : null,   // 화면에 보여주는 주소는 짧은 쪽
@@ -1662,6 +1663,9 @@ async function shareCreate(request, env, sess) {
   const intervalSec = Math.min(60, Math.max(3, Number(body.intervalSec) || 10));
   const effect = ['fade', 'slide', 'kenburns'].includes(body.effect) ? body.effect : 'fade';
   const isPublic = !!body.isPublic; // "전체공유" 체크 — 켜면 PIN 없이 누구나 볼 수 있게 만든다
+  // 시계·날씨 표시 — 제목·전환설정처럼 만든 시점의 값을 함께 저장해 공유화면에도 적용한다.
+  // 값이 없는 예전 wepic은 켜진 것으로 본다(메인화면 기본값과 같게).
+  const ambient = body.ambient === undefined ? true : !!body.ambient;
   if (!items.length) return json({ error: '공유할 사진이 없습니다.' }, 400);
 
   ensureFrames(sess.data);
@@ -1822,7 +1826,7 @@ async function shareCreate(request, env, sess) {
   const authorName = sess.data?.name || '위픽 사용자';
   const curFrameName = frameNameOf(sess.data, shareId);
   await writeManifest(env, shareId, {
-    musicUrl, musicTitle, title, intervalSec, effect, pin, owner, authorName, isPublic,
+    musicUrl, musicTitle, title, intervalSec, effect, pin, owner, authorName, isPublic, ambient,
     ownerUserId: sess.data?.userId || null, // "My사진관리"에서 본인 소유만 걸러낼 고유 키(D1 회원 id)
     frameName: curFrameName, items: manifestItems,
   });
@@ -1852,6 +1856,10 @@ async function shareBlob(request, env, sess, user) {
   const intervalSec = Math.min(60, Math.max(3, Number(form.get('intervalSec')) || 10));
   const effect = ['fade', 'slide', 'kenburns'].includes(form.get('effect')) ? form.get('effect') : 'fade';
   const isPublic = ['true', '1', 'on'].includes(String(form.get('isPublic') || '').toLowerCase());
+  // 시계·날씨 표시(위 JSON 경로와 같은 규칙 — 값이 없으면 켜진 것으로 본다)
+  const ambient = form.get('ambient') === null
+    ? true
+    : ['true', '1', 'on'].includes(String(form.get('ambient') || '').toLowerCase());
 
   const { sid: ssid, data: sdata } = sess;
   ensureFrames(sdata);
@@ -1950,7 +1958,7 @@ async function shareBlob(request, env, sess, user) {
   const authorName = user.name || '위픽 사용자';
   const curFrameName = frameNameOf(sdata, shareId);
   await writeManifest(env, shareId, {
-    musicUrl, musicTitle, title, intervalSec, effect, pin, owner, authorName, isPublic,
+    musicUrl, musicTitle, title, intervalSec, effect, pin, owner, authorName, isPublic, ambient,
     ownerUserId: user.id, // "My사진관리"에서 본인 소유만 걸러낼 고유 키(D1 회원 id)
     frameName: curFrameName, items: manifestItems,
   });

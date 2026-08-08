@@ -14,7 +14,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Dancing+Script:wght@600&family=Nanum+Pen+Script&display=swap" rel="stylesheet" />
 <!-- 한글 본문용 Pretendard (라틴은 Inter가 받는다) -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
-<link rel="stylesheet" href="/styles.css?v=20260808b" />
+<link rel="stylesheet" href="/styles.css?v=20260808e" />
 <style>
   /* 공유 보기 전용: 사진이 화면 전체를 채우는 단순 슬라이드쇼 */
   .share-view { position: fixed; inset: 0; background: #000; overflow: hidden; }
@@ -252,6 +252,7 @@
   body.clean #share-title,
   body.clean #share-counter,
   body.clean #share-caption,
+  body.clean #ambient-widget,
   body.clean .progress-strip,
   body.clean .viewers-pill,
   body.clean .comment-pane { display: none !important; }
@@ -294,6 +295,14 @@
     <div id="share-title" class="title-overlay hidden"></div>
     <!-- 제목 바로 아래, 제목과 같은 크기로 "3 / 10"처럼 몇 번째 사진인지 알려준다 -->
     <div id="share-counter" class="title-counter hidden"></div>
+
+    <!-- 시계·날씨 (우측 상단) — 메인화면과 같은 마크업·CSS(styles.css의 .ambient-widget).
+         켤지 말지는 wepic을 만들 때의 설정이 매니페스트(ambient)로 함께 전달된다. -->
+    <div id="ambient-widget" class="ambient-widget hidden">
+      <div id="amb-time" class="amb-time"></div>
+      <div id="amb-date" class="amb-date"></div>
+      <div id="amb-weather" class="amb-weather"></div>
+    </div>
 
     <!-- 첫 사진이 준비될 때까지 보여주는 시작 화면 (로고 + 첫 사진을 희미하게) -->
     <div id="share-loading" class="share-loading">
@@ -457,6 +466,6 @@
     <div class="yt-host"><div id="yt-player"></div></div>
   </div>
 
-  <script src="/share.js?v=20260808"></script>
+  <script src="/share.js?v=20260808e"></script>
 </body>
 </html>
