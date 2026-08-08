@@ -1638,7 +1638,7 @@ async function shareCreate(request, env, token, sess) {
     const m = ownRe.exec(it.fullUrl || '');
     if (m) maxIdx = Math.max(maxIdx, parseInt(m[1], 10));
   }
-  const keepKeys = new Set([`${shareId}/photos.json`]); // 이번 저장 후에도 남겨둘 키
+  const keepKeys = new Set([`${shareId}/photos.json`, `${shareId}/${OG_COVER_NAME}`]); // 이번 저장 후에도 남겨둘 키(미리보기 표지 포함)
   const keyOf = (url) => (ownRe.test(url || '') ? `${shareId}/photos/${url.slice(url.lastIndexOf('/') + 1)}` : null);
 
   const keptItems = [];   // 이미 이 wepic에 있던 사진(순서 유지)
@@ -1799,7 +1799,7 @@ async function shareBlob(request, env, sess, user) {
   // 기존 공유를 먼저 지우지 않고 새 파일부터 저장한다. 재업로드한 파일이 전부
   // 걸러지거나(이미지가 아님) 저장에 실패해도 기존 공유가 지워지지 않도록 하기 위함 —
   // 유효한 새 파일이 실제로 저장된 뒤에만 이전 파일을 정리한다.
-  const keepKeys = new Set([`${shareId}/photos.json`]);
+  const keepKeys = new Set([`${shareId}/photos.json`, `${shareId}/${OG_COVER_NAME}`]);
   const manifestItems = [];
   // 동영상은 한 개당 크기 상한(maxShareVideoBytes)을 넘으면 담지 않는다. 몇 개를 건너뛰었는지
   // 화면에 알려줘야 "왜 빠졌는지"를 알 수 있으므로 세어 둔다.
@@ -1906,6 +1906,32 @@ async function shareDelete(request, env, sess) {
   return json({ ok: true, currentFrameId: data.currentFrameId, frames: await framesInfoList(env, data) });
 }
 
+// ---------- 미리보기 표지 (og.jpg) ----------
+// 카카오톡 등의 링크 카드에 쓰는 그림. **원본 사진이 아니라 크게 흐린 표지**다.
+// Worker에는 이미지 처리 수단이 없고(무료 플랜은 요청당 CPU 10ms라 JS 인코딩도 위험하다),
+// 화면(app.js)은 이미 사진을 들고 있으므로 캔버스로 blur해서 여기로 올린다.
+const OG_COVER_NAME = 'og.jpg';
+const OG_COVER_W = 1200;
+const OG_COVER_H = 630;
+const OG_COVER_MAX_BYTES = 2 * 1024 * 1024;
+
+async function putOgCover(request, env, user, id) {
+  if (!/^[\w-]{6,}$/.test(id)) return json({ error: '잘못된 id' }, 400);
+  const m = await readManifest(env, id);
+  if (!m) return json({ error: '없는 wepic입니다.' }, 404);
+  // 표지를 갈아끼울 수 있는 사람은 소유자와 관리자뿐이다.
+  if (m.ownerUserId !== user.id && user.role !== 'admin') {
+    return json({ error: '권한이 없습니다.' }, 403);
+  }
+  const form = await request.formData();
+  const f = form.get('cover');
+  if (!f || typeof f.size !== 'number' || !f.size) return json({ error: '표지가 없습니다.' }, 400);
+  if (f.size > OG_COVER_MAX_BYTES) return json({ error: '표지가 너무 큽니다.' }, 413);
+  await env.SHARES.put(`${id}/${OG_COVER_NAME}`, new Uint8Array(await f.arrayBuffer()),
+    { httpMetadata: { contentType: 'image/jpeg' } });
+  return json({ ok: true });
+}
+
 // 공개 보기 페이지: 매니페스트 확인 후 share.html(정적) 반환
 // ---------- 짧은(압축) 주소 ----------
 // wepic id는 randomId(9) = 12자다. 그 **앞 6자**를 짧은 주소로 쓴다:
@@ -1943,28 +1969,32 @@ const htmlAttr = (s) => String(s || '')
 
 // 카카오톡·문자·메신저에 링크를 붙였을 때 보이는 미리보기 카드(Open Graph).
 // 예전에는 이 태그가 없어서 카드가 제목 한 줄만 있는 **빈 상자**로 보였다.
-// → wepic 제목과 대표 사진(없거나 PIN이 걸렸으면 wepic 로고)을 실어 준다.
-function shareOgTags(env, id, m) {
+//
+// 카드에 쓰는 그림은 **원본 사진이 아니라 크게 흐린 표지**(<id>/og.jpg)다.
+// 링크만 받아 본 사람에게 사진 한 장이 그대로 노출되지 않도록, 화면(app.js)이 저장할 때
+// 캔버스로 강하게 blur해서 만들어 올린다. 표지가 아직 없는 예전 wepic은 로고를 쓴다
+// (원본 사진으로 되돌아가면 흐리게 만든 의미가 없다).
+function shareOgTags(env, id, m, hasCover) {
   const title = (m.title || m.frameName || '').trim() || 'Wepic';
   const count = (m.items || []).length;
-  // ⚠️ PIN이 걸린 wepic은 대표 사진을 카드에 실으면 안 된다 — 링크만 받아도 PIN 없이
-  //    사진 한 장을 보게 되는 셈이다. 그럴 때는 로고만 보여준다.
-  const first = (m.items || [])[0];
-  const shot = !m.pin && first ? (first.thumbUrl || first.fullUrl) : null;
-  const image = shot ? `${env.BASE_URL}${shot}` : `${env.BASE_URL}/icon-512-v2.png`;
-  const desc = m.pin
-    ? `사진 ${count}장 · PIN 번호를 넣으면 바로 재생됩니다.`
-    : `사진 ${count}장이 담겨 있습니다. 눌러서 함께 보세요.`;
+  const image = hasCover
+    ? `${env.BASE_URL}/shares/${id}/${OG_COVER_NAME}`
+    : `${env.BASE_URL}/icon-512-v2.png`;
+  // 제목: wepic 아이콘 + 제목 + (사진 N장)
+  const ogTitle = `📸 ${title} (사진 ${count}장)`;
+  const desc = m.pin ? 'PIN 번호를 입력하면 재생됩니다.' : 'wepic 사진을 감상하세요.';
   const url = `${env.BASE_URL}/f/${id}`;
   return [
     `<meta property="og:type" content="website" />`,
     `<meta property="og:site_name" content="Wepic" />`,
-    `<meta property="og:title" content="${htmlAttr(title)}" />`,
+    `<meta property="og:title" content="${htmlAttr(ogTitle)}" />`,
     `<meta property="og:description" content="${htmlAttr(desc)}" />`,
     `<meta property="og:image" content="${htmlAttr(image)}" />`,
+    `<meta property="og:image:width" content="${OG_COVER_W}" />`,
+    `<meta property="og:image:height" content="${OG_COVER_H}" />`,
     `<meta property="og:url" content="${htmlAttr(url)}" />`,
     `<meta name="twitter:card" content="summary_large_image" />`,
-    `<meta name="twitter:title" content="${htmlAttr(title)}" />`,
+    `<meta name="twitter:title" content="${htmlAttr(ogTitle)}" />`,
     `<meta name="twitter:description" content="${htmlAttr(desc)}" />`,
     `<meta name="twitter:image" content="${htmlAttr(image)}" />`,
   ].join('\n');
@@ -1984,7 +2014,8 @@ async function shareViewPage(env, id) {
   if (shareTitle) {
     body = body.replace('<title>Wepic Live</title>', `<title>${htmlAttr(shareTitle)} · Wepic</title>`);
   }
-  body = body.replace('</head>', `${shareOgTags(env, id, m)}\n</head>`);
+  const hasCover = !!(await env.SHARES.head(`${id}/${OG_COVER_NAME}`));
+  body = body.replace('</head>', `${shareOgTags(env, id, m, hasCover)}\n</head>`);
   // 검색엔진 색인 금지 헤더를 붙여 내려준다(share.html의 meta robots와 이중 안전장치).
   // 본문 길이가 달라졌으므로 원본의 Content-Length·ETag는 그대로 쓰면 안 된다.
   return new Response(body, {
@@ -2037,8 +2068,13 @@ async function shareAsset(request, env, pathname, url) {
 
   // PIN이 걸린 공유는 열람 쿠키가 없으면 차단한다. 화면에서만 막으면 이 URL을 직접 열어
   // 우회할 수 있으므로 photos.json과 사진 파일 자체를 서버에서 막아야 한다.
+  //
+  // 다만 미리보기 표지(og.jpg)만은 예외다 — 카카오톡 등의 크롤러는 쿠키 없이 가져가므로
+  // 막으면 카드가 다시 빈 상자가 된다. 이 파일은 원본이 아니라 **알아볼 수 없을 만큼 크게
+  // 흐린 그림**이라(app.js의 buildOgCover) 내용이 새어나가지 않는다.
+  const isOgCover = key === `${id}/${OG_COVER_NAME}`;
   const manifest = await readManifest(env, id);
-  if (manifest && manifest.pin && !(await canViewShare(request, env, id, manifest))) {
+  if (!isOgCover && manifest && manifest.pin && !(await canViewShare(request, env, id, manifest))) {
     // 쿠키 위조로 이 경로를 반복해서 찔러보는 것도 무차별 대입이므로 같이 제한한다.
     if (await pinTriesExceeded(env, id, request)) return tooManyPinTries();
     await bumpPinTries(env, id, request);
@@ -2154,6 +2190,11 @@ export default {
       }
       if (p === '/api/share/blob' && m === 'POST') {
         return requireMember(request, env, (rq, en, sess, user) => shareBlob(rq, en, sess, user));
+      }
+      // 링크 카드용 흐린 표지 올리기(화면이 저장 직후에 만들어 보낸다)
+      const mOgCover = p.match(/^\/api\/share\/([\w-]{6,})\/og-cover$/);
+      if (mOgCover && m === 'POST') {
+        return requireMember(request, env, (rq, en, sess, user) => putOgCover(rq, en, user, mOgCover[1]));
       }
       if (p === '/share-target' && m === 'POST') return redirect('/'); // 보통 서비스워커가 가로챔
 

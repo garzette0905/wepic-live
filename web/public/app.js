@@ -1231,6 +1231,61 @@ function startPickerOrGallery() {
   else document.getElementById('local-file-input').click();
 }
 
+// ---------- 링크 카드용 흐린 표지 (og.jpg) ----------
+// 카카오톡 등에 링크를 붙이면 미리보기 카드에 그림이 붙는다. 거기에 원본 사진을 그대로
+// 쓰면 **링크만 받은 사람에게 사진 한 장이 선명하게 노출된다**. 그래서 첫 사진을 캔버스로
+// 크게 흐리게 만들어(색만 남는 수준) 표지로 올린다.
+//
+// 서버(Worker)에서 흐리게 만들 수단이 없어서 화면이 맡는다 — Worker에는 이미지 처리 API가
+// 없고, 무료 플랜은 요청당 CPU가 10ms라 JS로 인코딩하는 것도 위험하다(QR 때 겪었다).
+const OG_COVER_W = 1200;
+const OG_COVER_H = 630;
+
+function buildOgCover(url) {
+  return new Promise((resolve) => {
+    const im = new Image();
+    im.onerror = () => resolve(null);
+    im.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = OG_COVER_W;
+        c.height = OG_COVER_H;
+        const ctx = c.getContext('2d');
+        // 1) 화면을 꽉 채우도록(cover) 크기를 맞춘다
+        const s = Math.max(OG_COVER_W / im.naturalWidth, OG_COVER_H / im.naturalHeight);
+        const w = im.naturalWidth * s;
+        const h = im.naturalHeight * s;
+        // 2) 아주 강하게 흐리게. blur는 그림 가장자리에서 잘려 테두리가 비어 보이므로
+        //    12% 크게 그려 경계를 화면 밖으로 밀어낸다(공유화면의 흐린 배경과 같은 요령).
+        ctx.filter = 'blur(44px)';
+        ctx.drawImage(im,
+          (OG_COVER_W - w * 1.12) / 2, (OG_COVER_H - h * 1.12) / 2, w * 1.12, h * 1.12);
+        ctx.filter = 'none';
+        // 3) 살짝 어둡게 눌러 카드 위 글자가 잘 읽히게 한다(공유화면과 같은 톤)
+        ctx.fillStyle = 'rgba(6, 10, 20, 0.3)';
+        ctx.fillRect(0, 0, OG_COVER_W, OG_COVER_H);
+        c.toBlob((b) => resolve(b), 'image/jpeg', 0.72);
+      } catch { resolve(null); } // 다른 출처 이미지 등으로 캔버스를 읽을 수 없는 경우
+    };
+    im.src = url;
+  });
+}
+
+// 표지를 만들어 올린다. 실패해도 저장 자체는 이미 끝난 뒤이므로 조용히 넘어간다
+// (표지가 없으면 서버가 카드에 wepic 로고를 쓴다 — 원본 사진으로 되돌아가지는 않는다).
+async function uploadOgCover(frameId, photo) {
+  if (!frameId || !photo) return;
+  try {
+    const cover = await buildOgCover(photo.thumbUrl || photo.fullUrl);
+    if (!cover) return;
+    const form = new FormData();
+    form.append('cover', cover, 'og.jpg');
+    await fetch(`/api/share/${encodeURIComponent(frameId)}/og-cover`, {
+      method: 'POST', body: form, credentials: 'same-origin',
+    });
+  } catch { /* 표지는 있으면 좋은 것이라 실패해도 흐름을 막지 않는다 */ }
+}
+
 // 현재 화면의 사진·제목·음악·전환설정을 서버에 올린다.
 // 서버는 세션마다 같은 shareId를 재사용하므로, 다시 올리면 "같은 링크"의 내용이 갱신된다.
 // 아직 wepic이 없으면 "공유하기"로 만들고, 이미 있으면 "수정저장"으로 같은 링크에 반영한다.
@@ -1316,6 +1371,8 @@ async function pushShare() {
     // wepic이 생겼으니 링크 복사·삭제 아이콘과 주소를 띄운다("공유하기"를 누르면 링크가 보인다).
     setShareLinkState(true, r.url);
     shareCommentCount = Number(r.commentCount || 0);
+    // 링크 카드에 쓸 흐린 표지를 첫 사진으로 만들어 올린다(저장이 끝난 뒤라 실패해도 무해).
+    await uploadOgCover(r.frameId, sharePhotos[0]);
     updateExcludeAvailability();
     await loadFrames(); // 액자 이름·설정 갱신(자동 생성된 첫 액자 포함)
     if (mode === 'update') {
