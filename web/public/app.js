@@ -1768,27 +1768,46 @@ let feedCache = [];
 let feedShown = 0;
 const FEED_BATCH = 9;
 let feedObserver = null;
+// 지금 화면의 주인이 되는 요청 번호. 늦게 시작한 요청만 화면을 그린다 — 홈 진입과
+// "사진 보기" 클릭이 겹치면 두 번 불리는데, 먼저 시작한 쪽이 나중에 끝나면 새 결과를
+// 헌 결과로 덮어쓴다.
+let feedLoadSeq = 0;
 
 async function loadPublicFeed() {
   closePublicViewer(); // 메뉴를 다시 누르면 항상 목록부터 보여준다
   const listEl = document.getElementById('feed-list');
   const emptyEl = document.getElementById('feed-empty');
+  const errorEl = document.getElementById('feed-error');
   const loadingEl = document.getElementById('feed-loading');
   if (feedObserver) { feedObserver.disconnect(); feedObserver = null; }
   listEl.innerHTML = '';
   emptyEl.classList.add('hidden');
+  errorEl.classList.add('hidden');
   loadingEl.classList.remove('hidden');
   feedShown = 0;
-  try {
-    const r = await fetch('/api/public/shares', { credentials: 'same-origin' }).then((res) => res.json());
-    feedCache = r.shares || [];
-  } catch {
-    feedCache = [];
+  const seq = ++feedLoadSeq;
+
+  // 목록을 못 받은 것(null)과 공개된 사진이 정말 없는 것([])은 다른 일이다.
+  // 예전에는 둘 다 "아직 공개된 사진이 없습니다"로 보여서, 모바일에서 요청이 한 번
+  // 실패하면 사진이 있는데도 없다고 나왔다(로그인 여부와 무관하게 발생) — /api/status와
+  // 같은 방식으로 몇 번 다시 시도하고, 그래도 안 되면 실패라고 분명히 말한다.
+  let shares = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch('/api/public/shares', { credentials: 'same-origin', cache: 'no-store' });
+      if (res.ok) { shares = (await res.json()).shares || []; break; }
+    } catch { /* 네트워크 오류 — 아래에서 다시 시도 */ }
+    if (attempt < 2) await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
   }
+  if (seq !== feedLoadSeq) return; // 더 늦게 시작한 요청이 이미 화면을 맡았다
+
   loadingEl.classList.add('hidden');
+  if (shares === null) { errorEl.classList.remove('hidden'); return; }
+  feedCache = shares;
   if (!feedCache.length) { emptyEl.classList.remove('hidden'); return; }
   renderNextFeedBatch();
 }
+document.getElementById('btn-feed-retry').addEventListener('click', loadPublicFeed);
 
 function renderNextFeedBatch() {
   const listEl = document.getElementById('feed-list');

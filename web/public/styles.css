@@ -508,18 +508,17 @@ select optgroup {
   background: rgba(255, 107, 87, 0.28); color: #fff; border-color: rgba(255, 107, 87, 0.45);
 }
 .share-send-btn:hover { background: rgba(255, 107, 87, 0.42); filter: none; }
-/* "인스타그램에 사진 올리기" — 저장 줄에 세 번째 버튼으로 끼워 넣으면 좁은 패널에서
-   "수정저장" 글자가 두 줄로 접힌다. 하는 일도 다르므로(링크가 아니라 사진 파일을 넘긴다)
-   아래에 제 줄을 준다. 색은 인스타그램 로고의 보라~분홍 계열. */
-.share-ig-row { margin-top: 6px; }
+/* "인스타그램에 사진 올리기" — 저장·보내기와 같은 줄의 세 번째 버튼.
+   글자를 넣으면 좁은 패널에서 "수정저장"이 두 줄로 접히므로 **아이콘만** 둔다
+   (무슨 버튼인지는 title·aria-label로 알린다). 색은 인스타그램 로고의 보라~분홍 계열. */
 .share-ig-btn {
-  width: 100%; display: flex; align-items: center; justify-content: center; gap: 7px;
-  white-space: nowrap;
+  flex: none; display: flex; align-items: center; justify-content: center;
+  padding-left: 12px; padding-right: 12px;
   background: rgba(193, 53, 132, 0.30); color: #fff; border-color: rgba(225, 88, 158, 0.48);
 }
 .share-ig-btn:hover { background: rgba(193, 53, 132, 0.46); filter: none; }
 /* 아주 좁은 화면에서는 "보내기"의 글자만 뺀다(저장 버튼이 눌려 찌그러지지 않게).
-   인스타그램 버튼은 제 줄을 쓰므로 글자를 그대로 둔다. */
+   인스타그램 버튼은 원래 아이콘만이라 손댈 것이 없다. */
 @media (max-width: 380px) {
   .share-send-btn span { display: none; }
   .share-send-btn { padding-left: 12px; padding-right: 12px; }
@@ -1002,6 +1001,14 @@ button.social-btn:hover { filter: none; transform: none; background: rgba(255, 2
   font-size: 12.5px; color: var(--text-muted); cursor: pointer; line-height: 1.5;
 }
 .public-share-row input { flex: none; margin-top: 2px; width: 15px; height: 15px; accent-color: var(--accent-strong); }
+
+/* 소개 패널 맨 아래 연락 안내(한글 + 영문). 본문과 구분되게 선 하나로만 나눈다. */
+.about-contact {
+  margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);
+}
+.about-contact h3 { margin: 0 0 6px; font-size: 14px; }
+.about-contact p { margin: 0 0 6px; font-size: 13px; color: var(--text-muted); }
+.about-contact p:last-child { margin-bottom: 0; }
 
 /* ---------- "사진 보기" 카드 피드 ---------- */
 .feed-list {
