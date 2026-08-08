@@ -74,6 +74,10 @@ function resetSlideshowScroll() {
 }
 
 // ---------- 홈 상단 메뉴 / 관리자·My사진관리 좌측 메뉴 / 패널 ----------
+// 홈에서 보여줄 패널. 예전에는 서비스 소개(about)였지만, 들어오자마자 실제 사진이
+// 보이는 편이 낫다는 판단으로 전체공유 목록(feed)을 홈으로 쓴다("사진 보기"와 같은 화면).
+const HOME_PANEL = 'feed';
+
 function selectPanel(name) {
   showHome();
   const isAdminPanel = name.startsWith('admin-');
@@ -83,6 +87,9 @@ function selectPanel(name) {
   // 항목이라 active 대상에서 제외한다.
   document.querySelectorAll('#home-menu .menu-item, #home-menu .menu-home').forEach((b) => {
     if (b.classList.contains('menu-status')) return;
+    // 로고(홈)는 "사진 보기"와 같은 패널을 가리키므로, 켜면 둘이 함께 강조돼 헷갈린다.
+    // 로고는 언제나 로고로만 보이게 두고 강조는 메뉴 항목에만 준다.
+    if (b.classList.contains('menu-home')) { b.classList.remove('active'); return; }
     let on;
     if (isAdminPanel) on = b.id === 'menu-admin';
     else if (isMyPanel) on = b.id === 'menu-my';
@@ -1492,11 +1499,11 @@ document.getElementById('menu-whoami').addEventListener('click', async () => {
 });
 // (슬라이드쇼 하단의 로그아웃 링크는 없앴다 — 상단 메뉴의 내 이름을 누르면 로그아웃된다)
 
-// 전체화면을 해제하고 홈(소개)으로 이동한다. 재생 중이던 동영상·배경음악은
-// selectPanel → showHome()이 stopSlideshowPlayback()으로 함께 멈춰준다.
+// 전체화면을 해제하고 홈으로 이동한다. 홈은 전체공유 사진 목록(feed)이다.
+// 재생 중이던 동영상·배경음악은 selectPanel → showHome()이 stopSlideshowPlayback()으로 함께 멈춘다.
 function stopEverythingAndGoHome() {
   exitFullscreenIfAny();
-  selectPanel('about');
+  selectPanel(HOME_PANEL);
 }
 // 전체화면 상태로 홈에 가면 화면이 갇힌 것처럼 보이므로 함께 해제한다.
 function exitFullscreenIfAny() {
@@ -1834,7 +1841,7 @@ document.getElementById('btn-logout-home').addEventListener('click', async (e) =
 });
 document.getElementById('btn-feedback-send').addEventListener('click', () => {
   const txt = document.getElementById('feedback-text').value.trim();
-  const subject = encodeURIComponent('Wepic Live Feedback');
+  const subject = encodeURIComponent('Wepic Feedback');
   const body = encodeURIComponent(txt);
   window.location.href = `mailto:garzette@paran.com?subject=${subject}&body=${body}`;
 });
@@ -2089,7 +2096,7 @@ function fillDefaultsForm() {
 }
 function updateDefaultsPreview() {
   const el = document.getElementById('def-preview');
-  el.textContent = document.getElementById('def-title').value.trim() || 'Wepic Live';
+  el.textContent = document.getElementById('def-title').value.trim() || 'Wepic';
   // 미리보기는 선택 중인 폰트/크기를 즉시 반영 (저장 전에도 확인 가능)
   applyGlobalSettingsToBody({
     titleFont: document.getElementById('def-font').value,
@@ -2900,7 +2907,9 @@ async function init() {
     history.replaceState(null, '', '/');
     selectPanel('login');
   } else {
-    showHome(); // 홈(소개) 화면을 먼저 보여주고, 사용자가 메뉴로 진입
+    // 홈 = 전체공유 사진 목록. selectPanel이 showHome()까지 함께 처리하고 목록도 불러온다.
+    // (예전에는 showHome()만 불러 소개 패널이 그대로 남아 있었다 — 이제 소개 패널은 없다)
+    selectPanel(HOME_PANEL);
   }
 }
 

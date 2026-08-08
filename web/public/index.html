@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Wepic Live</title>
+<title>Wepic</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg" />
 <link rel="manifest" href="manifest.json" />
 <meta name="theme-color" content="#0b0f17" />
@@ -21,28 +21,31 @@
     <!-- 배경 사진 위에 얹는 시네마틱 스크림 + 필름 그레인 (위·아래를 눌러 글씨 가독성 확보) -->
     <div class="home-scrim" aria-hidden="true"></div>
 
-    <!-- 상단 바: [아이콘 + Wepic Live] · 메뉴명만 · (우측) 인스타그램
+    <!-- 상단 바: [아이콘 + Wepic] · 메뉴명만 · (우측) 인스타그램
          유리 바를 없애고 배경 사진 위에 글자만 얹는다(참고 디자인과 동일한 구성). -->
     <nav class="top-menu" id="home-menu">
       <!-- 로고 = 좌측 상단. 아이콘이 왼쪽, 그 오른쪽에 흰색 워드마크. 누르면 홈(소개)으로 간다. -->
-      <button class="menu-home brand" data-panel="about" id="menu-home" title="홈 · 소개">
+      <!-- 홈 = 전체공유 사진 목록. 예전에는 서비스 소개(panel-about)로 갔지만, 들어오자마자
+           실제 사진이 보이는 편이 훨씬 낫다는 판단으로 "사진 보기"와 같은 화면을 쓴다. -->
+      <button class="menu-home brand" data-panel="feed" id="menu-home" title="홈 · 사진 보기">
         <img src="favicon.svg" alt="" />
-        <span class="brand-word">Wepic Live</span>
+        <span class="brand-word">Wepic</span>
       </button>
 
       <!-- 메뉴는 아이콘·이모지 없이 이름만 -->
+      <!-- 순서: 사진 선택 · 사진 보기 · My사진관리 · 정보수정 · (로그인/이름) · 회원가입 · 관리자 -->
       <div class="menu-links">
         <button class="menu-item" data-panel="photos">사진 선택</button>
         <button class="menu-item" data-panel="feed">사진 보기</button>
+        <!-- 로그인한 Wepic 사용자에게만 노출. 누르면 좌측에 My사진관리 하위 메뉴가 펼쳐진다 -->
+        <button class="menu-item hidden" data-panel="my-screens" id="menu-my">My사진관리</button>
         <!-- 로그인했을 때만 -->
         <button class="menu-item hidden" data-panel="me" id="menu-me">정보수정</button>
-        <!-- 로그인 전에는 "로그인" 버튼, 로그인 후에는 "Google 이름"처럼 상태만 표시(누를 수 없음) -->
+        <!-- 로그인 전에는 "로그인" 버튼, 로그인 후에는 "카카오 홍길동"처럼 상태만 표시(누를 수 없음) -->
         <button class="menu-item" data-panel="login" id="menu-login">로그인</button>
         <span class="menu-item menu-status hidden" id="menu-whoami"></span>
         <!-- 로그인 후에는 가입할 이유가 없어 숨긴다 -->
         <button class="menu-item" data-panel="signup" id="menu-signup">회원가입</button>
-        <!-- 로그인한 Wepic 사용자에게만 노출. 누르면 좌측에 My사진관리 하위 메뉴가 펼쳐진다 -->
-        <button class="menu-item hidden" data-panel="my-screens" id="menu-my">My사진관리</button>
         <!-- wepic 관리자만 노출. 누르면 좌측에 관리자 하위 메뉴가 펼쳐진다 -->
         <button class="menu-item menu-admin hidden" data-panel="admin-screens" id="menu-admin">관리자 화면</button>
       </div>
@@ -66,9 +69,10 @@
       <!-- 관리자 메뉴를 보고 있을 때만 좌측 상단에 눈에 띄게 표시 -->
       <div id="admin-badge" class="admin-badge hidden">ADMIN</div>
 
+      <!-- 설명 문구는 걷어냈다 — 그만큼 아래 사진 목록을 위로 끌어올려 한 화면에
+           더 많이 보이게 하기 위함이다(.hero.hero-slim). 문구는 태그라인만 남긴다. -->
       <div class="hero-inner">
         <div class="hero-tagline">Capture Moments,<br /><b>Share the Live Joy</b></div>
-        <p class="hero-sub">지금 흐르는 30초 음악과 순간의 추억을,<br />멀리 있는 공간의 전자액자로 실시간 송출하세요.</p>
       </div>
     </header>
 
@@ -91,51 +95,6 @@
       </nav>
 
       <section class="home-frame">
-        <!-- 소개 -->
-        <div class="panel" id="panel-about">
-          <p class="panel-eyebrow">wepic live — Real-time Audio-Visual Frame Platform</p>
-          <h2>사진과 30초 음악을, 멀리 있는 액자로 실시간 송출</h2>
-          <p>사진을 고르고 음악을 얹으면 링크 하나가 만들어집니다. 그 링크를 받은 분은
-            앱 설치도, 로그인도 없이 <b>바로 그 순간의 사진과 음악</b>을 함께 봅니다.</p>
-          <!-- 아이콘은 Lucide(zap · music · heart)를 인라인 SVG로 옮겨 담았다.
-               빌드 단계가 없는 프로젝트라 아이콘 라이브러리를 번들할 수 없어, 쓰는 3개만 직접 넣었다. -->
-          <div class="feature-grid">
-            <div class="feature-card">
-              <div class="feature-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
-                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M4 14h7l-2 7 9-11h-7l2-7z" />
-                </svg>
-              </div>
-              <h3>실시간 반영</h3>
-              <p>사진을 더하거나 바꾸면 이미 열려 있는 액자에도 곧바로 나타납니다.</p>
-            </div>
-            <div class="feature-card">
-              <div class="feature-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
-                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M9 18V5l12-2v13" />
-                  <circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
-                </svg>
-              </div>
-              <h3>음악과 함께</h3>
-              <p>곡을 검색해 고르면 30초 미리듣기가, YouTube 링크를 넣으면 전곡이 흐릅니다.</p>
-            </div>
-            <div class="feature-card">
-              <div class="feature-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
-                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M19 14c1.5-1.5 3-3.4 3-5.5A5.5 5.5 0 0 0 12 5.4 5.5 5.5 0 0 0 2 8.5c0 2.1 1.5 4 3 5.5l7 7z" />
-                </svg>
-              </div>
-              <h3>같이 보는 재미</h3>
-              <p>보는 사람들이 좋아요와 한마디를 남기고, 그 글이 서로의 화면에 실시간으로 뜹니다.</p>
-            </div>
-          </div>
-          <p class="panel-muted">위쪽 메뉴의 <b>사진 선택</b>으로 나만의 액자를 만들고,
-            <b>사진 보기</b>에서 다른 분들이 공개한 액자를 구경해보세요.</p>
-        </div>
-
         <!-- 로그인 (OIDC: 구글 / 카카오 / 네이버) -->
         <div class="panel hidden" id="panel-login">
           <h2>로그인</h2>
@@ -163,7 +122,7 @@
           <div class="terms-box">
             <h3>이용안내</h3>
             <ul class="panel-list">
-              <li>wepic live는 고른 사진에 음악을 얹어, <b>링크 하나로 실시간 공유</b>하는 서비스입니다.</li>
+              <li>wepic은 고른 사진에 음악을 얹어, <b>링크 하나로 실시간 공유</b>하는 서비스입니다.</li>
               <li>공유 링크는 <b>로그인 없이</b> 열람할 수 있으므로, 링크를 받은 사람은 누구나 볼 수 있습니다.
                 원치 않으시면 <b>PIN(4자리)</b>을 걸어두세요(기본으로 자동 발급됩니다).</li>
               <li>사진 업로드·공유 링크 만들기는 <b>로그인한 회원만</b> 할 수 있습니다.</li>
@@ -273,7 +232,6 @@
           <!-- 카드 목록 -->
           <div id="feed-browse">
             <h2>사진 보기</h2>
-            <p>회원들이 "전체공유"로 공개한 사진들입니다. 카드를 누르면 바로 재생됩니다.</p>
             <div id="feed-list" class="feed-list"></div>
             <p id="feed-empty" class="panel-muted hidden">아직 공개된 사진이 없습니다.</p>
             <p id="feed-loading" class="panel-muted hidden">불러오는 중...</p>
@@ -361,7 +319,7 @@
           </div>
           <div class="admin-preview">
             <span class="panel-muted">미리보기:</span>
-            <span id="def-preview" class="title-overlay-preview">Wepic Live</span>
+            <span id="def-preview" class="title-overlay-preview">Wepic</span>
           </div>
           <button id="def-save" class="btn-primary">저장</button>
           <p id="def-saved" class="share-copied hidden">저장되었습니다.</p>
@@ -410,7 +368,7 @@
   <div id="picker-shell" class="onboarding-shell hidden">
     <div class="brand-header">
       <img class="brand-logo-sm" src="favicon.svg" alt="" />
-      <div class="brand-name">Wepic Live</div>
+      <div class="brand-name">Wepic</div>
     </div>
 
     <section id="screen-source" class="card light wide hidden">

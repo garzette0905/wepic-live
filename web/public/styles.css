@@ -612,11 +612,12 @@ select optgroup {
 
 /* 상단 문구 영역 (배경은 home-shell이 담당, 여기는 투명).
    로고는 상단 바로 올라갔으므로 여기에는 문구만 왼쪽에 크게 둔다. */
+/* 서브 문구를 걷어내고 태그라인만 남기면서 높이를 크게 줄였다 —
+   그만큼 아래 사진 목록이 위로 올라와 한 화면에 더 많이 보인다. */
 .hero {
   position: relative; z-index: 1; flex: none;
-  /* height로 고정하면 서브문구가 늘어날 때 아래로 삐져나온다 → 최소 높이로 둔다 */
-  min-height: clamp(178px, 27vh, 270px);
-  display: flex; align-items: center; padding: 8px 0;
+  min-height: clamp(96px, 13vh, 150px);
+  display: flex; align-items: center; padding: 4px 0;
 }
 .hero-inner { position: relative; padding: 0 clamp(20px, 4vw, 52px); }
 .hero-tagline {
@@ -651,7 +652,7 @@ select optgroup {
   -webkit-backdrop-filter: none; backdrop-filter: none;
 }
 
-/* 로고: 아이콘 + "Wepic Live" 흰색 워드마크 */
+/* 로고: 아이콘 + "Wepic" 흰색 워드마크 */
 .menu-home.brand {
   flex: none; display: inline-flex; align-items: center; gap: 10px;
   padding: 0; background: none; border: none; cursor: pointer;
@@ -743,7 +744,7 @@ select optgroup {
 .panel-list { margin: 0 0 14px; padding-left: 20px; line-height: 1.95; color: var(--text-main); font-size: 14px; }
 .panel-muted { color: var(--text-muted); font-size: 13.5px; }
 
-/* 패널 맨 위 작은 라벨 (예: "wepic live — Real-time Audio-Visual Frame Platform").
+/* 패널 맨 위 작은 라벨 (예: "wepic — Real-time Audio-Visual Frame Platform").
    `.panel p`가 색을 잡고 있어(같은 요소, 더 높은 명시도) 여기서도 .panel로 한정해야 이긴다. */
 .panel .panel-eyebrow, .panel-eyebrow {
   margin: 0 0 10px;
@@ -1031,7 +1032,7 @@ select optgroup {
 
 /* 홈 모바일: 상단 메뉴는 가로 스크롤 한 줄, 관리자 하위 메뉴는 위로 접혀 들어감 */
 @media (max-width: 768px) {
-  .hero { min-height: clamp(112px, 17vh, 165px); padding: 6px 0 10px; }
+  .hero { min-height: clamp(66px, 9vh, 104px); padding: 4px 0 6px; }
   .hero-sub { margin-top: 10px; font-size: 12.5px; line-height: 1.55; }
   /* 좁은 화면: 로고와 인스타그램은 양끝에 고정하고, 가운데 메뉴명만 가로로 스크롤한다.
      (상단 바 전체를 스크롤하면 로고까지 밀려 나가 버린다) */
