@@ -194,34 +194,26 @@ function baseUrlOf(request, env) {
       || listed.includes(host.toLowerCase())
       || /(^|\.)workers\.dev$/i.test(host)
       || local;
+    if (!ok) return env.BASE_URL;
+    // "www."는 떼고 대표 주소로 통일한다. 모바일 브라우저·주소창 자동완성이 www를 붙이는데,
+    // 그대로 두면 OAuth 콜백이 https://www.wepic.kr/auth/callback 으로 조립되어 콘솔에
+    // 등록해 둔 https://wepic.kr/auth/callback 과 달라 로그인이 막힌다
+    // ("PC는 되는데 폰만 안 되는" 증상의 원인이었다). 공유 링크·미리보기 카드 주소도 함께 통일된다.
+    //
+    // ⚠️ 페이지 자체를 301로 넘기는 방법은 쓰지 않는다. 정적 파일(/, /app.js)은 Cloudflare의
+    //    자산 라우터가 Worker보다 **먼저** 처리해 리다이렉트가 걸리지 않는 반면 /api/*만 넘어가,
+    //    www로 열린 화면에서 API 호출이 교차 출처가 되어 CORS로 전부 막혔다(실제로 겪었다).
+    //    화면은 www에서도 그대로 뜨게 두고, **만들어 내보내는 절대주소만** 대표 주소로 맞춘다.
+    let canonical = u.host;
+    if (!local && /^www\./i.test(host)) {
+      const apex = host.replace(/^www\./i, '');
+      if (apex === baseHost || listed.includes(apex.toLowerCase())) canonical = apex;
+    }
     // 운영에서는 언제나 https다(Cloudflare가 http를 https로 돌린다). 혹시 http로 들어오더라도
     // 링크·미리보기 이미지 주소가 http로 나가지 않게 여기서 못박는다. 로컬 개발만 예외.
-    if (ok) return local ? u.origin : `https://${u.host}`;
+    return local ? u.origin : `https://${canonical}`;
   } catch { /* 무시 */ }
   return env.BASE_URL;
-}
-
-// ---------- www → 대표 주소로 정규화 ----------
-// 모바일 브라우저·주소창 자동완성이 "www."를 붙이는 일이 잦다. 그러면 같은 사이트인데도
-// OAuth 콜백이 https://www.wepic.kr/auth/callback 으로 조립되어, 콘솔에 등록해 둔
-// https://wepic.kr/auth/callback 과 달라 로그인이 redirect_uri_mismatch로 막힌다
-// (실제로 "PC는 되는데 폰만 안 되는" 증상으로 나타났다).
-//
-// 콜백 주소를 두 벌씩 등록해 두는 대신, 들어오자마자 대표 주소로 넘겨 **주소를 하나로** 만든다.
-// 세션 쿠키도 한 도메인에만 생겨 로그인 상태가 갈리지 않는다.
-// GET/HEAD만 넘긴다 — POST를 301로 넘기면 메서드·본문이 사라진다.
-function wwwRedirect(request, env) {
-  if (request.method !== 'GET' && request.method !== 'HEAD') return null;
-  const u = new URL(request.url);
-  if (!/^www\./i.test(u.hostname)) return null;
-  const apex = u.hostname.replace(/^www\./i, '');
-  const listed = String(env.SITE_HOSTS || '')
-    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-  if (!listed.includes(apex.toLowerCase())) return null;  // 우리가 아는 도메인일 때만
-  u.hostname = apex;
-  u.protocol = 'https:';
-  u.port = '';
-  return new Response(null, { status: 301, headers: { Location: u.toString() } });
 }
 
 function sameOriginRequest(request) {
@@ -2201,9 +2193,6 @@ export default {
     // 아니라 **지금 이 요청이 들어온 주소**를 써야 어긋나지 않는다. 아래 한 줄로 이후의
     // 모든 `env.BASE_URL` 사용처가 자동으로 그 값을 보게 된다(호출부를 고칠 필요가 없다).
     env = { ...env, BASE_URL: baseUrlOf(request, env) };
-    // www로 들어왔으면 대표 주소로 넘긴다(주소가 둘로 갈리면 OAuth 콜백이 어긋난다).
-    const wwwFix = wwwRedirect(request, env);
-    if (wwwFix) return wwwFix;
     try {
       // CSRF 방어: 상태를 바꾸는 요청은 같은 출처에서 온 것만 받는다.
       // 라우팅 맨 앞에서 한 번 검사해 엔드포인트를 하나라도 빠뜨리는 일이 없게 한다.
