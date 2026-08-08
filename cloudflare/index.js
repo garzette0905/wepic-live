@@ -170,6 +170,37 @@ const tooManyPinTries = () =>
 // 그대로 동작한다(BASE_URL은 운영 주소로 고정되어 있다).
 // Origin이 아예 없는 요청(curl 등)은 브라우저가 만든 것이 아니므로 CSRF가 성립하지 않고,
 // 쿠키도 스스로 붙여야 하니 여기서 막지 않는다(인증 가드가 따로 처리한다).
+// ---------- 이 요청이 들어온 주소 ----------
+// 같은 Worker가 여러 주소에서 동시에 돈다(운영 도메인 wepic.kr · 예전 *.workers.dev 주소 ·
+// 로컬 개발 localhost). 공유 링크를 만들거나 OAuth 콜백 주소를 조립할 때 고정된 BASE_URL을
+// 쓰면, wepic.kr에서 만든 링크가 workers.dev로 나가는 식으로 어긋난다. → 요청 주소를 쓴다.
+//
+// 다만 Host 헤더를 무조건 믿지는 않는다(엉뚱한 주소로 링크·콜백을 만들게 유도당할 수 있다).
+// 우리가 아는 주소일 때만 그대로 쓰고, 아니면 BASE_URL로 되돌아간다.
+//   · SITE_HOSTS 변수에 적어둔 운영 도메인 (예: "wepic.kr,www.wepic.kr")
+//   · BASE_URL의 호스트
+//   · *.workers.dev (예전에 나눠준 링크가 계속 살아 있어야 한다)
+//   · localhost / 127.0.0.1 (로컬 개발)
+function baseUrlOf(request, env) {
+  try {
+    const u = new URL(request.url);
+    const host = u.hostname;
+    const listed = String(env.SITE_HOSTS || '')
+      .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    let baseHost = '';
+    try { baseHost = new URL(env.BASE_URL).hostname; } catch { /* 무시 */ }
+    const local = host === 'localhost' || host === '127.0.0.1';
+    const ok = host === baseHost
+      || listed.includes(host.toLowerCase())
+      || /(^|\.)workers\.dev$/i.test(host)
+      || local;
+    // 운영에서는 언제나 https다(Cloudflare가 http를 https로 돌린다). 혹시 http로 들어오더라도
+    // 링크·미리보기 이미지 주소가 http로 나가지 않게 여기서 못박는다. 로컬 개발만 예외.
+    if (ok) return local ? u.origin : `https://${u.host}`;
+  } catch { /* 무시 */ }
+  return env.BASE_URL;
+}
+
 function sameOriginRequest(request) {
   if (request.method === 'GET' || request.method === 'HEAD') return true;
   const origin = request.headers.get('Origin');
@@ -2142,6 +2173,11 @@ export default {
     const url = new URL(request.url);
     const p = url.pathname;
     const m = request.method;
+    // 이 Worker는 여러 주소에서 동시에 서비스된다(wepic.kr · *.workers.dev · 로컬 개발).
+    // 그래서 절대주소가 필요한 곳(공유 링크·OAuth 콜백·미리보기 카드)은 고정된 BASE_URL이
+    // 아니라 **지금 이 요청이 들어온 주소**를 써야 어긋나지 않는다. 아래 한 줄로 이후의
+    // 모든 `env.BASE_URL` 사용처가 자동으로 그 값을 보게 된다(호출부를 고칠 필요가 없다).
+    env = { ...env, BASE_URL: baseUrlOf(request, env) };
     try {
       // CSRF 방어: 상태를 바꾸는 요청은 같은 출처에서 온 것만 받는다.
       // 라우팅 맨 앞에서 한 번 검사해 엔드포인트를 하나라도 빠뜨리는 일이 없게 한다.

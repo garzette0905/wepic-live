@@ -29,7 +29,14 @@ database_name = "wepic-db"
 database_id = "e464e97e-36a6-4459-850a-200981bbab3f"
 
 [vars]
-BASE_URL = "https://wepic-live.wepiclab.workers.dev"
+# 대표 주소. 링크·OAuth 콜백·미리보기 카드에 쓸 절대주소의 **기본값**이다.
+# 실제로는 요청이 들어온 주소를 그대로 쓰므로(cloudflare/index.js의 baseUrlOf), 예전
+# *.workers.dev 링크로 들어와도 그 주소 기준으로 정상 동작한다 — 두 주소가 함께 산다.
+BASE_URL = "https://wepic.kr"
+# 요청 주소를 그대로 믿어도 되는 도메인 목록(쉼표 구분). 여기 없는 Host로 들어온 요청은
+# 위 BASE_URL로 되돌아간다 — 엉뚱한 주소로 링크·콜백을 만들게 유도당하지 않기 위함이다.
+# (*.workers.dev와 localhost는 코드에서 항상 허용한다)
+SITE_HOSTS = "wepic.kr,www.wepic.kr"
 # 동영상 1개의 최대 크기(MB). 회원 기본 저장용량이 100MB라 이보다 크게 잡으면
 # 동영상 하나로 할당량이 다 차버린다. 비워두면 코드 기본값(30MB)을 쓴다.
 MAX_SHARE_VIDEO_MB = "30"
@@ -39,6 +46,19 @@ MAX_SHARE_VIDEO_MB = "30"
 # 하지 않는다(cloudflare/index.js의 scheduled 핸들러 참고). 크론 자체는 남겨둬도 무해하다.
 [triggers]
 crons = ["0 * * * *"]
+
+# ---------- 운영 도메인 (wepic.kr) ----------
+# ⚠️ 아래 [[routes]]는 **wepic.kr이 Cloudflare에 등록되고 활성(Active)된 뒤에만** 켠다.
+#    영역이 없는 상태로 배포하면 wrangler가 "zone not found"로 실패한다.
+#    등록 절차는 cloudflare/README.md 참고. 활성화되면 아래 세 줄의 # 을 지우고 배포한다.
+#
+# [[routes]]
+# pattern = "wepic.kr"
+# custom_domain = true
+#
+# [[routes]]
+# pattern = "www.wepic.kr"
+# custom_domain = true
 
 # 시크릿은 대시보드(Settings → Variables and secrets, Encrypt)로 등록:
 #   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, KAKAO_CLIENT_ID, KAKAO_CLIENT_SECRET, SESSION_SECRET
