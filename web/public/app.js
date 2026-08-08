@@ -654,6 +654,7 @@ function recomputeFiltered() {
   renderPhotoList();
   showCurrent();
   resetTimer();
+  updateInstagramBtn(); // 사진이 생겼는지/없어졌는지에 맞춰 "인스타" 버튼을 켜고 끈다
 }
 
 document.querySelectorAll('#orientation-radios input').forEach((r) =>
@@ -1526,6 +1527,93 @@ async function sendShareLink() {
   }
 }
 document.getElementById('btn-share-send').addEventListener('click', sendShareLink);
+
+// ---------- 인스타그램으로 사진 올리기 ----------
+// 인스타그램에는 "링크를 주면 대신 올려주는" 공개 창구가 없다(그런 API는 심사받은 비즈니스
+// 앱에만 열린다). 그래서 기기가 이미 할 줄 아는 방법을 그대로 쓴다 — **사진 파일 자체**를
+// 공유 화면에 넘기면(Web Share API Level 2) 목록에 뜬 인스타그램이 그 사진을 받아 게시물
+// 작성 화면을 연다. 넘어가는 것은 사진뿐이다: 배경음악·PIN·wepic 주소는 함께 가지 않는다.
+const INSTAGRAM_MAX_FILES = 10;  // 인스타그램 게시물 한 개에 담기는 최대 장수
+
+// 사진 1장을 File로 만든다. 사진의 주소는 어느 경로로 들어왔든 이 브라우저가 읽을 수 있다
+// (구글 포토=/img 프록시, 기기 갤러리=blob:, 저장된 wepic=/shares/...).
+async function photoAsFile(photo, idx) {
+  const res = await fetch(photo.fullUrl || photo.thumbUrl);
+  if (!res.ok) throw new Error('사진을 읽지 못했습니다');
+  const blob = await res.blob();
+  const type = /^image\//.test(blob.type) ? blob.type : 'image/jpeg';
+  const ext = type === 'image/png' ? 'png' : (type === 'image/webp' ? 'webp' : 'jpg');
+  return new File([blob], `wepic_${String(idx + 1).padStart(2, '0')}.${ext}`, { type });
+}
+
+// 사진이 있을 때만 "인스타" 버튼을 보인다(공유 링크가 없어도 쓸 수 있다 — 링크를 보내는
+// 것이 아니라 사진 파일을 보내는 일이라서 그렇다).
+function updateInstagramBtn() {
+  const btn = document.getElementById('btn-share-instagram');
+  if (!btn) return;
+  const n = allPhotos.filter((p) => p.type !== 'video').length;
+  btn.classList.toggle('hidden', !n);
+}
+
+// 몇 장이 빠졌는지(동영상·10장 초과) 알려준다 — 조용히 빠지면 왜 없는지 알 수 없다.
+function noteInstagramSkips(total, sent, videos) {
+  const notes = [];
+  if (total > sent) notes.push(`${sent}장만 보냈습니다(한 번에 최대 ${INSTAGRAM_MAX_FILES}장)`);
+  if (videos) notes.push(`동영상 ${videos}개는 제외했습니다`);
+  showToast(notes.length
+    ? `인스타그램으로 사진을 넘겼습니다 — ${notes.join(' · ')}.`
+    : `인스타그램으로 사진 ${sent}장을 넘겼습니다.`);
+}
+
+async function sendPhotosToInstagram() {
+  const btn = document.getElementById('btn-share-instagram');
+  const photos = allPhotos.filter((p) => p.type !== 'video');
+  const videos = allPhotos.length - photos.length;
+  if (!photos.length) { showToast('보낼 사진이 없습니다. 먼저 사진을 골라주세요.'); return; }
+  const picked = photos.slice(0, INSTAGRAM_MAX_FILES);
+
+  const label = btn.querySelector('span');
+  const labelText = label ? label.textContent : '';
+  btn.disabled = true;
+  if (label) label.textContent = '준비 중...';
+  try {
+    let files;
+    try {
+      files = await Promise.all(picked.map(photoAsFile));
+    } catch {
+      showToast('사진을 준비하지 못했습니다. 잠시 후 다시 시도해주세요.');
+      return;
+    }
+
+    // ① 폰(안드로이드 크롬·iOS 사파리 등): 공유 화면에 인스타그램이 그대로 뜬다.
+    if (navigator.share && navigator.canShare && navigator.canShare({ files })) {
+      try {
+        // ⚠️ files만 넘긴다. url·text를 함께 넘기면 인스타그램이 목록에서 사라지는 기기가 있다
+        //    (인스타그램은 "사진만" 받는 공유 대상으로 등록되어 있다).
+        await navigator.share({ files });
+        noteInstagramSkips(photos.length, picked.length, videos);
+        return;
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;  // 사용자가 공유 창을 그냥 닫았다
+        // 그 밖의 실패(정책 차단 등)는 아래 내려받기 방식으로 이어간다.
+      }
+    }
+
+    // ② PC 등 파일 공유가 없는 환경: 인스타그램은 웹에서 "다른 사이트가 건네주는 사진"을
+    //    받지 못한다. 사진을 내려받아 인스타그램에서 직접 올리는 것이 유일한 길이다.
+    const ok = confirm(
+      `이 브라우저에서는 인스타그램으로 바로 넘길 수 없습니다.\n`
+      + `사진 ${picked.length}장을 컴퓨터에 내려받은 뒤, 인스타그램에서 올리시겠어요?\n`
+      + `(폰에서 열면 공유 화면으로 바로 넘길 수 있습니다)`);
+    if (!ok) return;
+    picked.forEach((p, i) => downloadPhoto(p, i));
+    showToast(`사진 ${picked.length}장을 내려받았습니다. instagram.com에서 올려주세요.`);
+  } finally {
+    btn.disabled = false;
+    if (label) label.textContent = labelText;
+  }
+}
+document.getElementById('btn-share-instagram').addEventListener('click', sendPhotosToInstagram);
 
 // 아이콘 줄 ① 링크 복사하기
 document.getElementById('btn-frame-copy').addEventListener('click', async () => {
@@ -2512,9 +2600,10 @@ let isWepicAdmin = false;    // wepic 관리자인지(프레임 모드 배지 �
 // 로그인 제공자 버튼 정의. 서버(/api/status의 availableProviders)가 "키가 설정된" 제공자만
 // 알려주므로, 나머지는 눌러도 오류가 나지 않게 "준비중"으로 비활성 표시한다.
 // name은 "Google로", "카카오로"처럼 조사까지 붙인 형태로 둔다(버튼 문구 조립용).
+// 순서는 화면에 그려지는 순서 그대로다 — 국내 이용자가 가장 많이 쓰는 카카오를 맨 위에 둔다.
 const LOGIN_PROVIDERS = [
-  { key: 'google', name: 'Google로', icon: 'G', href: '/auth/login' },
   { key: 'kakao', name: '카카오로', icon: 'K', href: '/auth/kakao/login' },
+  { key: 'google', name: 'Google로', icon: 'G', href: '/auth/login' },
   { key: 'naver', name: '네이버로', icon: 'N', href: '/auth/naver/login' },
   { key: 'facebook', name: 'Facebook으로', icon: 'f', href: '/auth/facebook/login' },
 ];

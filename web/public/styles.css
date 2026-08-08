@@ -508,7 +508,18 @@ select optgroup {
   background: rgba(255, 107, 87, 0.28); color: #fff; border-color: rgba(255, 107, 87, 0.45);
 }
 .share-send-btn:hover { background: rgba(255, 107, 87, 0.42); filter: none; }
-/* 아주 좁은 화면에서는 아이콘만 남긴다(글자까지 두면 저장 버튼이 눌려 찌그러진다) */
+/* "인스타그램에 사진 올리기" — 저장 줄에 세 번째 버튼으로 끼워 넣으면 좁은 패널에서
+   "수정저장" 글자가 두 줄로 접힌다. 하는 일도 다르므로(링크가 아니라 사진 파일을 넘긴다)
+   아래에 제 줄을 준다. 색은 인스타그램 로고의 보라~분홍 계열. */
+.share-ig-row { margin-top: 6px; }
+.share-ig-btn {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 7px;
+  white-space: nowrap;
+  background: rgba(193, 53, 132, 0.30); color: #fff; border-color: rgba(225, 88, 158, 0.48);
+}
+.share-ig-btn:hover { background: rgba(193, 53, 132, 0.46); filter: none; }
+/* 아주 좁은 화면에서는 "보내기"의 글자만 뺀다(저장 버튼이 눌려 찌그러지지 않게).
+   인스타그램 버튼은 제 줄을 쓰므로 글자를 그대로 둔다. */
 @media (max-width: 380px) {
   .share-send-btn span { display: none; }
   .share-send-btn { padding-left: 12px; padding-right: 12px; }

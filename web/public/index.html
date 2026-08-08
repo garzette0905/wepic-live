@@ -12,7 +12,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Dancing+Script:wght@600&family=Nanum+Pen+Script&display=swap" rel="stylesheet" />
 <!-- 한글 본문용 Pretendard (라틴은 Inter가 받는다) -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
-<link rel="stylesheet" href="styles.css?v=20260808" />
+<link rel="stylesheet" href="styles.css?v=20260808b" />
 </head>
 <body>
 
@@ -63,8 +63,9 @@
           </svg>
         </button>
 
-        <a class="social-btn" id="link-instagram" href="#" aria-label="Instagram"
-           title="Instagram (링크 준비 중)">
+        <a class="social-btn" id="link-instagram" href="https://www.instagram.com/wepickr/"
+           target="_blank" rel="noopener noreferrer" aria-label="Instagram"
+           title="Wepic 인스타그램 (@wepickr)">
           <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor"
                stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="5" />
@@ -649,6 +650,23 @@
           </button>
         </div>
 
+        <!-- 인스타그램으로 올리기 — **사진 파일만** 넘긴다. 배경음악·PIN·wepic 주소는
+             함께 가지 않는다(인스타그램은 그런 것을 받을 자리가 없다).
+             공유 링크가 없어도 되므로 고른 사진이 있으면 바로 보인다. -->
+        <div class="share-ig-row">
+          <button id="btn-share-instagram" class="secondary slim share-ig-btn hidden"
+                  title="고른 사진을 인스타그램에 올립니다 (사진만 전달 · 배경음악·PIN은 함께 가지 않습니다)"
+                  aria-label="인스타그램에 사진 올리기">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="5" />
+              <circle cx="12" cy="12" r="4" />
+              <circle cx="17.2" cy="6.8" r="1.1" fill="currentColor" stroke="none" />
+            </svg>
+            <span>인스타그램에 사진 올리기</span>
+          </button>
+        </div>
+
         <!-- 공유하기를 누르면 여기에 링크가 나타난다(눌러서 바로 열 수 있게). -->
         <div id="share-url-inline" class="share-url-inline hidden">
           <span class="share-url-caption">wepic 주소</span>
@@ -810,6 +828,6 @@
       } catch { return ''; }
     };
   </script>
-  <script src="app.js?v=20260808"></script>
+  <script src="app.js?v=20260808b"></script>
 </body>
 </html>
